@@ -6,8 +6,12 @@
 # instead of erroring — then routes back to the GPU model when it returns. Routing lives in
 # the model-gateway (LiteLLM); this plugin only provides the CPU deployment.
 #
-# Model: Qwen3.6-35B-A3B (unsloth UD-Q4_K_M) — a MoE with ~3B active params, so it stays
-# responsive on CPU (~15-25 tok/s) while keeping near-27B quality. ~20GB weights in RAM.
+# Model: Qwen3.8-35B-A3B Distill (empero-ai, IQ4_XS): Qwen3.8 reasoning distilled into the
+# Qwen3.6-35B-A3B MoE (~3B active params, same qwen35moe architecture and window), so it stays
+# responsive on CPU while keeping near-27B quality. ~18GB weights in RAM. Chosen over the
+# Qwen3.6 UD-Q4_K_M it replaces on this host's tool-call and vision eval (2026-10-16, 12
+# threads): 21/24 tool cases against 19/24, and an 8k-token prompt's first token in 99 s against
+# 110 s.
 #
 # Enabled in the `auto` parity set on any host with >=24GB RAM, but its service is DORMANT behind
 # the `cpu-fallback` compose profile — the container only starts when COMPOSE_PROFILES includes
@@ -15,11 +19,11 @@
 # running stack: no profile active => nothing runs, and LiteLLM's fallback target just sits
 # unreachable (harmless) until the profile is turned on.
 id: llamacpp-cpu
-name: CPU LLM Fallback (Qwen3.6-35B-A3B)
+name: CPU LLM Fallback (Qwen3.8-35B-A3B Distill)
 description: Always-on CPU llama.cpp chat server that LiteLLM fails local-chat over to while the GPU is busy.
 requires:
   nvidia: false           # deliberately CPU-only — never contends for the 5090
-  ram_gb: 25              # ~20GB A3B weights (Q4) + 0.9GB vision projector + KV cache
+  ram_gb: 25              # ~18GB A3B weights (IQ4_XS) + 0.9GB vision projector + KV cache
 provides: [llm-cpu-fallback]
 compose_profile: cpu-fallback
 services:
@@ -36,11 +40,11 @@ services:
       - --port
       - "8080"
       - --model
-      - /models/${LLAMACPP_CPU_MODEL:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf}
+      - /models/${LLAMACPP_CPU_MODEL:-Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf}
       # The model's own vision projector (its catalog `mmproj:`, provisioned by `ordo fetch`), so an
-      # image still works while the fallback serves. Measured: correct image QA, about 9s on 12 cores.
+      # image still works while the fallback serves. Measured: correct image QA, about 6s on 12 cores.
       - --mmproj
-      - /models/Qwen3.6-35B-A3B-mmproj-F16.gguf
+      - /models/Qwen3.8-35B-A3B-Distill-mmproj-F16.gguf
       - --n-gpu-layers
       - "0"
       # Ctx MUST match the GPU backend's window. This is the failover target for `local-chat`:
@@ -67,7 +71,14 @@ services:
       - "${LLAMACPP_CPU_THREADS?LLAMACPP_CPU_THREADS is missing from the rendered .env}"
       - --threads-batch
       - "${LLAMACPP_CPU_THREADS?LLAMACPP_CPU_THREADS is missing from the rendered .env}"
-      - --jinja                     # use the GGUF's chat template (Qwen3.6)
+      # Prompt processing in 2048-token micro-batches, not 512: +17% prefill at the same 12
+      # threads on this host (124 -> 145 tok/s on a 2,048-token prompt), so more speed without
+      # more cores, which the UPS note above rules out. Costs a larger compute buffer in RAM.
+      - --batch-size
+      - "2048"
+      - --ubatch-size
+      - "2048"
+      - --jinja                     # use the GGUF's chat template
       - --reasoning-format
       - deepseek                    # match the GPU backend's reasoning handling
       # Sampler parity with the GPU backend, for the same reason the ctx above must match: a

@@ -49,7 +49,7 @@ def _fallback_entry():
 
 def test_the_fallback_entry_declares_its_trained_window_and_kv_rate():
     entry = _fallback_entry()
-    assert entry is not None and entry.id == "qwen3.6-35b-a3b-cpu-q4"
+    assert entry is not None and entry.id == "qwen3.8-35b-a3b-distill-cpu-iq4xs"
     # qwen35moe.context_length in the GGUF header
     assert entry.ctx_default == FULL_WINDOW
     # 10 full-attention layers (40 blocks, full_attention_interval 4) x 2 KV heads x 256 (K) + 256 (V),
@@ -79,12 +79,12 @@ def test_a_262k_window_reaches_every_consumer_including_the_fallback():
 
 def test_the_manifest_states_what_the_window_costs_the_fallback():
     fallback = _render(FULL_WINDOW).manifest()["cpu_fallback"]
-    assert fallback["model"] == "qwen3.6-35b-a3b-cpu-q4"
+    assert fallback["model"] == "qwen3.8-35b-a3b-distill-cpu-iq4xs"
     assert fallback["ctx_size"] == FULL_WINDOW
     assert fallback["trained_ctx"] == FULL_WINDOW
-    # 262,144 tokens x 10,880 bytes = 2.66 GiB of KV; the weights are the pinned 22,134,528,992 bytes.
+    # 262,144 tokens x 10,880 bytes = 2.66 GiB of KV; the weights are the pinned 19,627,788,160 bytes.
     assert fallback["kv_gb"] == pytest.approx(FULL_WINDOW * 10880 / GIB, abs=0.01)
-    assert fallback["weights_gb"] == pytest.approx(22134528992 / GIB, abs=0.01)
+    assert fallback["weights_gb"] == pytest.approx(19627788160 / GIB, abs=0.01)
 
 
 def test_no_fallback_section_when_the_fallback_is_not_rendered():
@@ -100,7 +100,7 @@ def test_a_window_past_the_fallback_trained_window_is_a_render_error():
         _render(2 * FULL_WINDOW)
     message = str(e.value)
     assert f"{2 * FULL_WINDOW:,}" in message and f"{FULL_WINDOW:,}" in message
-    assert "qwen3.6-35b-a3b-cpu-q4" in message
+    assert "qwen3.8-35b-a3b-distill-cpu-iq4xs" in message
     assert "overrides.llamacpp.ctx_size" in message
 
 
@@ -131,7 +131,7 @@ def test_doctor_bundle_carries_both_windows():
 
 def test_doctor_window_line_names_both_windows_and_the_kv_cost():
     line = doctor.window_line(_render(FULL_WINDOW))
-    assert line == "windows : chat 262,144; cpu-fallback 262,144 (trained 262,144; KV 2.7 GiB + weights 20.6 GiB)"
+    assert line == "windows : chat 262,144; cpu-fallback 262,144 (trained 262,144; KV 2.7 GiB + weights 18.3 GiB)"
 
 
 def test_doctor_window_line_without_a_fallback():

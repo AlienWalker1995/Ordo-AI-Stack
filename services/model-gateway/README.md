@@ -38,7 +38,7 @@ metadata tracks the running deployment instead of drifting:
 | `__N_PREDICT__` | `LLAMACPP_N_PREDICT` (65536) |
 | `__CPU_CTX_SIZE__` | `LLAMACPP_CPU_CTX` (required) - rendered from the same resolved window as `LLAMACPP_CTX_SIZE`, so the failover's advertised window can't diverge from the primary's |
 | `__GPU_WEIGHTS__` | `LLAMACPP_MODEL` (model.gguf) |
-| `__CPU_WEIGHTS__` | `LLAMACPP_CPU_MODEL` (Qwen3.6-35B-A3B-UD-Q4_K_M.gguf) |
+| `__CPU_WEIGHTS__` | `LLAMACPP_CPU_MODEL` (Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf) |
 | `__EMBED_WEIGHTS__` | `LLAMACPP_EMBED_MODEL` (embeddinggemma-2-Q8_0.gguf) |
 | `__GPU_IMAGE__` | `LLAMACPP_IMAGE` (llama.cpp) |
 | `__GPU_MODEL_NAME__` | derived: `LLAMACPP_MODEL` basename, lowercased, `.gguf` stripped |

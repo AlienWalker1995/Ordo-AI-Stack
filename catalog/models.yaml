@@ -444,22 +444,24 @@ models:
 # (`${LLAMACPP_CPU_MODEL:-...}` in services/llamacpp-cpu, `${LLAMACPP_EMBED_MODEL:-...}` in
 # services/rag). sha256 = the Hugging Face LFS oid of each file.
 support_models:
-  - id: qwen3.6-35b-a3b-cpu-q4
-    name: Qwen3.6 35B A3B (UD-Q4_K_M), CPU fallback
+  - id: qwen3.8-35b-a3b-distill-cpu-iq4xs
+    # Qwen3.8 reasoning distilled into Qwen3.6-35B-A3B by empero-ai (Apache-2.0), IQ4_XS. Pinned to
+    # the repo commit; stored under a model-specific name (upstream: Qwen3.8-35B-A3B-IQ4_XS.gguf).
+    name: Qwen3.8 35B A3B Distill (IQ4_XS), CPU fallback
     backend: llama.cpp
-    file: Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
-    source: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
-    # 22,134,528,992 bytes.
-    sha256: ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61
-    size_bytes: 22134528992
-    # Qwen3.6-35B-A3B's own F16 vision projector, so images keep working while the fallback serves.
-    # Stored under a model-specific name (upstream calls it mmproj-F16.gguf); sha256 = its HF LFS oid.
-    # services/llamacpp-cpu passes it as --mmproj (tests/substrate/test_cpu_fallback_vision.py).
+    file: Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf
+    source: https://huggingface.co/empero-ai/Qwen3.8-35B-A3B-Distill-GGUF/resolve/b1f9d1dcc3de8aa867669b0ab919384aeeb9b8d5/Qwen3.8-35B-A3B-IQ4_XS.gguf
+    # 19,627,788,160 bytes.
+    sha256: b645af45431ef9b41f43cae51c9323b2d0ca84f23031d483d2105c643ae58d65
+    size_bytes: 19627788160
+    # The distill's own F16 vision projector, so images keep working while the fallback serves.
+    # Stored under a model-specific name (upstream: mmproj-Qwen3.8-35B-A3B-F16.gguf); sha256 = its HF
+    # LFS oid. services/llamacpp-cpu passes it as --mmproj (tests/substrate/test_cpu_fallback_vision.py).
     mmproj:
-      file: Qwen3.6-35B-A3B-mmproj-F16.gguf
-      source: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf
-      sha256: 8971ee4f331ff0a4c609374f32984b3d4e6dc086c0aa35f1d637fad1829e887f
-      size_bytes: 899283680
+      file: Qwen3.8-35B-A3B-Distill-mmproj-F16.gguf
+      source: https://huggingface.co/empero-ai/Qwen3.8-35B-A3B-Distill-GGUF/resolve/b1f9d1dcc3de8aa867669b0ab919384aeeb9b8d5/mmproj-Qwen3.8-35B-A3B-F16.gguf
+      sha256: 4381cb5110074396c2c7b39221fffae0c31886aa95b674de8e103d97edf58b94
+      size_bytes: 899283520
     requires: { vram_gb: 0, ram_gb: 25, cpu_ok: true }
     # The fallback serves the chat model's whole window (LLAMACPP_CPU_CTX = LLAMACPP_CTX_SIZE), so the
     # render checks that window against these two and refuses one the fallback cannot hold.
@@ -468,7 +470,8 @@ support_models:
     # Hybrid attention (qwen35moe): only every 4th of the 40 blocks is full attention, with 2 KV heads of
     # 256 for K and V. At q8_0 (34 bytes per 32 values): 10 * 2 * 512 * 34 / 32 = 10,880 bytes per token,
     # 1.08GiB at 106,496 tokens and 2.66GiB at 262,144. The 30 linear-attention blocks add ~63MiB of
-    # recurrent state that does not grow with the window. Measured beside it: 24.5GiB resident at 106,496.
+    # recurrent state that does not grow with the window. Measured beside it (this model,
+    # 2048-token batches): 20.1GiB resident at 106,496, 21.2GiB at the full 262,144 window.
     kv_kb_per_token: 10.625
 
   - id: embeddinggemma-2-q8

@@ -30,7 +30,7 @@ UUID_SMALL = "GPU-small-0000"
 DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_BIG, "compute_cap": "12.0"},
                  {"name": "GTX 1070", "vram_gb": 8, "uuid": UUID_SMALL, "compute_cap": "6.1"}],
         "ram_gb": 128, "cpu_cores": 32}
-CPU_FALLBACK_FILE = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+CPU_FALLBACK_FILE = "Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf"
 EMBED_FILE = "embeddinggemma-2-Q8_0.gguf"
 
 # Two catalog models whose vision projectors differ: the switch case the stale registry got wrong.
