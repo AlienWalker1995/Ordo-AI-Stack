@@ -176,39 +176,36 @@ ordo up stt tts
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WHISPER__MODEL` (in `services/voice/plugin.yaml`) | `Systran/faster-whisper-small` | Hugging Face repo ID for faster-whisper |
+| `WHISPER__MODEL` (in `services/voice/plugin.yaml`) | `Systran/faster-whisper-base.en` | Hugging Face repo ID for faster-whisper (English base: as accurate as `small` on the stack's vocabulary, about twice as fast) |
 | `STT_COMPUTE_TYPE` | `int8` | Quantization type (`int8` is Pascal-compatible; use `float16` on Turing+) |
-| Hermes `tts.openai.voice` | `Emily.wav` | The voice Chatterbox clones, chosen **per request** by file name: a bundled voice (Emily, Olivia, Ryan, Thomas and 24 more) or a clip you add to `data/voice/references/`. Each Hermes profile can set its own in its `config.yaml`. |
+| Hermes `tts.openai.voice` | `af_heart` | One of Kokoro's bundled voices (`GET http://tts:8880/v1/audio/voices` lists them) |
 
 **Internal endpoints (backend network only — no host ports):**
 
 | Service | URL | API |
 |---|---|---|
 | STT | `http://stt:8000/v1` | OpenAI-compatible `/v1/audio/transcriptions` |
-| TTS | `http://tts:8004/v1` | OpenAI-compatible `/v1/audio/speech` (Chatterbox Turbo voice cloning) |
+| TTS | `http://tts:8880/v1` | OpenAI-compatible `/v1/audio/speech` (Kokoro-82M, including raw `pcm` for streaming) |
 
 **Hermes wiring (Discord voice memos):**
 
 - **STT (voice memo → text): fully local.** Hermes' STT openai provider takes its
   base URL from the `STT_OPENAI_BASE_URL` env, which the rendered `out/docker-compose.yml` sets on
   `agent` to `http://stt:8000/v1`. Set in the brain volume's `config.yaml` with `docker exec --user hermes ordo-agent-1 hermes config set <key> <value>`:
-  `stt.provider: openai`, `stt.openai.model: Systran/faster-whisper-small`,
+  `stt.provider: openai`, `stt.openai.model: Systran/faster-whisper-base.en`,
   `stt.openai.api_key: local`, `stt.enabled: true`. Inbound Discord voice messages
   are then auto-transcribed on the secondary GPU.
 - **TTS (voice reply): fully local.** Set `tts.provider: openai`,
-  `tts.openai.base_url: http://tts:8004/v1`, `tts.openai.model: chatterbox` and
-  `tts.openai.voice` (a bundled voice such as `Emily.wav`, or your own clip). To give an agent its own
-  voice, drop a 5-30 s single-speaker clip into `data/voice/references/` and set that profile's
-  `tts.openai.voice` to its file name. Pick a name that is not one of the bundled voices (a bundled
-  voice wins a name clash). On a GTX 1070 a short reply takes about 0.8 s, faster than
-  real time.
+  `tts.openai.base_url: http://tts:8880/v1`, `tts.openai.model: kokoro` and
+  `tts.openai.voice: af_heart`. Hermes streams speech one sentence at a time as raw `pcm`; on a
+  GTX 1070 a sentence's first audio arrives 0.15-0.3 s after it is written, using about 0.8 GB of
+  VRAM.
 - **Desktop clients relay through the gateway.** `voice.client_direct: false` on every profile, so
   Hermes Desktop sends audio to the gateway (`/api/audio/*`), which calls these internal services. A
   desktop never needs to reach `stt`/`tts` itself.
 
 **STT** weights download once to `${DATA_PATH}/voice/hf-cache` (persists across
-recreates). **TTS** (Chatterbox Turbo) downloads its weights once into the named volume
-`voice-tts-hf`; your own reference clips are read-only from `${DATA_PATH}/voice/references`.
+recreates). **TTS** (Kokoro) ships its weights in the image; nothing is downloaded.
 
 ## Custom llama.cpp Build (llamacpp service)
 

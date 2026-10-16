@@ -87,7 +87,7 @@ def test_served_models_come_from_the_render():
     assert models["local-embed"]["gpu_uuid"] is None              # CPU build, no card
     assert models["comfyui"]["gpu_uuid"] == UUID_BIG
     assert models["voice-stt"]["gpu_uuid"] == UUID_SMALL
-    assert models["voice-stt"]["source"] == {"file": "Systran/faster-whisper-small"}
+    assert models["voice-stt"]["source"] == {"file": "Systran/faster-whisper-base.en"}
     assert models["voice-tts"]["gpu_uuid"] == UUID_SMALL
 
 

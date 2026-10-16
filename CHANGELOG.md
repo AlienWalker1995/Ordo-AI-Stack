@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Changed
+- **Voice runs on the lightest, fastest engines measured on the GTX 1070.** TTS is Kokoro-82M
+  again (kokoro-fastapi, digest-pinned): a sentence's first audio in 0.15-0.3 s warm with about
+  0.8 GB of VRAM, against 0.9-1.9 s and about 7 GB for Chatterbox Turbo, which is removed with its
+  first-party image, its `pcm` patch and per-profile cloned voices. STT is
+  `faster-whisper-base.en`: as accurate as `small` on the stack's vocabulary, 0.35 s per clip
+  against 0.59 s.
+
 ### Added
 - **`ordo deploy` rescues changes made on the deploy checkout outside a pull request.** An agent
   committed a ComfyUI pin bump straight to the checkout's `main`, and every deploy waited on it
