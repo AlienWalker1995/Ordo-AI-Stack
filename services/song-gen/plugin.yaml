@@ -26,7 +26,7 @@ backends:
     default: true
     # Requires ComfyUI >= v0.33.1 — the Music3 nodes (MiniMaxMusic3TextEncode,
     # EmptyMiniMaxMusic3LatentAudio) landed upstream in efd4e951a0. services/comfyui pins
-    # COMFYUI_APP_REF to v0.37.0 (73c9bad4), which satisfies this minimum; do not roll that
+    # COMFYUI_APP_REF to v0.41.1 (45bf90d1), which satisfies this minimum; do not roll that
     # pin back below v0.33.1 without dropping this backend.
     min_comfyui_version: "0.33.1"
     # Pinned to the Comfy-Org repack revision: /resolve/main/ is a moving ref.
