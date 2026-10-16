@@ -351,8 +351,8 @@ CORE_GPU_ARBITRATION: dict[str, GpuArbitration] = {
     # from that residency never queue individually. Preemptible: an exclusive burst request
     # reclaims it and the Broker restores it when the work drains.
     #
-    # It does NOT die when it yields — it migrates to CPU. `llamacpp-cpu` runs the same Qwen3.6
-    # A3B at the same 131072 window and the model-gateway's LiteLLM config already fails
+    # It does NOT die when it yields — it migrates to CPU. `llamacpp-cpu` runs the Qwen3.8-35B-A3B
+    # Distill (the Qwen3.6 A3B base, distilled) at the same 131072 window and the model-gateway's LiteLLM config already fails
     # `local-chat` over to it, then routes back after the router's `cooldown_time` (litellm_config.yaml) once the GPU model is healthy.
     # `failover` records exactly that, and no more: today the reroute is error-driven (the Broker
     # stops the container, LiteLLM discovers it unhealthy), so completions streaming at that
