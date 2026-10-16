@@ -268,7 +268,7 @@ What a window costs the fallback (q8_0 KV, ~63 MiB of recurrent state on top, co
 
 On the reference host (Docker VM 102 GiB, ~61 GiB available with the fallback already resident at 106,496) the 262,144 window costs about 1.1 GiB more, so the fallback runs at the full window.
 
-The window is an allocation, not per-request work: llama.cpp prefills only the tokens sent. A cold failover still has to prefill the whole conversation on CPU, measured at about 25 tokens/s on long conversations (with the previous Qwen3.6 UD-Q4_K_M weights at 512-token batches; the distill at 2048-token batches prefills a 2,048-token prompt 17% faster than that model did), so a conversation much past ~45k tokens does not finish its first fallback turn inside the gateway's 1800 s timeout. That timeout is a visible error, not a truncation; it is a property of CPU prefill, not of the window.
+The window is an allocation, not per-request work: llama.cpp prefills only the tokens sent. A cold failover still has to prefill the whole conversation on CPU, measured at about 25 tokens/s on long conversations (measured with the previous Qwen3.6 UD-Q4_K_M weights at 512-token batches), so a conversation much past ~45k tokens does not finish its first fallback turn inside the gateway's 1800 s timeout. That timeout is a visible error, not a truncation; it is a property of CPU prefill, not of the window.
 
 ## Served Models
 
