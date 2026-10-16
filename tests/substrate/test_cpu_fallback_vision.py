@@ -53,6 +53,12 @@ def test_the_cpu_service_processes_prompts_in_2048_token_batches():
     assert command[command.index("--ubatch-size") + 1] == "2048"
 
 
+def test_the_cpu_service_drafts_tokens_with_the_models_mtp_head():
+    command, _ = _cpu_command()
+    assert command[command.index("--spec-type") + 1] == "draft-mtp"
+    assert command[command.index("--spec-draft-n-max") + 1] == "2"
+
+
 def test_the_projector_is_a_required_model_file_so_fetch_provisions_it():
     _, rc = _cpu_command()
     needed = required_model_files(rc.compose_dict(), rc.env, ["llamacpp-cpu"])

@@ -78,6 +78,14 @@ services:
       - "2048"
       - --ubatch-size
       - "2048"
+      # Speculative decoding from the model's own MTP head (blk.40.nextn in the distill GGUF, which
+      # llama.cpp otherwise loads and ignores): drafts up to 2 tokens per step and verifies them in
+      # one pass. Enabled at the operator's request without a CPU measurement; if the drafts are
+      # mostly rejected it costs decode speed, so check acceptance in the server log before tuning.
+      - --spec-type
+      - draft-mtp
+      - --spec-draft-n-max
+      - "2"
       - --jinja                     # use the GGUF's chat template
       - --reasoning-format
       - deepseek                    # match the GPU backend's reasoning handling
