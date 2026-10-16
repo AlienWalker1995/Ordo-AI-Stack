@@ -759,7 +759,8 @@ def test_the_secret_scan_reads_binary_files_at_the_rescued_commit(repo, tmp_path
     def fake_run(cmd, *args, **kwargs):      # stand in for the TruffleHog container
         if cmd[0] != "docker":
             return real_run(cmd, *args, **kwargs)
-        mount = Path(cmd[cmd.index("-v") + 1].split(":")[0])
+        # "<host dir>:/scan:ro"; the host dir has its own colon on Windows ("C:\...").
+        mount = Path(cmd[cmd.index("-v") + 1].rsplit(":/scan", 1)[0])
         found = any(token in p.read_bytes() for p in mount.rglob("*") if p.is_file())
         out = json.dumps({"DetectorName": "aws"}) + "\n" if found else ""
         return subprocess.CompletedProcess(cmd, 183 if found else 0, stdout=out, stderr="")
