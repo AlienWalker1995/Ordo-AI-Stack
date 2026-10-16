@@ -771,6 +771,15 @@ def test_the_secret_scan_reads_binary_files_at_the_rescued_commit(repo, tmp_path
     (repo / "notes.md").write_text("notes, edited\n", encoding="utf-8")
     _git(repo, "commit", "--quiet", "-am", "text only")
     assert host.secret_findings(sha, host.head()) == []   # unchanged files are not re-scanned
+    (repo / "certs").mkdir()
+    _git(repo, "mv", "cert.p12", "certs/cert.p12")        # a rename: the new name carries the bytes
+    _git(repo, "commit", "--quiet", "-m", "move cert")
+    assert host.secret_findings(host.head(), host.head()) == []
+    assert host.secret_findings(_git(repo, "rev-parse", "HEAD~1"), host.head()) == ["aws"]
+    _git(repo, "rm", "--quiet", "notes.md")               # a delete: gone at sha, nothing to scan
+    (repo / "plugin.yaml").write_text("pin: newer\n", encoding="utf-8")
+    _git(repo, "commit", "--quiet", "-am", "drop notes")
+    assert host.secret_findings(_git(repo, "rev-parse", "HEAD~1"), host.head()) == []
 
 
 def test_a_rescue_survives_another_branch_checked_out_for_a_while(tmp_path):
