@@ -8,6 +8,8 @@ import shlex
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "scripts" / "comfyui" / "custom_nodes.json"
 BOOT = ROOT / "scripts" / "comfyui" / "boot.sh"
@@ -150,6 +152,24 @@ def test_fetch_failure_dies_and_keeps_the_old_commit(tmp_path):
     assert _git(pack, "rev-parse", "HEAD") == shas[0]  # old pack untouched
 
 
+def test_drifted_pack_with_local_edits_lands_on_the_pinned_commit(tmp_path):
+    up, shas = _make_upstream(tmp_path)
+    comfy = tmp_path / "comfy"
+    pack = comfy / "custom_nodes" / "Pack"
+    pack.parent.mkdir(parents=True)
+    _clone(up, pack)
+    _git(pack, "checkout", "-q", shas[0])
+    # A local edit to a tracked file at the old commit: the forced checkout must discard it
+    # rather than refuse (which would crash-loop boot under the die posture)
+    (pack / "node.py").write_text("# locally patched\n", encoding="utf-8")
+    man = tmp_path / "manifest.json"
+    _write_manifest(man, [{"name": "Pack", "url": str(up), "ref": shas[-1]}])
+    _run_reconcile(comfy, man)
+    assert _git(pack, "rev-parse", "HEAD") == shas[-1]
+    assert (pack / "node.py").read_text(encoding="utf-8") == "# v1\n"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
 def test_checkout_failure_dies(tmp_path):
     up, shas = _make_upstream(tmp_path)
     comfy = tmp_path / "comfy"
