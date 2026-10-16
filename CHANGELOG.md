@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Changed
+- **The CPU fallback decodes speculatively with its MTP head** (`--spec-type draft-mtp
+  --spec-draft-n-max 2`). The distill GGUF ships the head; llama.cpp ignored it without the flag.
 - **Voice runs on the lightest, fastest engines measured on the GTX 1070.** TTS is Kokoro-82M
   again (kokoro-fastapi, digest-pinned): a sentence's first audio in 0.15-0.3 s warm with about
   0.8 GB of VRAM, against 0.9-1.9 s and about 7 GB for Chatterbox Turbo, which is removed with its
