@@ -11,7 +11,6 @@ All notable changes to this project are documented here. The format is loosely b
   first-party image, its `pcm` patch and per-profile cloned voices. STT is
   `faster-whisper-base.en`: as accurate as `small` on the stack's vocabulary, 0.35 s per clip
   against 0.59 s.
-
 - **The CPU fallback runs the Qwen3.8-35B-A3B Distill (IQ4_XS) with 2048-token batches.** Same
   qwen35moe architecture and 262,144-token window as the Qwen3.6 UD-Q4_K_M it replaces, 2.3 GiB
   smaller, and better on this host's agent eval (21/24 tool cases against 19/24, first token of an
