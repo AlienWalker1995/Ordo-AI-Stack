@@ -42,6 +42,8 @@ class FakeHost:
         self.prs: dict[int, list[str]] = {}       # number -> [state, head]
         self.pushes: list[tuple[str, str]] = []
         self.saved = 0
+        self.on_target = False                     # origin/main already holds the local changes
+        self.history: dict[int, set[str]] = {}     # commits each pull request's history holds
 
     def fetch(self) -> str:
         return self.target
@@ -116,6 +118,12 @@ class FakeHost:
 
     def pr_status(self, number: int) -> tuple[str, str]:
         return self.prs[number][0], self.prs[number][1]
+
+    def pr_contains(self, number: int, sha: str) -> bool:
+        return sha == self.prs[number][1] or sha in self.history.get(number, set())
+
+    def changes_on_target(self, target: str) -> bool:
+        return self.on_target
 
     def reset_hard(self, sha: str) -> None:
         self.calls.append("reset")
@@ -515,7 +523,7 @@ def test_a_rescue_whose_pull_request_head_moved_is_never_reset(tmp_path, capsys)
     host.prs[500] = ["CLOSED", "someone-else", host.prs[500][2]]
     deploy.run_once(host, out=tmp_path, now=SETTLED + 120)
     assert "reset" not in host.calls and host.calls == []
-    assert "its head is someone-else, not the rescued rescue-t1" in capsys.readouterr().out
+    assert "its history no longer holds the rescued rescue-t1 (head someone-else)" in capsys.readouterr().out
 
 
 def test_changes_made_after_the_rescue_never_reset_and_update_the_open_pull_request(tmp_path):
@@ -624,3 +632,52 @@ def test_the_secret_scanner_is_the_release_ci_runs():
     version = deploy.TRUFFLEHOG_IMAGE.split(":")[1].split("@")[0]
     assert "trufflesecurity/trufflehog@" in ci and f"# v{version}" in ci
     assert "@sha256:" in deploy.TRUFFLEHOG_IMAGE
+
+
+def test_local_changes_already_on_origin_main_are_reset_at_once(tmp_path, capsys):
+    host = FakeHost()
+    host.ancestor = False                           # a local commit, squash-merged on GitHub since
+    host.on_target = True
+    assert deploy.run_once(host, out=tmp_path, now=1000.0) == 0
+    assert host.calls == ["reset", "ff", "build", "apply"] and host.pushes == []
+    assert "already on origin/main: reset to" in capsys.readouterr().out
+
+
+def test_a_rescue_merged_after_a_review_fix_on_top_is_reset(tmp_path):
+    host = edited_host()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=SETTLED)
+    host.prs[500][:2] = ["MERGED", "fix-on-top"]    # a fixer pushed after the rescue
+    host.history[500] = {"rescue-t1"}
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 120)
+    assert host.calls == ["reset", "ff", "build", "apply"]
+
+
+def test_newer_edits_never_force_push_over_a_review_fix(tmp_path):
+    host = edited_host()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=SETTLED)
+    host.prs[500][1] = "fix-on-top"                 # still open, a fixer pushed
+    host.tree = "t2"
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 120)
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 120 + deploy.RESCUE_SETTLE_SECONDS)
+    assert host.prs[500][1] == "fix-on-top"
+    assert sorted(host.prs) == [500, 501] and host.prs[501][2] == "deploy-rescue/t2"
+
+
+def test_changes_on_target_compares_every_changed_file(repo, tmp_path):
+    host = deploy.RealHost(out=tmp_path / "out", project="ordo", repo=repo)
+    base = host.head()
+    (repo / "plugin.yaml").write_text("pin: new\n", encoding="utf-8")
+    _git(repo, "commit", "--quiet", "-am", "local pin")         # the local commit
+    _git(repo, "branch", "remote-main", base)
+    _git(repo, "checkout", "--quiet", "remote-main")
+    (repo / "plugin.yaml").write_text("pin: new\n", encoding="utf-8")
+    (repo / "docs.md").write_text("more\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "--quiet", "-m", "squash of the local pin, plus a review fix")
+    target = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "--quiet", "main")
+    assert host.changes_on_target(target)
+    (repo / "plugin.yaml").write_text("pin: newer\n", encoding="utf-8")     # an edit main lacks
+    assert not host.changes_on_target(target)

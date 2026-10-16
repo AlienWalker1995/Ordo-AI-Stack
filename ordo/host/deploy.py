@@ -13,7 +13,8 @@ every few minutes (`ordo deploy --install-schedule` registers it). Each run is o
        pushed to a `deploy-rescue/` branch and opened as a pull request, so they are reviewed like
        any other change. Deploys hold while that pull request is open; once it is merged or closed
        the checkout is reset to origin/main (the changes stay on the pull request) and deploying
-       resumes
+       resumes. Changes origin/main already holds (a squash-merged pull request made from them)
+       need no rescue: the checkout is reset at once
      - no GPU lease is held
      - no one-off job container of the project is running (an eval in progress)
      - the default agent is idle: no turn in flight and no `hermes` CLI session running in it
@@ -123,6 +124,8 @@ class Host(Protocol):
     def push_branch(self, sha: str, branch: str) -> None: ...    # force: the branch is the rescue's own
     def open_pr(self, branch: str, title: str, body: str) -> int: ...  # the PR number (reused if open)
     def pr_status(self, number: int) -> tuple[str, str]: ...     # (OPEN|MERGED|CLOSED, head commit)
+    def pr_contains(self, number: int, sha: str) -> bool: ...    # sha is in the pull request's history
+    def changes_on_target(self, target: str) -> bool: ...        # target already holds every local change
     def reset_hard(self, sha: str) -> None: ...
 
 
@@ -217,6 +220,14 @@ def _rescue(host: Host, state: State, state_path: Path, target: str, now: float)
     """Move changes made on the checkout outside a pull request into one, and reset the checkout
     once that pull request is merged or closed. Returns why the deploy waits, or None when the
     checkout is back on origin/main."""
+    if host.changes_on_target(target):
+        # Nothing would be lost: every file the checkout changed already reads the same on origin/main.
+        host.reset_hard(target)
+        _clear_rescue(state)
+        state.save(state_path)
+        print(f"the checkout's local changes are already on {REMOTE}/{BRANCH}: reset to {short(target)}")
+        return None
+
     tree = host.local_tree()
     if tree != state.local_tree:
         state.local_tree, state.local_tree_since = tree, now
@@ -229,10 +240,11 @@ def _rescue(host: Host, state: State, state_path: Path, target: str, now: float)
         if status == "OPEN":
             return (f"the checkout's changes made outside a pull request are in PR #{state.rescue_pr} "
                     f"({state.rescue_branch}); deploys hold until it is merged or closed")
-        if head != state.rescue_sha:
-            return (f"PR #{state.rescue_pr} is {status.lower()}, but its head is {short(head)}, not the "
-                    f"rescued {short(state.rescue_sha)}; the checkout is left as it is")
-        # The rescued changes are kept on GitHub (the pull request's head), so the checkout can go.
+        # A fix pushed on top of the rescued commit (a review round) keeps it in the history.
+        if head != state.rescue_sha and not host.pr_contains(state.rescue_pr, state.rescue_sha):
+            return (f"PR #{state.rescue_pr} is {status.lower()}, but its history no longer holds the "
+                    f"rescued {short(state.rescue_sha)} (head {short(head)}); the checkout is left as it is")
+        # The rescued changes are kept on GitHub (the pull request's history), so the checkout can go.
         number, branch = state.rescue_pr, state.rescue_branch
         host.reset_hard(target)
         _clear_rescue(state)
@@ -259,8 +271,10 @@ def _rescue(host: Host, state: State, state_path: Path, target: str, now: float)
             _report(host, f"Deploy holds: {reason}.")
         return reason
 
-    # A pull request still open for earlier changes is updated in place; otherwise a new one.
-    reuse = bool(state.rescue_pr) and status == "OPEN"
+    # A pull request still open for earlier changes, and still holding only the rescue's own commit,
+    # is updated in place. One that someone has pushed to (a review fix) is never force-pushed over:
+    # the newer changes get their own pull request.
+    reuse = bool(state.rescue_pr) and status == "OPEN" and head == state.rescue_sha
     # Named after the tree, so a pass that pushed but failed to open the pull request retries on the
     # same branch instead of leaving a new one behind each time.
     branch = state.rescue_branch if reuse else RESCUE_BRANCH_PREFIX + short(tree)
@@ -517,6 +531,29 @@ class RealHost:
             return str(report["state"]), str(report["headRefOid"])
         except (ValueError, KeyError) as e:
             raise GateUnknown(f"gh pr view {number}: unreadable: {doc[:200]}") from e
+
+    def pr_contains(self, number: int, sha: str) -> bool:
+        # GitHub keeps refs/pull/<n>/head even after the head branch is deleted on merge.
+        ref = f"refs/deploy-rescue/pull-{number}"
+        self._git("fetch", "--quiet", REMOTE, f"+refs/pull/{number}/head:{ref}")
+        try:
+            return self.is_ancestor(sha, ref)
+        finally:
+            self._git("update-ref", "-d", ref, check=False)
+
+    def changes_on_target(self, target: str) -> bool:
+        tree = self.local_tree()
+        base = self._git("merge-base", "HEAD", target).stdout.strip()
+        changed = self._git("diff", "--name-only", "-z", base, tree).stdout.split("\0")
+        changed = [name for name in changed if name]
+        if not changed:
+            return True
+        for name in changed:
+            local = self._git("rev-parse", "--verify", "--quiet", f"{tree}:{name}", check=False).stdout.strip()
+            remote = self._git("rev-parse", "--verify", "--quiet", f"{target}:{name}", check=False).stdout.strip()
+            if local != remote:   # both empty: deleted locally and absent on origin/main too
+                return False
+        return True
 
     def reset_hard(self, sha: str) -> None:
         self._git("reset", "--hard", "--quiet", sha)
