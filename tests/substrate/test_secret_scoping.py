@@ -52,7 +52,9 @@ FILE_SPEC: dict[str, set[str]] = {
     "model-gateway-keys": {"LITELLM_MASTER_KEY", "LITELLM_KEY_HERMES", "LITELLM_KEY_EDGE",
                            "LITELLM_KEY_EVALS", "LITELLM_KEY_OPEN_WEBUI"},
     "litellm-db": {"LITELLM_DB_PASSWORD"},
-    "ops-controller": {"OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES"},
+    # + HF_TOKEN: /models/download runs here (the RW mount of the ComfyUI model store) and gated
+    # Hugging Face repos need it; ordo/control/comfyui.py sends it to the hub hop only.
+    "ops-controller": {"OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES", "HF_TOKEN"},
     "dashboard": {"OPS_CONTROLLER_TOKEN", "THROUGHPUT_RECORD_TOKEN", "LITELLM_MASTER_KEY"},
     "agent": {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT", "CLAUDE_CODE_OAUTH_TOKEN", "HERMES_DASHBOARD_OIDC_CLIENT_SECRET",
               "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"},
