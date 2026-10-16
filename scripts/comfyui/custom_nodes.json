@@ -6,12 +6,6 @@
       "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git",
       "ref": "44c8a36b7c31ee00b4271daed11dc2a4aa481140",
       "note": "2026-10-14 master. The May 2026 copy failed to import on ComfyUI 0.41 (interleaved_freqs_cis removed from core); this ref ships the LTX-2.5 graphs, IC-LoRA guides, inpaint preprocess and the looping sampler."
-    },
-    {
-      "name": "ComfyUI-Video-Depth-Anything",
-      "url": "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git",
-      "ref": "a0db08e63d1ea571601c45cde4aaee0acdd0544d",
-      "note": "Depth guide for the LTX Union Control graphs. Model file video_depth_anything_vits.pth lives in models/videodepthanything (Apache-2.0, depth-anything/Video-Depth-Anything-Small)."
     }
   ]
 }
