@@ -263,8 +263,8 @@ What a window costs the fallback (q8_0 KV, ~63 MiB of recurrent state on top, co
 
 | Window | KV | Weights | Measured resident |
 |---|---|---|---|
-| 106,496 | 1.08 GiB | 18.27 GiB | 20.1 GiB |
-| 262,144 | 2.66 GiB | 18.27 GiB | 21.2 GiB |
+| 106,496 | 1.08 GiB | 18.28 GiB | 20.1 GiB |
+| 262,144 | 2.66 GiB | 18.28 GiB | 21.2 GiB |
 
 On the reference host (Docker VM 102 GiB, ~61 GiB available with the fallback already resident at 106,496) the 262,144 window costs about 1.1 GiB more, so the fallback runs at the full window.
 
