@@ -8,6 +8,14 @@ every few minutes (`ordo deploy --install-schedule` registers it). Each run is o
   2. wait (and try again next run) unless every gate holds:
      - the checkout is on main with no uncommitted changes to tracked files, and fast-forwards to
        origin/main (a feature branch checked out here, or local edits, hold deploys)
+     - changes made on main outside a pull request (local commits, or edits to tracked files) are
+       rescued, never discarded: once they have stopped changing, they are replayed onto
+       origin/main as ONE new commit (a three-way merge, so the local history is never published),
+       that commit is scanned for secrets, pushed to a `deploy-rescue/` branch and opened as a pull
+       request, so it is reviewed like any other change. Deploys hold while that pull request is
+       open; once it is merged or closed the checkout is reset to origin/main (the changes stay on
+       the pull request) and deploying resumes. Changes origin/main already holds need no rescue,
+       and local commits that already belong to a pull request follow that pull request instead
      - no GPU lease is held
      - no one-off job container of the project is running (an eval in progress)
      - the default agent is idle: no turn in flight and no `hermes` CLI session running in it
@@ -31,6 +39,7 @@ import dataclasses
 import datetime as dt
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -56,6 +65,16 @@ SCHEDULED_TASK_NAME = "Ordo deploy"
 SCHEDULE_MINUTES = 2
 # What `waiting` holds when origin/main itself could not be fetched (no commit to name).
 UNFETCHED = "origin/main (not fetched)"
+# Changes made on the checkout outside a pull request are saved as one once they have been unchanged
+# this long, so an edit in progress is not snapshotted half done.
+RESCUE_SETTLE_SECONDS = 1800
+RESCUE_BRANCH_PREFIX = "deploy-rescue/"
+# Rescued changes are pushed to a public repo, so they are scanned first by the same TruffleHog
+# release CI runs (.github/workflows/ci.yml, v3.88.26), stricter: unverified findings count too,
+# because a false positive only holds the deploy while a missed secret would be published.
+TRUFFLEHOG_IMAGE = ("trufflesecurity/trufflehog:3.88.26"
+                    "@sha256:e306c1e5b522e74c94b7912d8bdeebe1dca26dfd2f55c7eb4be4707e5bd99997")
+TRUFFLEHOG_FOUND = 183   # TruffleHog's exit code under --fail when it found something
 
 # Run inside the agent container: the gateway's own count of turns in flight (written at every
 # turn boundary) and every `hermes` CLI process other than the gateway and the dashboard
@@ -98,6 +117,20 @@ class Host(Protocol):
     def build(self, log: Path) -> int: ...
     def apply(self, log: Path) -> int: ...
     def notify(self, text: str) -> None: ...
+    # Rescuing changes made on the checkout outside a pull request. Each raises GateUnknown when it
+    # cannot run, which makes the pass wait.
+    def local_tree(self) -> str: ...                  # tree of HEAD plus uncommitted tracked changes
+    def replayed_tree(self, target: str) -> str | None: ...     # local changes merged onto target; None = conflict
+    def target_tree(self, target: str) -> str: ...
+    def describe_local_changes(self, target: str) -> str: ...   # commits and files, for the PR body
+    def commit_onto(self, tree: str, target: str, message: str) -> str: ...  # one commit, parent target
+    def secret_findings(self, base: str, sha: str) -> list[str]: ...   # what the scanner flagged
+    def pr_for_commit(self, sha: str) -> tuple[int, str] | None: ...   # a PR whose history holds sha
+    def push_branch(self, sha: str, branch: str, expected: str) -> None: ...  # only over `expected` ("" = new)
+    def open_pr(self, branch: str, title: str, body: str) -> int: ...  # the PR number (reused if open)
+    def pr_status(self, number: int) -> tuple[str, str]: ...     # (OPEN|MERGED|CLOSED, head commit)
+    def pr_contains(self, number: int, sha: str) -> bool: ...    # sha is in the pull request's history
+    def reset_hard(self, sha: str) -> None: ...
 
 
 @dataclasses.dataclass
@@ -109,6 +142,16 @@ class State:
     waiting_reported: bool = False
     waiting_reason: str = ""
     deploying_from: str = ""     # the head before the fast-forward of the deploy in progress
+    # Changes found on the checkout outside a pull request: their tree and since when unchanged, and
+    # the pull request that holds them (its number, branch and head commit, and the tree it holds).
+    local_tree: str = ""
+    local_tree_since: float = 0.0
+    rescue_pr: int = 0
+    rescue_branch: str = ""
+    rescue_sha: str = ""
+    rescue_tree: str = ""
+    rescue_blocked_tree: str = ""   # "<tree>:<origin/main>" the rescue could not push (secrets, a conflict), and why
+    rescue_blocked_reason: str = ""
     last_result: str = ""
     last_log: str = ""
     updated_at: str = ""
@@ -162,6 +205,152 @@ def checkout_problem(host: Host, target: str) -> str | None:
     if not host.is_ancestor(host.head(), target):
         return f"the checkout's {BRANCH} has commits that are not on {REMOTE}/{BRANCH}"
     return None
+
+
+def has_local_changes(host: Host, target: str) -> bool:
+    """Whether main carries work that is not on origin/main: commits, or uncommitted changes to
+    tracked files. Another branch checked out is the operator's own doing and is left alone."""
+    if host.branch() != BRANCH:
+        return False
+    return bool(host.dirty_files()) or not host.is_ancestor(host.head(), target)
+
+
+def _clear_rescue(state: State) -> None:
+    state.local_tree, state.local_tree_since = "", 0.0
+    state.rescue_pr, state.rescue_branch, state.rescue_sha, state.rescue_tree = 0, "", "", ""
+    state.rescue_blocked_tree, state.rescue_blocked_reason = "", ""
+
+
+def _back_on_target(host: Host, state: State, state_path: Path, target: str, why: str) -> None:
+    host.reset_hard(target)
+    _clear_rescue(state)
+    state.save(state_path)
+    print(f"{why}: the checkout is reset to {REMOTE}/{BRANCH} ({short(target)})")
+
+
+def _holding(number: int, branch: str) -> str:
+    return (f"the checkout's changes made outside a pull request are in PR #{number} ({branch}); "
+            f"deploys hold until it is merged or closed")
+
+
+def _rescue(host: Host, state: State, state_path: Path, target: str, now: float) -> str | None:
+    """Move changes made on the checkout outside a pull request into one, and reset the checkout
+    once that pull request is merged or closed. Returns why the deploy waits, or None when the
+    checkout is back on origin/main."""
+    replayed = host.replayed_tree(target)
+    if replayed == host.target_tree(target):
+        _back_on_target(host, state, state_path, target, f"the checkout's changes are already on {REMOTE}/{BRANCH}")
+        return None
+
+    # Local commits, and nothing uncommitted, that a pull request already holds (an agent committed
+    # here and also opened a PR from that commit): that pull request decides, not a rescue.
+    if not host.dirty_files() and not state.rescue_branch:
+        owner = host.pr_for_commit(host.head())
+        if owner:
+            number, status = owner
+            if status == "OPEN":
+                return (f"the checkout's main is at {short(host.head())}, a commit of PR #{number}; "
+                        f"deploys hold until it is merged or closed")
+            _back_on_target(host, state, state_path, target, f"its commit is in PR #{number} ({status.lower()})")
+            _report(host, f"The deploy checkout's local commit belongs to PR #{number} ({status.lower()}): "
+                          f"the checkout is back on `{REMOTE}/{BRANCH}`.")
+            return None
+
+    tree = host.local_tree()
+    if tree != state.local_tree:
+        state.local_tree, state.local_tree_since = tree, now
+        state.save(state_path)
+
+    status, head = "", ""
+    if state.rescue_pr:
+        status, head = host.pr_status(state.rescue_pr)
+    if state.rescue_branch and tree == state.rescue_tree:
+        if not state.rescue_pr:
+            # Pushed on an earlier pass whose pull request could not be opened: open it now.
+            return _open_rescue_pr(host, state, state_path, target, updated=False)
+        if status == "OPEN":
+            return _holding(state.rescue_pr, state.rescue_branch)
+        # A fix pushed on top of the rescued commit (a review round) keeps it in the history.
+        if head != state.rescue_sha and not host.pr_contains(state.rescue_pr, state.rescue_sha):
+            return (f"PR #{state.rescue_pr} is {status.lower()}, but its history no longer holds the "
+                    f"rescued {short(state.rescue_sha)} (head {short(head)}); the checkout is left as it is")
+        # The rescued changes are kept on GitHub (the pull request's history), so the checkout can go.
+        number, branch = state.rescue_pr, state.rescue_branch
+        _back_on_target(host, state, state_path, target, f"PR #{number} is {status.lower()}")
+        _report(host, f"PR #{number} (changes rescued from the deploy checkout) is {status.lower()}: the "
+                      f"checkout is back on `{REMOTE}/{BRANCH}`; the changes stay on `{branch}`.")
+        return None
+
+    if now - state.local_tree_since < RESCUE_SETTLE_SECONDS:
+        return (f"the checkout has changes made outside a pull request; they are saved as one once "
+                f"unchanged for {RESCUE_SETTLE_SECONDS // 60} min")
+    # A block holds for this tree against this origin/main: either one moving (the conflicting
+    # commit reverted, the checkout edited) tries the rescue again.
+    blocked_key = f"{tree}:{target}"
+    if state.rescue_blocked_tree == blocked_key:
+        return state.rescue_blocked_reason
+
+    if replayed is None:
+        return _blocked(host, state, state_path, blocked_key,
+                        f"the checkout's changes made outside a pull request conflict with "
+                        f"{REMOTE}/{BRANCH}; move them by hand")
+    # One commit on top of origin/main: exactly what is scanned is what is pushed, and no local
+    # history (a secret committed and then removed, say) goes with it.
+    sha = host.commit_onto(replayed, target,
+                           "Changes found on the deploy checkout\n\n"
+                           "Made on the deploy checkout's main outside a pull request, and saved by "
+                           "`ordo deploy`.\n")
+    findings = host.secret_findings(target, sha)
+    if findings:
+        return _blocked(host, state, state_path, blocked_key,
+                        f"the checkout's changes made outside a pull request were not pushed: the secret "
+                        f"scanner flagged {', '.join(findings[:5])}; move them by hand")
+
+    # A pull request still open for earlier changes, and still holding only the rescue's own commit,
+    # is updated in place. One that someone has pushed to (a review fix) is never pushed over: the
+    # newer changes get their own pull request.
+    reuse = bool(state.rescue_pr) and status == "OPEN" and head == state.rescue_sha
+    if reuse:
+        branch, expected = state.rescue_branch, state.rescue_sha
+    else:
+        branch = RESCUE_BRANCH_PREFIX + dt.datetime.fromtimestamp(now, dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+        expected = ""
+    host.push_branch(sha, branch, expected)
+    # Recorded before the pull request is opened: a pass that fails here retries the opening only.
+    state.rescue_branch, state.rescue_sha, state.rescue_tree = branch, sha, tree
+    if not reuse:
+        state.rescue_pr = 0
+    state.save(state_path)
+    return _open_rescue_pr(host, state, state_path, target, updated=reuse)
+
+
+def _blocked(host: Host, state: State, state_path: Path, key: str, reason: str) -> str:
+    """Changes the rescue cannot push: reported once, and not tried again until the tree or
+    origin/main changes (`key` is both)."""
+    if state.rescue_blocked_tree != key:
+        state.rescue_blocked_tree, state.rescue_blocked_reason = key, reason
+        state.save(state_path)
+        _report(host, f"Deploy holds: {reason}.")
+    return reason
+
+
+def _open_rescue_pr(host: Host, state: State, state_path: Path, target: str, *, updated: bool) -> str:
+    body = ("`ordo deploy` found these changes on the deploy checkout's `main`, made outside a pull "
+            "request, and saved them here (replayed onto `origin/main` as one commit) instead of "
+            "discarding them. Deploys hold while this pull request is open.\n\n"
+            "- **Merge** it to keep the changes.\n"
+            "- **Close** it to drop them; they stay on this pull request.\n\n"
+            "Either way the checkout is then reset to `origin/main` and deploying resumes.\n\n"
+            + host.describe_local_changes(target))
+    number = host.open_pr(state.rescue_branch, f"Changes found on the deploy checkout ({short(state.rescue_sha)})",
+                          body)
+    state.rescue_pr = number
+    state.save(state_path)
+    verb = "updated" if updated else "opened"
+    print(f"saved the checkout's changes as PR #{number} ({state.rescue_branch}, {verb})")
+    _report(host, f"Changes made on the deploy checkout outside a pull request are saved as PR #{number} "
+                  f"(`{state.rescue_branch}`, {verb}). Deploys hold until it is merged or closed.")
+    return _holding(number, state.rescue_branch)
 
 
 def _wait(host: Host, state: State, state_path: Path, target: str, reason: str, now: float) -> int:
@@ -232,6 +421,14 @@ def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
 
     try:
         problem = checkout_problem(host, target)
+        if problem and has_local_changes(host, target):
+            problem = _rescue(host, state, state_path, target, now) or checkout_problem(host, target)
+        elif (state.local_tree or state.rescue_branch) and host.branch() == BRANCH:
+            # The checkout's main was cleaned some other way: forget the rescue (its PR stays on
+            # GitHub), so later, unrelated changes are never pushed into it. Another branch checked
+            # out for a while is not that: the rescue is kept for when main is back.
+            _clear_rescue(state)
+            state.save(state_path)
     except GateUnknown as e:
         problem = f"the checkout could not be read: {e}"
     problem = problem or blocking_gate(host)
@@ -288,8 +485,9 @@ class RealHost:
         """Run git in the checkout. GateUnknown when it cannot run, or (with `check`) fails: a
         checkout git cannot read (a stale index.lock, say) holds the deploy like any gate."""
         try:
+            # UTF-8 explicitly: the Windows default code page cannot decode every diff.
             proc = subprocess.run(["git", "-C", str(self.repo), *args], capture_output=True, text=True,
-                                  timeout=300)
+                                  encoding="utf-8", errors="replace", timeout=300)
         except (OSError, subprocess.SubprocessError) as e:
             raise GateUnknown(f"git {args[0]}: {e}") from e
         if check and proc.returncode != 0:
@@ -315,6 +513,150 @@ class RealHost:
 
     def fast_forward(self, sha: str) -> bool:
         return self._git("merge", "--ff-only", "--quiet", sha, check=False).returncode == 0
+
+    def _local_commit(self) -> str:
+        # `git stash create` writes a commit of the index and working tree (tracked files only)
+        # without touching either, and prints nothing when there is nothing uncommitted.
+        return self._git("stash", "create").stdout.strip() or self.head()
+
+    def local_tree(self) -> str:
+        return self._git("rev-parse", f"{self._local_commit()}^{{tree}}").stdout.strip()
+
+    def replayed_tree(self, target: str) -> str | None:
+        local = self._local_commit()
+        base = self._git("merge-base", "HEAD", target).stdout.strip()
+        proc = self._git("merge-tree", "--write-tree", "--merge-base", base, target, local, check=False)
+        if proc.returncode == 1:
+            return None    # a conflict
+        if proc.returncode != 0:
+            raise GateUnknown(f"git merge-tree: {(proc.stderr or proc.stdout).strip()[:200]}")
+        return proc.stdout.split()[0]
+
+    def target_tree(self, target: str) -> str:
+        return self._git("rev-parse", f"{target}^{{tree}}").stdout.strip()
+
+    def describe_local_changes(self, target: str) -> str:
+        commits = self._git("log", "--format=- %h %an: %s", f"{target}..HEAD").stdout.strip()
+        dirty = self.dirty_files()
+        parts = [f"**Local commits replayed here (not on `{REMOTE}/{BRANCH}`):**\n{commits}" if commits else "",
+                 "**Uncommitted changes:**\n" + "\n".join(f"- `{name}`" for name in dirty) if dirty else ""]
+        return "\n\n".join(part for part in parts if part)
+
+    def commit_onto(self, tree: str, target: str, message: str) -> str:
+        return self._git("commit-tree", tree, "-p", target, "-m", message).stdout.strip()
+
+    def secret_findings(self, base: str, sha: str) -> list[str]:
+        # The scanner must see the bytes that land in the repo. A plain `git diff` prints only
+        # "Binary files differ" for a binary (and --binary encodes hunks base85), so its content
+        # would never reach TruffleHog; materialize every file the commit changes, at the commit.
+        scan = self.out / "deploy" / "secret-scan"
+        try:
+            shutil.rmtree(scan, ignore_errors=True)
+            scan.mkdir(parents=True)
+            entries = self._git("diff", "--name-status", "-z", base, sha).stdout.split("\0")
+            paths: list[str] = []
+            i = 0
+            while i < len(entries):
+                status = entries[i]
+                i += 1
+                if not status:
+                    continue
+                if status[0] in ("R", "C"):      # rename/copy records carry old and new names
+                    i += 1
+                elif status[0] == "D":           # deleted: gone at sha, nothing to scan
+                    i += 1
+                    continue
+                if i < len(entries):
+                    paths.append(entries[i])
+                    i += 1
+            for path in paths:
+                # Bytes, not text: the scanner sees exactly what is pushed, whatever its encoding.
+                raw = subprocess.run(["git", "-C", str(self.repo), "show", f"{sha}:{path}"],
+                                     capture_output=True, timeout=300, check=True).stdout
+                dest = scan / path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(raw)
+            proc = subprocess.run(
+                ["docker", "run", "--rm", "--network", "none", "-v", f"{scan.resolve()}:/scan:ro", TRUFFLEHOG_IMAGE,
+                 "filesystem", "/scan", "--results=verified,unknown,unverified", "--exclude-detectors=lob",
+                 "--no-verification", "--no-update", "--fail", "--json"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise GateUnknown(f"the secret scanner could not run: {e}") from e
+        finally:
+            shutil.rmtree(scan, ignore_errors=True)
+        if proc.returncode == 0:
+            return []
+        if proc.returncode != TRUFFLEHOG_FOUND:
+            raise GateUnknown(f"the secret scanner failed: {(proc.stderr or proc.stdout).strip()[-200:]}")
+        found = []
+        for line in proc.stdout.splitlines():
+            try:
+                found.append(json.loads(line).get("DetectorName") or "a secret")
+            except json.JSONDecodeError:
+                continue
+        return sorted(set(found)) or ["a secret"]
+
+    def pr_for_commit(self, sha: str) -> tuple[int, str] | None:
+        doc = self._gh("pr", "list", "--search", sha, "--state", "all", "--json", "number,state")
+        try:
+            candidates = [(int(pr["number"]), str(pr["state"])) for pr in json.loads(doc or "[]")]
+        except (ValueError, KeyError, TypeError) as e:
+            raise GateUnknown(f"gh pr list: unreadable: {doc[:200]}") from e
+        for number, state in candidates:   # a search hit is only a hint; the history decides
+            if self.pr_contains(number, sha):
+                return number, state
+        return None
+
+    def push_branch(self, sha: str, branch: str, expected: str) -> None:
+        if not branch.startswith(RESCUE_BRANCH_PREFIX):
+            raise ValueError(f"refusing to push {branch}: only {RESCUE_BRANCH_PREFIX} branches are the rescue's own")
+        # Only over the commit the rescue itself pushed ("" = the branch must not exist yet): a push
+        # someone made in between makes this fail instead of being overwritten.
+        self._git("push", "--quiet", f"--force-with-lease=refs/heads/{branch}:{expected}", REMOTE,
+                  f"{sha}:refs/heads/{branch}")
+
+    def _gh(self, *args: str, stdin: str | None = None) -> str:
+        try:
+            proc = subprocess.run(["gh", *args], cwd=self.repo, input=stdin, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=120)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise GateUnknown(f"gh {args[0]}: {e}") from e
+        if proc.returncode != 0:
+            raise GateUnknown(f"gh {' '.join(args[:2])}: {(proc.stderr or proc.stdout).strip()[:200]}")
+        return proc.stdout.strip()
+
+    def open_pr(self, branch: str, title: str, body: str) -> int:
+        existing = self._gh("pr", "list", "--head", branch, "--state", "open", "--json", "number",
+                            "--jq", ".[0].number // empty")
+        if existing:
+            return int(existing)
+        url = self._gh("pr", "create", "--base", BRANCH, "--head", branch, "--title", title,
+                       "--body-file", "-", stdin=body)
+        try:
+            return int(url.rstrip("/").rsplit("/", 1)[1])
+        except (IndexError, ValueError) as e:
+            raise GateUnknown(f"gh pr create printed no pull request URL: {url[:200]}") from e
+
+    def pr_status(self, number: int) -> tuple[str, str]:
+        doc = self._gh("pr", "view", str(number), "--json", "state,headRefOid")
+        try:
+            report = json.loads(doc)
+            return str(report["state"]), str(report["headRefOid"])
+        except (ValueError, KeyError) as e:
+            raise GateUnknown(f"gh pr view {number}: unreadable: {doc[:200]}") from e
+
+    def pr_contains(self, number: int, sha: str) -> bool:
+        # GitHub keeps refs/pull/<n>/head even after the head branch is deleted on merge.
+        ref = f"refs/deploy-rescue/pull-{number}"
+        self._git("fetch", "--quiet", REMOTE, f"+refs/pull/{number}/head:{ref}")
+        try:
+            return self.is_ancestor(sha, ref)
+        finally:
+            self._git("update-ref", "-d", ref, check=False)
+
+    def reset_hard(self, sha: str) -> None:
+        self._git("reset", "--hard", "--quiet", sha)
 
     def gpu_leased(self) -> bool:
         try:
