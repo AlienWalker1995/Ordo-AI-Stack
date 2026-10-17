@@ -364,38 +364,148 @@ def test_the_dashboard_keeps_no_list_of_what_a_switch_restarts():
 
 # --- services table ---
 
-def test_service_table_groups_every_container_and_keeps_catalog_names():
-    cards = [
-        {"id": "webui", "name": "Open WebUI", "category": "interface", "ops_service": "open-webui",
-         "open_url": "https://chat.example/", "ok": True, "error": None, "background": False},
-        {"id": "llamacpp", "name": "llama.cpp (GPU)", "category": "inference", "ops_service": "llamacpp",
-         "open_url": None, "ok": True, "error": None, "background": True},
-    ]
-    rows = {
-        "open-webui": {"id": "open-webui", "state": "running", "health": "healthy", "status": "Up 1 hour (healthy)"},
-        "llamacpp": {"id": "llamacpp", "state": "running", "health": None, "status": "Up 3 hours"},
-        "mcp-searxng": {"id": "mcp-searxng", "state": "running", "health": "healthy", "status": "Up 2 days (healthy)"},
-        "tailnet-chat": {"id": "tailnet-chat", "state": "running", "health": None, "status": "Up 2 days"},
-        "evals": {"id": "evals", "state": "exited", "health": None, "status": "Exited (0) 3 hours ago"},
-        "agent": {"id": "agent", "state": "running", "health": "healthy", "status": "Up 1 hour (healthy)"},
+WEBUI_CARD = {"id": "webui", "name": "Open WebUI", "category": "interface", "ops_service": "open-webui",
+              "open_url": "https://chat.example/", "ok": True, "error": None, "background": False}
+PROBE_CARD = {"id": "langfuse", "name": "Langfuse", "category": "observability", "ops_service": None,
+              "open_url": "https://langfuse.example/", "ok": True, "error": None, "background": False}
+# ops-controller /services: the ordo project's containers, by compose service.
+ORDO_SERVICES = {
+    "open-webui": {"id": "open-webui", "name": "ordo-open-webui-1", "state": "running", "health": "healthy",
+                   "status": "Up 1 hour (healthy)"},
+    "mcp-searxng": {"id": "mcp-searxng", "name": "ordo-mcp-searxng-1", "state": "running", "health": "healthy",
+                    "status": "Up 2 days (healthy)"},
+    "evals": {"id": "evals", "name": "ordo-evals-1", "state": "exited", "health": None,
+              "status": "Exited (0) 3 hours ago"},
+    "agent": {"id": "agent", "name": "ordo-agent-1", "state": "running", "health": "healthy",
+              "status": "Up 1 hour (healthy)"},
+}
+# ops-controller /containers: every container on the host, ordo's included (DockerBackend.container_row).
+HOST_CONTAINERS = [
+    {"name": "ordo-open-webui-1", "status": "running", "image": "webui", "project": "ordo", "service": "open-webui",
+     "health": "healthy", "status_text": "Up 1 hour (healthy)"},
+    {"name": "ordo-agent-1", "status": "running", "image": "agent", "project": "ordo", "service": "agent",
+     "health": "healthy", "status_text": "Up 1 hour (healthy)"},
+    {"name": "media-server", "status": "running", "image": "media", "project": "media-stack", "service": "server",
+     "health": "healthy", "status_text": "Up 4 days (healthy)"},
+    {"name": "media-indexer", "status": "exited", "image": "indexer", "project": "media-stack", "service": "indexer",
+     "health": None, "status_text": "Exited (1) 2 hours ago"},
+    {"name": "web-site-web-1", "status": "running", "image": "nginx", "project": "web-site", "service": "web",
+     "health": None, "status_text": "Up 6 days"},
+    {"name": "web-site-job-1", "status": "exited", "image": "busybox", "project": "web-site", "service": "job",
+     "health": None, "status_text": "Exited (0) 1 day ago"},
+    {"name": "adhoc", "status": "running", "image": "alpine", "project": "", "service": "", "health": None,
+     "status_text": "Up 5 minutes"},
+]
+# ops-controller /projects: the managed projects' own rows (managed.ROW_FIELDS).
+MANAGED = {"projects": [{"project": "media-stack", "containers": [
+    {"name": "media-server", "service": "server", "state": "running", "health": "healthy",
+     "status": "Up 4 days (healthy)", "image": "media"},
+    {"name": "media-indexer", "service": "indexer", "state": "exited", "health": None,
+     "status": "Exited (1) 2 hours ago", "image": "indexer"},
+]}]}
+
+
+def _host_table(**kwargs):
+    args = {"host_containers": HOST_CONTAINERS, "managed": MANAGED, **kwargs}
+    return console.build_service_table([WEBUI_CARD, PROBE_CARD], ORDO_SERVICES, **args)
+
+
+def _by_id(rows):
+    return {r["id"]: r for r in rows}
+
+
+def test_service_table_lists_every_container_on_the_host_once():
+    rows = _host_table()
+    ids = [r["id"] for r in rows]
+    assert len(ids) == len(set(ids))
+    assert sorted(ids) == sorted([
+        "ordo:open-webui", "link:langfuse", "ordo:mcp-searxng", "ordo:evals", "ordo:agent",
+        "host:media-server", "host:media-indexer", "host:web-site-web-1", "host:web-site-job-1", "host:adhoc",
+    ])
+    # An ordo container is its ordo row, never a second host row as well.
+    assert not any(r["container"] == "ordo-open-webui-1" and r["id"].startswith("host:") for r in rows)
+
+
+def test_ordo_rows_keep_catalog_names_open_links_and_lifecycle_actions():
+    webui = _by_id(_host_table())["ordo:open-webui"]
+    assert webui["name"] == "Open WebUI" and webui["project"] == "ordo" and webui["compose"] == "open-webui"
+    assert webui["container"] == "ordo-open-webui-1" and webui["card_id"] == "webui"
+    assert webui["verdict"] == "up" and webui["uptime"] == "1 hour" and webui["open_url"] == "https://chat.example/"
+    assert webui["control"] == "ordo" and webui["actions"] == ["restart", "stop"] and webui["reason"] is None
+    evals = _by_id(_host_table())["ordo:evals"]
+    assert evals["verdict"] == "done" and evals["actions"] == ["start"]
+
+
+def test_each_row_says_which_routes_control_it():
+    rows = _by_id(_host_table())
+    assert {i: r["control"] for i, r in rows.items()} == {
+        "ordo:open-webui": "ordo", "ordo:mcp-searxng": "ordo", "ordo:evals": "ordo",
+        "ordo:agent": "host",  # the control plane refuses to cycle what serves it
+        "link:langfuse": "link",
+        "host:media-server": "managed", "host:media-indexer": "managed",
+        "host:web-site-web-1": "none", "host:web-site-job-1": "none", "host:adhoc": "none",
     }
-    groups = {g["group"]: g["services"] for g in console.build_service_table(cards, rows)}
-    webui = groups["Apps"][0]
-    assert webui["name"] == "Open WebUI" and webui["verdict"] == "up" and webui["uptime"] == "1 hour"
-    assert webui["open_url"] == "https://chat.example/" and webui["compose"] == "open-webui"
-    assert groups["Inference"][0]["compose"] == "llamacpp"
-    assert [s["compose"] for s in groups["Tools (MCP)"]] == ["mcp-searxng"]
-    assert [s["compose"] for s in groups["Network"]] == ["tailnet-chat"]
-    assert groups["Jobs"][0]["verdict"] == "done"
-    agent = next(s for g in groups.values() for s in g if s["compose"] == "agent")
-    assert agent["controllable"] is False  # the control plane refuses to cycle what serves it
+    assert rows["ordo:agent"]["actions"] == [] and rows["link:langfuse"]["actions"] == []
+
+
+def test_a_managed_projects_container_offers_restart_while_it_runs():
+    rows = _by_id(_host_table())
+    server = rows["host:media-server"]
+    assert server["name"] == "media-server" and server["project"] == "media-stack"
+    assert server["container"] == "media-server" and server["compose"] is None
+    assert server["verdict"] == "up" and server["uptime"] == "4 days" and server["actions"] == ["restart"]
+    indexer = rows["host:media-indexer"]
+    assert indexer["verdict"] == "failed" and indexer["actions"] == []  # no start verb for managed projects yet
+
+
+def test_an_unmanaged_projects_container_is_read_only_and_says_how_to_manage_it():
+    rows = _by_id(_host_table())
+    web = rows["host:web-site-web-1"]
+    assert web["verdict"] == "up" and web["uptime"] == "6 days" and web["actions"] == []
+    assert web["reason"] == "add web-site to managed_projects in ordo.yaml"
+    # docker's Status text gives the exit code: exit 0 is a finished job, not a failure.
+    assert rows["host:web-site-job-1"]["verdict"] == "done"
+    adhoc = rows["host:adhoc"]
+    assert adhoc["project"] is None and adhoc["reason"] == "not started by compose, so no managed project can include it"
+
+
+def test_without_the_managed_list_no_row_claims_its_project_is_unmanaged():
+    server = _by_id(_host_table(managed=None))["host:media-server"]
+    assert server["control"] == "none" and server["actions"] == []
+    assert server["reason"] == "the control plane did not say which projects it manages"
+
+
+def test_rows_sort_ordo_first_then_projects_alphabetically_then_name():
+    rows = _host_table()
+    assert [(r["project"], r["name"]) for r in rows] == [
+        ("ordo", "agent"), ("ordo", "evals"), ("ordo", "Langfuse"), ("ordo", "mcp-searxng"), ("ordo", "Open WebUI"),
+        ("media-stack", "media-indexer"), ("media-stack", "media-server"),
+        ("web-site", "web-site-job-1"), ("web-site", "web-site-web-1"),
+        (None, "adhoc"),
+    ]
+
+
+def test_with_the_control_plane_down_ordo_rows_are_unknown_with_no_actions():
+    rows = console.build_service_table([WEBUI_CARD, PROBE_CARD], {}, control_plane_up=False)
+    webui = _by_id(rows)["ordo:open-webui"]
+    assert webui["verdict"] == "unknown" and webui["actions"] == [] and webui["control"] == "ordo"
+    assert [r["id"] for r in rows] == ["link:langfuse", "ordo:open-webui"]
+
+
+def test_the_table_has_no_groups():
+    assert not hasattr(console, "_GROUP_ORDER")
+    assert all("group" not in r for r in _host_table())
+
+
+def test_the_dashboard_names_the_compose_project_the_stack_runs_as():
+    from ordo.render.config import ORDO_PROJECT
+    assert console.ORDO_PROJECT == ORDO_PROJECT
 
 
 def test_service_table_lists_a_catalog_card_whose_container_is_missing_as_stopped():
     cards = [{"id": "n8n", "name": "n8n", "category": "automation", "ops_service": "n8n",
               "open_url": None, "ok": False, "error": "container missing", "background": False}]
-    groups = console.build_service_table(cards, {})
-    assert groups[0]["services"][0]["verdict"] == "stopped"
+    assert console.build_service_table(cards, {})[0]["verdict"] == "stopped"
 
 
 @pytest.mark.parametrize("verdict, actions", [
@@ -416,7 +526,7 @@ def test_a_running_container_whose_probe_fails_is_unhealthy_not_up():
               "error": "HTTP 404", "background": False}]
     rows = {"codebase-memory-ui": {"id": "codebase-memory-ui", "state": "running", "health": None,
                                    "status": "Up 2 days"}}
-    row = console.build_service_table(cards, rows)[0]["services"][0]
+    row = console.build_service_table(cards, rows)[0]
     assert row["verdict"] == "unhealthy" and row["error"] == "HTTP 404"
 
 
@@ -442,26 +552,21 @@ def test_a_probe_only_card_takes_its_state_from_the_probe_and_offers_no_controls
     """Some cards are a link and a health probe, not one container (Langfuse is six coupled
     ones). Treating the card id as a container name called a healthy service 'stopped' and
     offered a Start button that could only fail."""
-    cards = [{"id": "langfuse", "name": "Langfuse", "category": "observability", "ops_service": None,
-              "open_url": "https://langfuse.example/", "ok": True, "error": None, "background": False}]
-    row = console.build_service_table(cards, {})[0]["services"][0]
+    row = console.build_service_table([PROBE_CARD], {})[0]
     assert row["verdict"] == "up"
-    assert row["compose"] is None and row["card_id"] == "langfuse"
-    assert row["controllable"] is False and row["actions"] == []
+    assert row["compose"] is None and row["card_id"] == "langfuse" and row["id"] == "link:langfuse"
+    assert row["control"] == "link" and row["actions"] == []
 
 
 def test_a_failing_probe_only_card_is_unhealthy():
-    cards = [{"id": "langfuse", "name": "Langfuse", "category": "observability", "ops_service": None,
-              "open_url": None, "ok": False, "error": "HTTP 502", "background": False}]
-    row = console.build_service_table(cards, {})[0]["services"][0]
+    cards = [{**PROBE_CARD, "open_url": None, "ok": False, "error": "HTTP 502"}]
+    row = console.build_service_table(cards, {})[0]
     assert row["verdict"] == "unhealthy" and row["error"] == "HTTP 502"
 
 
 def test_rows_carry_the_card_id_so_usage_keyed_by_card_can_be_matched():
-    cards = [{"id": "webui", "name": "Open WebUI", "category": "interface", "ops_service": "open-webui",
-              "open_url": None, "ok": True, "error": None, "background": False}]
     rows = {"open-webui": {"id": "open-webui", "state": "running", "health": None, "status": "Up 1 hour"}}
-    row = console.build_service_table(cards, rows)[0]["services"][0]
+    row = console.build_service_table([WEBUI_CARD], rows)[0]
     assert row["card_id"] == "webui" and row["compose"] == "open-webui"
 
 
@@ -469,10 +574,9 @@ def test_a_card_without_ops_service_uses_a_container_of_the_same_name_when_there
     cards = [{"id": "couchdb", "name": "CouchDB (notes sync)", "category": "notes", "ops_service": None,
               "open_url": None, "ok": True, "error": None, "background": True}]
     rows = {"couchdb": {"id": "couchdb", "state": "running", "health": "healthy", "status": "Up 9 hours (healthy)"}}
-    groups = console.build_service_table(cards, rows)
-    all_rows = [r for g in groups for r in g["services"]]
+    all_rows = console.build_service_table(cards, rows)
     assert len(all_rows) == 1  # not listed twice, once as the card and once as a bare container
-    assert all_rows[0]["compose"] == "couchdb" and all_rows[0]["controllable"] is True
+    assert all_rows[0]["compose"] == "couchdb" and all_rows[0]["control"] == "ordo"
 
 
 # --- drift: ops-controller's GET /doctor, the checks `ordo doctor` would flag (hostile audit OPS-3) ---

@@ -367,12 +367,14 @@ def test_list_containers_is_a_bare_list_that_includes_every_project_container(un
     ours = {row["service"]: row for row in listing if row["project"] == unchanged.project}
     assert sorted(ours) == SERVICES
     for service, row in ours.items():
-        assert set(row) == {"name", "status", "image", "project", "service", "health"}
+        assert set(row) == {"name", "status", "image", "project", "service", "health", "status_text"}
         assert row["name"] == f"{unchanged.project}-{service}-1"
         assert BUSYBOX.startswith(row["image"]) and row["image"]
     assert (ours["web"]["status"], ours["web"]["health"]) == ("running", None)
     assert (ours["db"]["status"], ours["db"]["health"]) == ("running", "healthy")
     assert ours["job"]["status"] == "exited"
+    # docker's Status text: the uptime and the exit code the dashboard's verdict reads.
+    assert ours["db"]["status_text"].startswith("Up ") and ours["job"]["status_text"].startswith("Exited (0)")
 
 
 def test_container_inspect_summarizes_a_project_container(unchanged):

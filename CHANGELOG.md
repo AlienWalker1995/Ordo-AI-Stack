@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Changed
+- **The Services page lists every container on the host in one flat list.** Containers of other
+  compose projects appear beside ordo's (sorted ordo first, then by project and name), with no
+  group headers or collapsed sections, and the filter matches name or project. Each row says what
+  can act on it: ordo services keep start, stop and restart; a project listed in
+  `managed_projects:` gets logs and restart through new `/api/ops/projects/{project}/containers/{name}/`
+  proxies; the agent and ops-controller read "Host only", probe-only cards "Link only", and any
+  other project "Not managed" with the `ordo.yaml` change that would manage it. ops-controller's
+  host-wide `GET /containers` rows gain `status_text` (docker's Status), so those rows show uptime
+  and tell a finished job from a crash.
 - **The CPU fallback decodes speculatively with its MTP head** (`--spec-type draft-mtp
   --spec-draft-n-max 2`). The distill GGUF ships the head; llama.cpp ignored it without the flag.
 - **Voice runs on the lightest, fastest engines measured on the GTX 1070.** TTS is Kokoro-82M

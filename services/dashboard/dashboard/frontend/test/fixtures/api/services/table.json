@@ -1,237 +1,292 @@
 {
-  "groups": [
+  "rows": [
     {
-      "group": "Apps",
-      "services": [
-        {
-          "compose": "open-webui",
-          "card_id": "webui",
-          "name": "Open WebUI",
-          "group": "Apps",
-          "verdict": "up",
-          "uptime": "2 days",
-          "status": "Up 2 days (healthy)",
-          "open_url": "https://chat.example.test/",
-          "error": null,
-          "controllable": true,
-          "lent": false,
-          "actions": [
-            "restart",
-            "stop"
-          ]
-        },
-        {
-          "compose": "n8n",
-          "card_id": "n8n",
-          "name": "N8N",
-          "group": "Apps",
-          "verdict": "up",
-          "uptime": "15 minutes",
-          "status": "Up 15 minutes (healthy)",
-          "open_url": "https://n8n.example.test/",
-          "error": null,
-          "controllable": true,
-          "lent": false,
-          "actions": [
-            "restart",
-            "stop"
-          ]
-        },
-        {
-          "compose": null,
-          "card_id": "codebase-memory",
-          "name": "Codebase Memory",
-          "group": "Apps",
-          "verdict": "unhealthy",
-          "uptime": null,
-          "status": null,
-          "open_url": "https://graph.example.test/",
-          "error": "HTTP 502",
-          "controllable": false,
-          "lent": false,
-          "actions": []
-        }
-      ]
+      "id": "ordo:caddy",
+      "name": "caddy",
+      "project": "ordo",
+      "container": "ordo-caddy-1",
+      "compose": "caddy",
+      "card_id": null,
+      "verdict": "up",
+      "uptime": "2 days",
+      "status": "Up 2 days",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [
+        "restart",
+        "stop"
+      ],
+      "control": "ordo",
+      "reason": null
     },
     {
-      "group": "Inference",
-      "services": [
-        {
-          "compose": "llamacpp",
-          "card_id": "llamacpp",
-          "name": "llama.cpp (GPU)",
-          "group": "Inference",
-          "verdict": "up",
-          "uptime": "3 hours",
-          "status": "Up 3 hours (healthy)",
-          "open_url": null,
-          "error": null,
-          "controllable": true,
-          "lent": false,
-          "actions": [
-            "restart",
-            "stop"
-          ]
-        },
-        {
-          "compose": "llamacpp-cpu",
-          "card_id": "llamacpp-cpu",
-          "name": "llama.cpp (CPU fallback)",
-          "group": "Inference",
-          "verdict": "up",
-          "uptime": "3 hours",
-          "status": "Up 3 hours (healthy)",
-          "open_url": null,
-          "error": null,
-          "controllable": true,
-          "lent": false,
-          "actions": [
-            "restart",
-            "stop"
-          ]
-        },
-        {
-          "compose": "comfyui",
-          "card_id": "comfyui",
-          "name": "ComfyUI",
-          "group": "Inference",
-          "verdict": "up",
-          "uptime": "5 hours",
-          "status": "Up 5 hours",
-          "open_url": "https://comfy.example.test/",
-          "error": null,
-          "controllable": true,
-          "lent": false,
-          "actions": [
-            "restart",
-            "stop"
-          ]
-        }
-      ]
+      "id": "link:codebase-memory",
+      "name": "Codebase Memory",
+      "project": "ordo",
+      "container": null,
+      "compose": null,
+      "card_id": "codebase-memory",
+      "verdict": "unhealthy",
+      "uptime": null,
+      "status": null,
+      "open_url": "https://graph.example.test/",
+      "error": "HTTP 502",
+      "lent": false,
+      "actions": [],
+      "control": "link",
+      "reason": null
     },
     {
-      "group": "Data",
-      "services": [
-        {
-          "compose": "qdrant",
-          "card_id": "qdrant",
-          "name": "Qdrant",
-          "group": "Data",
-          "verdict": "up",
-          "uptime": "2 days",
-          "status": "Up 2 days",
-          "open_url": null,
-          "error": null,
-          "controllable": true,
-          "lent": false,
-          "actions": [
-            "restart",
-            "stop"
-          ]
-        }
-      ]
+      "id": "ordo:comfyui",
+      "name": "ComfyUI",
+      "project": "ordo",
+      "container": "ordo-comfyui-1",
+      "compose": "comfyui",
+      "card_id": "comfyui",
+      "verdict": "up",
+      "uptime": "5 hours",
+      "status": "Up 5 hours",
+      "open_url": "https://comfy.example.test/",
+      "error": null,
+      "lent": false,
+      "actions": [
+        "restart",
+        "stop"
+      ],
+      "control": "ordo",
+      "reason": null
     },
     {
-      "group": "Platform",
-      "services": [
-        {
-          "compose": "model-gateway",
-          "card_id": null,
-          "name": "model-gateway",
-          "group": "Platform",
-          "verdict": "up",
-          "uptime": "3 hours",
-          "status": "Up 3 hours (healthy)",
-          "open_url": null,
-          "error": null,
-          "controllable": true,
-          "lent": false,
-          "actions": [
-            "restart",
-            "stop"
-          ]
-        },
-        {
-          "compose": "ops-controller",
-          "card_id": null,
-          "name": "ops-controller",
-          "group": "Platform",
-          "verdict": "up",
-          "uptime": "2 days",
-          "status": "Up 2 days (healthy)",
-          "open_url": null,
-          "error": null,
-          "controllable": false,
-          "lent": false,
-          "actions": []
-        }
-      ]
+      "id": "ordo:evals",
+      "name": "evals",
+      "project": "ordo",
+      "container": "ordo-evals-1",
+      "compose": "evals",
+      "card_id": null,
+      "verdict": "done",
+      "uptime": null,
+      "status": "Exited (0) 3 hours ago",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [
+        "start"
+      ],
+      "control": "ordo",
+      "reason": null
     },
     {
-      "group": "Tools (MCP)",
-      "services": [
-        {
-          "compose": "mcp-searxng",
-          "card_id": null,
-          "name": "mcp-searxng",
-          "group": "Tools (MCP)",
-          "verdict": "up",
-          "uptime": "2 days",
-          "status": "Up 2 days",
-          "open_url": null,
-          "error": null,
-          "controllable": true,
-          "lent": false,
-          "actions": [
-            "restart",
-            "stop"
-          ]
-        }
-      ]
+      "id": "ordo:llamacpp-cpu",
+      "name": "llama.cpp (CPU fallback)",
+      "project": "ordo",
+      "container": "ordo-llamacpp-cpu-1",
+      "compose": "llamacpp-cpu",
+      "card_id": "llamacpp-cpu",
+      "verdict": "up",
+      "uptime": "3 hours",
+      "status": "Up 3 hours (healthy)",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [
+        "restart",
+        "stop"
+      ],
+      "control": "ordo",
+      "reason": null
     },
     {
-      "group": "Network",
-      "services": [
-        {
-          "compose": "caddy",
-          "card_id": null,
-          "name": "caddy",
-          "group": "Network",
-          "verdict": "up",
-          "uptime": "2 days",
-          "status": "Up 2 days",
-          "open_url": null,
-          "error": null,
-          "controllable": true,
-          "lent": false,
-          "actions": [
-            "restart",
-            "stop"
-          ]
-        }
-      ]
+      "id": "ordo:llamacpp",
+      "name": "llama.cpp (GPU)",
+      "project": "ordo",
+      "container": "ordo-llamacpp-1",
+      "compose": "llamacpp",
+      "card_id": "llamacpp",
+      "verdict": "up",
+      "uptime": "3 hours",
+      "status": "Up 3 hours (healthy)",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [
+        "restart",
+        "stop"
+      ],
+      "control": "ordo",
+      "reason": null
     },
     {
-      "group": "Jobs",
-      "services": [
-        {
-          "compose": "evals",
-          "card_id": null,
-          "name": "evals",
-          "group": "Jobs",
-          "verdict": "done",
-          "uptime": null,
-          "status": "Exited (0) 3 hours ago",
-          "open_url": null,
-          "error": null,
-          "controllable": true,
-          "lent": false,
-          "actions": [
-            "start"
-          ]
-        }
-      ]
+      "id": "ordo:mcp-searxng",
+      "name": "mcp-searxng",
+      "project": "ordo",
+      "container": "ordo-mcp-searxng-1",
+      "compose": "mcp-searxng",
+      "card_id": null,
+      "verdict": "up",
+      "uptime": "2 days",
+      "status": "Up 2 days",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [
+        "restart",
+        "stop"
+      ],
+      "control": "ordo",
+      "reason": null
+    },
+    {
+      "id": "ordo:model-gateway",
+      "name": "model-gateway",
+      "project": "ordo",
+      "container": "ordo-model-gateway-1",
+      "compose": "model-gateway",
+      "card_id": null,
+      "verdict": "up",
+      "uptime": "3 hours",
+      "status": "Up 3 hours (healthy)",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [
+        "restart",
+        "stop"
+      ],
+      "control": "ordo",
+      "reason": null
+    },
+    {
+      "id": "ordo:n8n",
+      "name": "N8N",
+      "project": "ordo",
+      "container": "ordo-n8n-1",
+      "compose": "n8n",
+      "card_id": "n8n",
+      "verdict": "up",
+      "uptime": "15 minutes",
+      "status": "Up 15 minutes (healthy)",
+      "open_url": "https://n8n.example.test/",
+      "error": null,
+      "lent": false,
+      "actions": [
+        "restart",
+        "stop"
+      ],
+      "control": "ordo",
+      "reason": null
+    },
+    {
+      "id": "ordo:open-webui",
+      "name": "Open WebUI",
+      "project": "ordo",
+      "container": "ordo-open-webui-1",
+      "compose": "open-webui",
+      "card_id": "webui",
+      "verdict": "up",
+      "uptime": "2 days",
+      "status": "Up 2 days (healthy)",
+      "open_url": "https://chat.example.test/",
+      "error": null,
+      "lent": false,
+      "actions": [
+        "restart",
+        "stop"
+      ],
+      "control": "ordo",
+      "reason": null
+    },
+    {
+      "id": "ordo:ops-controller",
+      "name": "ops-controller",
+      "project": "ordo",
+      "container": "ordo-ops-controller-1",
+      "compose": "ops-controller",
+      "card_id": null,
+      "verdict": "up",
+      "uptime": "2 days",
+      "status": "Up 2 days (healthy)",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [],
+      "control": "host",
+      "reason": null
+    },
+    {
+      "id": "ordo:qdrant",
+      "name": "Qdrant",
+      "project": "ordo",
+      "container": "ordo-qdrant-1",
+      "compose": "qdrant",
+      "card_id": "qdrant",
+      "verdict": "up",
+      "uptime": "2 days",
+      "status": "Up 2 days",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [
+        "restart",
+        "stop"
+      ],
+      "control": "ordo",
+      "reason": null
+    },
+    {
+      "id": "host:media-indexer",
+      "name": "media-indexer",
+      "project": "media-stack",
+      "container": "media-indexer",
+      "compose": null,
+      "card_id": null,
+      "verdict": "failed",
+      "uptime": null,
+      "status": "Exited (1) 2 hours ago",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [],
+      "control": "managed",
+      "reason": null
+    },
+    {
+      "id": "host:media-server",
+      "name": "media-server",
+      "project": "media-stack",
+      "container": "media-server",
+      "compose": null,
+      "card_id": null,
+      "verdict": "up",
+      "uptime": "4 days",
+      "status": "Up 4 days (healthy)",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [
+        "restart"
+      ],
+      "control": "managed",
+      "reason": null
+    },
+    {
+      "id": "host:web-site-web-1",
+      "name": "web-site-web-1",
+      "project": "web-site",
+      "container": "web-site-web-1",
+      "compose": null,
+      "card_id": null,
+      "verdict": "up",
+      "uptime": "6 days",
+      "status": "Up 6 days",
+      "open_url": null,
+      "error": null,
+      "lent": false,
+      "actions": [],
+      "control": "none",
+      "reason": "add web-site to managed_projects in ordo.yaml"
     }
   ],
-  "control_plane": "up"
+  "control_plane": "up",
+  "host_containers": "up"
 }

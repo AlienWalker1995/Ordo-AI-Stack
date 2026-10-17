@@ -397,56 +397,82 @@ def model_slots(model_config: dict, served: dict, disk_files: list[dict], throug
 # services table
 # ---------------------------------------------------------------------------------------------
 
-_GROUP_ORDER = ["Apps", "Inference", "Data", "Platform", "Tools (MCP)", "Network", "Jobs"]
-_INFERENCE_CATEGORIES = frozenset({"inference", "voice"})
-_NETWORK_SERVICES = frozenset({"caddy", "oauth2-proxy"})
+# ordo/render/config.py ORDO_PROJECT: the compose project the stack runs as (a test holds them equal).
+ORDO_PROJECT = "ordo"
+# The verdicts a managed-project restart is offered for: ops-controller restarts a container that
+# runs; starting a stopped one is a lifecycle verb its managed-project routes do not have yet.
+_RESTARTABLE = frozenset({"up", "starting", "unhealthy"})
 
 
-def _group_for_card(card: dict) -> str:
-    if not card.get("background"):
-        return "Apps"
-    if card.get("category") in _INFERENCE_CATEGORIES:
-        return "Inference"
-    return "Data"
+def _table_row(*, row_id: str, name: str, project: str | None, container: str | None, compose: str | None,
+               card_id: str | None, verdict: str, status: str | None, open_url: str | None, error: str | None,
+               lent: bool, actions: list[str], control: str, reason: str | None = None) -> dict:
+    """One Services row. `control` says which routes act on it: "ordo" (the lifecycle routes),
+    "managed" (a managed project's logs and restart), "host" (only the host can cycle it), "link"
+    (a probe-only card) or "none" (read-only, `reason` says why)."""
+    return {
+        "id": row_id, "name": name, "project": project, "container": container, "compose": compose,
+        "card_id": card_id, "verdict": verdict, "uptime": uptime_from_status(status), "status": status,
+        "open_url": open_url, "error": error, "lent": lent, "actions": actions, "control": control,
+        "reason": reason,
+    }
 
 
-def _group_for_container(sid: str, verdict: str) -> str:
-    if sid.startswith("mcp-"):
-        return "Tools (MCP)"
-    if sid.startswith("tailnet-") or sid in _NETWORK_SERVICES:
-        return "Network"
-    if verdict == "done":
-        return "Jobs"
-    return "Platform"
-
-
-def _row(compose: str | None, name: str, group: str, container: dict | None, open_url=None,
-         error=None, card_id: str | None = None, probe_ok: bool | None = None,
-         lent: bool = False, control_plane_up: bool = True) -> dict:
+def _ordo_row(compose: str | None, name: str, container: dict | None, open_url=None, error=None,
+              card_id: str | None = None, probe_ok: bool | None = None, lent: bool = False,
+              control_plane_up: bool = True) -> dict:
     if compose is None:
         # A probe-only card: a link and a health check, not one container, so its state is the
         # probe's and it offers no lifecycle controls.
         verdict = {True: "up", False: "unhealthy"}.get(probe_ok, "unknown")
-        controllable = False
+        control = "link"
     elif not control_plane_up:
         # No container list to read: its state is unknown, not stopped, and a Start offered on a
         # guess could put a second copy of a running service on the stack.
         verdict = "unknown"
-        controllable = compose not in NOT_CONTROLLABLE
+        control = "host" if compose in NOT_CONTROLLABLE else "ordo"
     else:
         verdict = _verdict(container)
         if verdict == "up" and error:
             verdict = "unhealthy"  # the container runs but its HTTP probe fails
-        controllable = compose not in NOT_CONTROLLABLE
+        control = "host" if compose in NOT_CONTROLLABLE else "ordo"
     # A resident evicted so a render can borrow its GPU must not be started from here: that
     # would put a second tenant on the leased card. It comes back when the lease is released.
-    actions = actions_for(verdict) if controllable and not lent and verdict != "unknown" else []
-    return {
-        "compose": compose, "card_id": card_id, "name": name, "group": group, "verdict": verdict,
-        "uptime": uptime_from_status((container or {}).get("status")),
-        "status": (container or {}).get("status"), "open_url": open_url, "error": error,
-        "controllable": controllable, "lent": lent, "actions": actions,
-    }
+    actions = actions_for(verdict) if control == "ordo" and not lent and verdict != "unknown" else []
+    return _table_row(
+        row_id=f"ordo:{compose}" if compose else f"link:{card_id}", name=name, project=ORDO_PROJECT,
+        container=(container or {}).get("name"), compose=compose, card_id=card_id, verdict=verdict,
+        status=(container or {}).get("status"), open_url=open_url, error=error, lent=lent, actions=actions,
+        control=control,
+    )
+
+
+def _foreign_row(project: str | None, name: str, host_row: dict | None, managed_row: dict | None,
+                 managed_projects: set[str] | None) -> dict:
+    """A container outside the ordo project, named by its container name (unique on the host). A
+    managed project's own row (state plus docker's Status text) wins over the host-wide list's,
+    whose `status` is docker's State."""
+    if managed_row:
+        state, health, status = managed_row.get("state"), managed_row.get("health"), managed_row.get("status")
+    else:
+        state, health, status = host_row.get("status"), host_row.get("health"), host_row.get("status_text")
+    verdict = classify_container(state, health, status)
+    actions: list[str] = []
+    reason = None
+    if not project:
+        control, reason = "none", "not started by compose, so no managed project can include it"
+    elif managed_projects is None:
+        control, reason = "none", "the control plane did not say which projects it manages"
+    elif project in managed_projects:
+        control = "managed"
+        actions = ["restart"] if verdict in _RESTARTABLE else []
+    else:
+        control, reason = "none", f"add {project} to managed_projects in ordo.yaml"
+    return _table_row(
+        row_id=f"host:{name}", name=name, project=project, container=name, compose=None,
+        card_id=None, verdict=verdict, status=status, open_url=None, error=None, lent=False,
+        actions=actions, control=control, reason=reason,
+    )
 
 
 def _card_container(card: dict, containers_by_id: dict) -> str | None:
@@ -459,30 +485,50 @@ def _card_container(card: dict, containers_by_id: dict) -> str | None:
     return None
 
 
+def _sort_key(row: dict) -> tuple:
+    """Ordo first, then the other projects alphabetically, then containers compose did not start."""
+    project = row["project"]
+    rank = 0 if project == ORDO_PROJECT else 1 if project else 2
+    return rank, project or "", row["name"].lower(), row["id"]
+
+
 def build_service_table(cards: list[dict], containers_by_id: dict,
-                        status_gpu: dict | None = None, control_plane_up: bool = True) -> list[dict]:
-    """Every container, grouped; catalog services keep their friendly names and Open links. With the
+                        status_gpu: dict | None = None, control_plane_up: bool = True,
+                        host_containers: list[dict] | None = None, managed: dict | None = None) -> list[dict]:
+    """Every container on the host as one flat, sorted list. Ordo's rows come from its catalog cards
+    (friendly names, Open links, probe-only cards) and ops-controller's /services; every other
+    container from the host-wide /containers, enriched by the managed projects' /projects. With the
     control plane down, a row bound to a container is `unknown` and offers no actions."""
     evicted = set((status_gpu or {}).get("evicted_residents") or {})
+    containers_by_id = containers_by_id or {}
     rows: list[dict] = []
     claimed: set[str] = set()
     for card in cards or []:
-        compose = _card_container(card, containers_by_id or {})
+        compose = _card_container(card, containers_by_id)
         if compose:
             claimed.add(compose)
-        rows.append(_row(compose, card.get("name") or card.get("id"), _group_for_card(card),
-                         (containers_by_id or {}).get(compose) if compose else None, card.get("open_url"),
-                         card.get("error") if card.get("ok") is False else None,
-                         card_id=card.get("id"), probe_ok=card.get("ok"), lent=compose in evicted,
-                         control_plane_up=control_plane_up))
-    for sid, container in sorted((containers_by_id or {}).items()):
-        if sid in claimed:
-            continue
-        rows.append(_row(sid, sid, _group_for_container(sid, _verdict(container)), container,
-                         lent=sid in evicted))
-    grouped = []
-    for group in _GROUP_ORDER:
-        members = [r for r in rows if r["group"] == group]
-        if members:
-            grouped.append({"group": group, "services": members})
-    return grouped
+        rows.append(_ordo_row(compose, card.get("name") or card.get("id"),
+                              containers_by_id.get(compose) if compose else None, card.get("open_url"),
+                              card.get("error") if card.get("ok") is False else None,
+                              card_id=card.get("id"), probe_ok=card.get("ok"), lent=compose in evicted,
+                              control_plane_up=control_plane_up))
+    for sid, container in sorted(containers_by_id.items()):
+        if sid not in claimed:
+            rows.append(_ordo_row(sid, sid, container, lent=sid in evicted))
+
+    ordo_names = {c.get("name") for c in containers_by_id.values() if c.get("name")}
+    managed_projects = None if managed is None else {p.get("project") for p in managed.get("projects") or []}
+    foreign: dict[str, dict] = {}  # container name -> its project and its host-wide and managed rows
+    for row in host_containers or []:
+        name, project = row.get("name"), row.get("project") or None
+        if name and project != ORDO_PROJECT and name not in ordo_names:
+            foreign[name] = {"project": project, "host": row, "managed": None}
+    for entry in (managed or {}).get("projects") or []:
+        for row in entry.get("containers") or []:
+            if row.get("name"):
+                seen = foreign.setdefault(row["name"], {"project": entry.get("project"), "host": None})
+                seen["managed"] = row
+    for name, seen in foreign.items():
+        rows.append(_foreign_row(seen["project"], name, seen["host"], seen["managed"], managed_projects))
+    rows.sort(key=_sort_key)
+    return rows

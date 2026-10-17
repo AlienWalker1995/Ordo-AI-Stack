@@ -514,7 +514,8 @@ class MockBackend:
         self.list_containers_calls.append(None)
         # `docker ps` shows a digest-pinned image by its tag alone.
         return [{"name": c.name, "status": c.state, "image": c.image.split("@", 1)[0], "project": self.project,
-                 "service": c.service, "health": DockerBackend._health_from_status(self._status(c))}
+                 "service": c.service, "health": DockerBackend._health_from_status(self._status(c)),
+                 "status_text": self._status(c)}
                 for c in self.project_containers.values()]
 
     def container_logs(self, name: str, tail: int = 100) -> str:
@@ -876,14 +877,15 @@ class DockerBackend:
     @classmethod
     def container_row(cls, line: str) -> dict | None:
         """One CONTAINER_PS_FORMAT line as a /containers row, or None for a malformed line.
-        `status` keeps its ops-api meaning (docker's State); project and service are empty for a
-        container compose did not create; health is None without a healthcheck."""
+        `status` keeps its ops-api meaning (docker's State) and `status_text` is docker's Status
+        (the uptime and the exit code); project and service are empty for a container compose did
+        not create; health is None without a healthcheck."""
         parts = line.split("\t")
         if len(parts) != 6:
             return None
         name, state, image, project, service, status = parts
         return {"name": name, "status": state, "image": image, "project": project, "service": service,
-                "health": cls._health_from_status(status)}
+                "health": cls._health_from_status(status), "status_text": status}
 
     def _container_guard(self, name: str) -> str:
         """Container routes take a RAW container name, not a service name, so `_guard` does not
