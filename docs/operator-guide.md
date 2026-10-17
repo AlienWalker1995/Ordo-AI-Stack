@@ -281,7 +281,9 @@ still says `local-chat`, so the switch is easy to miss. Four surfaces show which
 answered: Hermes announces a switch in the conversation, with a recovery notice when the primary is
 back, when its own fallback chain does the routing (primary `local-chat-gpu`, first fallback
 `local-chat-cpu` in the brain's `config.yaml`; with `local-chat` as primary the gateway reroutes
-silently and Hermes has nothing to announce), the `ChatServedByCpuFallback` alert fires to Discord about two minutes after
+silently and Hermes has nothing to announce; the pin answers 503 within milliseconds while the GPU
+model is evicted or down; Hermes retries twice, then switches to `local-chat-cpu` and says so, and
+returns to the GPU on its own), the `ChatServedByCpuFallback` alert fires to Discord about two minutes after
 the eviction and sends a resolved notification when the GPU model is restored, the dashboard's
 Overview page shows a "Chat is on the CPU fallback" chip with both engines' median speeds, and
 every gateway response carries the `x-litellm-model-name` header naming the deployment that
