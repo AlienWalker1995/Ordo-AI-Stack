@@ -278,8 +278,8 @@ class ControlPlane:
     def service_recreate(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         return self.lifecycle.service_recreate(service_id, body)
 
-    def service_logs(self, service_id: str, tail: int = 100) -> dict[str, Any]:
-        return self.lifecycle.service_logs(service_id, tail)
+    def service_logs(self, service_id: str, query: dict[str, str]) -> dict[str, Any]:
+        return self.lifecycle.service_logs(service_id, query)
 
     def list_services(self) -> dict[str, Any]:
         return self.lifecycle.list_services()

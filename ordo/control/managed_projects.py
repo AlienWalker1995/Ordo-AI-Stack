@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..render.config import Source
-from . import managed
+from . import logs, managed
 from .broker import Broker
 from .responses import CONFIRM_REQUIRED, confirmed, error
 
@@ -75,18 +75,18 @@ class ManagedProjects:
         refusal = self.refusal(project)
         if refusal:
             return refusal
+        # The same `tail` and `since` rules and the same answer as GET /services/{id}/logs.
         try:
-            tail = int(query.get("tail", managed.LOG_TAIL_DEFAULT))
-        except ValueError:
-            return error(422, "tail must be an integer")
-        tail = max(1, min(tail, managed.LOG_TAIL_MAX))
+            log_query = logs.parse_query(query)
+        except logs.LogQueryError as e:
+            return error(400, str(e))
         try:
-            logs = self.broker.backend.foreign_logs(project, name, tail)
+            lines = self.broker.backend.foreign_logs(project, name, log_query.tail, log_query.since)
         except ValueError as e:
             return error(404, str(e))
         except Exception as e:
             return error(500, str(e))
-        return {"project": project, "container": name, "tail": tail, "logs": logs}
+        return {"project": project, "container": name, **logs.payload(lines, log_query)}
 
     def container_restart(self, project: str, name: str, body: dict[str, Any],
                           leased_gpu_uuid: Callable[[], str | None],

@@ -15,7 +15,8 @@ import re
 from typing import Any
 
 from ..render.stack import lifecycle_group
-from .broker import Broker
+from . import logs
+from .broker import Broker, NoContainer, SelfReferentialService, lifecycle_service_name
 from .responses import CONFIRM_REQUIRED, confirmed, error
 from .scheduler import Scheduler
 
@@ -124,6 +125,19 @@ class Lifecycle:
                 raise RuntimeError(f"netns member {member!r} was not restarted and has no network "
                                    f"until it is: {e}") from e
 
+    def refusal(self, service_id: str) -> dict[str, Any] | None:
+        """403 for a service that serves this request (SELF_REFERENTIAL_SERVICES: the host cycles
+        those), 400 for a name that is no compose service name. Asked before anything acts, so a
+        refused verb never touches the service's netns members first; the backend's own guard
+        stays as the backstop."""
+        try:
+            lifecycle_service_name(self.broker.backend.project, service_id)
+        except SelfReferentialService as e:
+            return error(403, str(e))
+        except ValueError as e:
+            return error(400, str(e))
+        return None
+
     @staticmethod
     def with_members(payload: dict[str, Any], members: list[str]) -> dict[str, Any]:
         if members:
@@ -133,6 +147,9 @@ class Lifecycle:
     def service_start(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return error(503, "no broker configured")
+        refusal = self.refusal(service_id)
+        if refusal:
+            return refusal
         if body.get("dry_run"):
             return {"would": "start", "service": service_id}
         if not confirmed(body):
@@ -154,6 +171,9 @@ class Lifecycle:
     def service_stop(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return error(503, "no broker configured")
+        refusal = self.refusal(service_id)
+        if refusal:
+            return refusal
         if body.get("dry_run"):
             return {"would": "stop", "service": service_id}
         if not confirmed(body):
@@ -174,6 +194,9 @@ class Lifecycle:
     def service_restart(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return error(503, "no broker configured")
+        refusal = self.refusal(service_id)
+        if refusal:
+            return refusal
         if body.get("dry_run"):
             return {"would": "restart", "service": service_id}
         if not confirmed(body):
@@ -192,14 +215,24 @@ class Lifecycle:
             return error(500, str(e))
         return self.with_members({"ok": True, "service": service_id, "action": "restarted"}, group[1:])
 
-    def service_logs(self, service_id: str, tail: int = 100) -> dict[str, Any]:
+    def service_logs(self, service_id: str, query: dict[str, str]) -> dict[str, Any]:
+        """Both streams of the service's container (ordo/control/logs.py). 400 for a bad `tail`,
+        `since` or name, 404 for a service with no container."""
         if not self.broker:
             return error(503, "no broker configured")
         try:
-            logs = self.broker.backend.logs(service_id, tail=tail)
+            log_query = logs.parse_query(query)
+        except logs.LogQueryError as e:
+            return error(400, str(e))
+        try:
+            lines = self.broker.backend.logs(service_id, tail=log_query.tail, since=log_query.since)
+        except NoContainer as e:
+            return error(404, str(e))
+        except ValueError as e:
+            return error(400, str(e))
         except Exception as e:
             return error(500, str(e))
-        return {"logs": logs, "service": service_id}
+        return {"service": service_id, **logs.payload(lines, log_query)}
 
     def list_services(self) -> dict[str, Any]:
         if not self.broker:
@@ -216,6 +249,9 @@ class Lifecycle:
     def service_recreate(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return error(503, "no broker configured")
+        refusal = self.refusal(service_id)
+        if refusal:
+            return refusal
         if body.get("dry_run"):
             return {"would": "recreate", "service": service_id}
         if not confirmed(body):
