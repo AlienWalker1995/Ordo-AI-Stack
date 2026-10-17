@@ -118,6 +118,9 @@ def _project_containers(args: dict, **kwargs) -> str:
         return _err(f"unexpected error: {exc}")
 
 
+_LOGS_TAIL_MAX = 1000  # ops-controller's cap on /projects/{project}/containers/{name}/logs?tail=
+
+
 def _project_logs(args: dict, **kwargs) -> str:
     project = (args.get("project") or "").strip()
     name = (args.get("name") or "").strip()
@@ -127,6 +130,8 @@ def _project_logs(args: dict, **kwargs) -> str:
         tail = int(args.get("tail") or 100)
     except (TypeError, ValueError):
         return _err("tail must be an integer")
+    # The route answers 400 outside 1..1000; a model asking for more gets the most it can have.
+    tail = min(max(tail, 1), _LOGS_TAIL_MAX)
     try:
         return json.dumps({"ok": True, **_get_client().project_logs(project, name, tail=tail)})
     except OpsClientError as exc:
