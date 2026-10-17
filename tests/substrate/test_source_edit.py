@@ -1,6 +1,5 @@
 """ordo/source_edit.edit_plugins_list: the one `plugins:` editor, used by ops-controller's plugin
-enable/disable (which also backs the dashboard MCP toggle). Pure text->text; refuses anything it
-can't guarantee."""
+enable/disable. Pure text->text; refuses anything it can't guarantee."""
 import pytest
 import yaml
 

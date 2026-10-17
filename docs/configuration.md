@@ -342,14 +342,14 @@ Enabled servers render as compose services `mcp-<server_id>` on the internal `or
 network: only `model-gateway` can reach them.
 
 `ordo render` emits `out/model-gateway/mcp_servers.yaml` (merged into LiteLLM's config by the
-entrypoint) and `out/mcp/servers.json` (the dashboard's server list plus the registered-plugin
+entrypoint) and `out/mcp/servers.json` (the enabled-server list plus the registered-plugin
 map).
 
 The registered servers are `comfyui`, `orchestration`, `qdrant-rag`, `searxng`,
 `codebase-memory`, and `memory-vault`: there are no `duckduckgo` or `playwright` defaults.
 
-Enable or disable a server by editing `ordo.yaml`'s `plugins:` list (or via MCP servers in the
-dashboard's Settings drawer, which edits the same file through ops-controller). A toggle is applied by ops-controller:
+Enable or disable a server by editing `ordo.yaml`'s `plugins:` list (or through ops-controller's
+`POST /plugins/{id}/...`, which edits the same file). A toggle there is applied by ops-controller:
 LiteLLM reads config-file MCP servers at startup, and model-gateway's definition carries a digest of that config,
 so the render's changed set recreates it. After a hand edit, `ordo apply` does the same.
 

@@ -2,8 +2,6 @@
 // confirmation sends nothing. The request only goes out once the operator says yes.
 import { fireEvent, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import McpSettings from '../src/components/McpSettings.jsx'
-import MediaPage from '../src/pages/MediaPage.jsx'
 import ModelsPage from '../src/pages/ModelsPage.jsx'
 import ServicesPage from '../src/pages/ServicesPage.jsx'
 import { mockApi } from './mockApi.js'
@@ -138,68 +136,5 @@ describe('Models: switching the GPU model', () => {
     expect(api.sent('POST', '/api/models/switch')).toEqual([
       { method: 'POST', path: '/api/models/switch', body: { model: 'gemma4-31b' } },
     ])
-  })
-})
-
-describe('Settings: removing an MCP server', () => {
-  it('asks first and sends nothing when cancelled', async () => {
-    const api = mockApi()
-    const confirm = answerConfirm(false)
-    renderInShell(<McpSettings />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove codebase-memory' }))
-
-    expect(confirm.mock.calls[0][0]).toMatch(/^Disable codebase-memory\?/)
-    expect(api.sent('POST', '/api/mcp/remove')).toEqual([])
-  })
-
-  it('removes the server once confirmed', async () => {
-    const api = mockApi()
-    answerConfirm(true)
-    renderInShell(<McpSettings />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove codebase-memory' }))
-
-    await screen.findByText('codebase-memory removed - restarted model-gateway')
-    expect(api.sent('POST', '/api/mcp/remove')).toEqual([
-      { method: 'POST', path: '/api/mcp/remove', body: { server: 'codebase-memory' } },
-    ])
-  })
-})
-
-describe('Media: deleting a ComfyUI model and restarting ComfyUI', () => {
-  it('asks before deleting a model file and sends nothing when cancelled', async () => {
-    const api = mockApi()
-    const confirm = answerConfirm(false)
-    renderInShell(<MediaPage />)
-
-    const row = (await screen.findByText('ae.safetensors')).closest('li')
-    fireEvent.click(within(row).getByRole('button', { name: 'Delete' }))
-
-    expect(confirm).toHaveBeenCalledWith('Delete ae.safetensors from vae? This cannot be undone.')
-    expect(api.requests.filter((r) => r.method === 'DELETE')).toEqual([])
-  })
-
-  it('deletes the model file once confirmed', async () => {
-    const api = mockApi({ 'DELETE /api/comfyui/models/vae/ae.safetensors': { ok: true, message: 'Deleted vae/ae.safetensors' } })
-    answerConfirm(true)
-    renderInShell(<MediaPage />)
-
-    const row = (await screen.findByText('ae.safetensors')).closest('li')
-    fireEvent.click(within(row).getByRole('button', { name: 'Delete' }))
-
-    await screen.findByText('Deleted ae.safetensors')
-    expect(api.sent('DELETE', '/api/comfyui/models/vae/ae.safetensors')).toHaveLength(1)
-  })
-
-  it('asks before restarting ComfyUI and sends nothing when cancelled', async () => {
-    const api = mockApi()
-    const confirm = answerConfirm(false)
-    renderInShell(<MediaPage />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Restart' }))
-
-    expect(confirm.mock.calls[0][0]).toMatch(/^Restart ComfyUI\?/)
-    expect(api.sent('POST', '/api/orchestration/comfyui/restart')).toEqual([])
   })
 })

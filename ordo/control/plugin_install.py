@@ -1,7 +1,7 @@
 """Service and MCP plugins the control plane may enable or disable, through the source.
 
-The render authority for Hermes-driven onboarding and the dashboard's MCP toggle: an enable or a
-disable edits only the source's `plugins:` list (ordo/render/source_edit.py), validates the render,
+The render authority for Hermes-driven onboarding and the plugin enable/disable API: an enable or
+a disable edits only the source's `plugins:` list (ordo/render/source_edit.py), validates the render,
 and commits through the post-render step (ordo/control/apply.py). What may be touched at all is
 `installable`: the allowlist below plus every kind=mcp plugin.
 """
@@ -22,7 +22,7 @@ from .source import StackSource, enabled_ids
 # agent), the edge / front-door (edge, tailnet-names — secret-dependent, host `make up` only), and
 # the agent itself are NOT here, so they can never be created/removed via this path — the
 # allowlist is the security gate. Every kind=mcp plugin (an agent tool server) is installable as
-# well, derived from its manifest kind (see `installable`): the dashboard's MCP toggle persists
+# well, derived from its manifest kind (see `installable`): the plugin enable/disable API persists
 # through this same write path.
 INSTALLABLE_PLUGINS = frozenset({
     "comfyui", "song-gen", "voice", "rag", "open-webui", "monitoring",

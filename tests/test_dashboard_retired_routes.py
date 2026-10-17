@@ -7,13 +7,17 @@ guarded delete (/api/models/delete).
 """
 import os
 import sys
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import dashboard.app as dashboard_app  # noqa: E402
 from dashboard.app import app  # noqa: E402
+
+DASHBOARD_DIR = Path(__file__).resolve().parents[1] / "services" / "dashboard"
 
 RETIRED = [
     # wrote LLAMACPP_MODEL into .env: reverted by the next render, skipped the catalog settings
@@ -51,8 +55,8 @@ RETIRED = [
     ("GET", "/api/models/pull/status"),
     # the pre-React vanilla shell
     ("GET", "/legacy-index.html"),
-    # backends of the retired 11-tab UI that nothing calls any more (the five pages use /api/overview,
-    # /api/services/table, /api/models, /api/media and /api/perf/*)
+    # backends of the retired 11-tab UI that nothing calls any more (the pages use /api/overview,
+    # /api/services/table, /api/models and /api/perf/*)
     ("GET", "/api/registry/models"),
     ("GET", "/api/registry/gpus"),
     ("GET", "/api/registry/models/{model_id}"),
@@ -85,6 +89,19 @@ RETIRED = [
     ("GET", "/api/orchestration/schedules"),
     ("PATCH", "/api/orchestration/schedules/{schedule_id}"),
     ("DELETE", "/api/orchestration/schedules/{schedule_id}"),
+    # the Media page and the Settings drawer, removed when the dashboard became the orchestration
+    # plane only: MCP servers are managed in the LiteLLM UI (or ordo.yaml's plugins: list), media
+    # in ComfyUI itself. ComfyUI restart stays on its Services card.
+    ("GET", "/api/media"),
+    ("GET", "/api/media/view"),
+    ("GET", "/api/comfyui/models"),
+    ("DELETE", "/api/comfyui/models/{category}/{filename}"),
+    ("POST", "/api/comfyui/install-node-requirements"),
+    ("GET", "/api/mcp/servers"),
+    ("GET", "/api/mcp/health"),
+    ("POST", "/api/mcp/add"),
+    ("POST", "/api/mcp/remove"),
+    ("GET", "/api/orchestration/gpu/history"),
 ]
 
 
@@ -106,6 +123,17 @@ def test_the_replacements_are_served():
     served = _served()
     for route in [("POST", "/api/models/switch"), ("POST", "/api/models/delete"), ("GET", "/api/models"),
                   ("GET", "/api/overview"), ("GET", "/api/activity"), ("GET", "/api/services/table"),
-                  ("GET", "/api/media"), ("GET", "/api/media/view"), ("GET", "/api/perf/series"),
-                  ("GET", "/api/perf/grafana")]:
+                  ("GET", "/api/perf/series"), ("GET", "/api/perf/grafana")]:
         assert route in served, route
+
+
+def test_dashboard_has_no_writer_of_the_operator_source():
+    # ops-controller is the only writer of ordo.yaml: the private copy of the plugins editor and
+    # the source path are gone
+    assert not hasattr(dashboard_app, "_edit_plugins_list")
+    assert not hasattr(dashboard_app, "ORDO_SOURCE_PATH")
+    sources = "\n".join(p.read_text(encoding="utf-8") for p in (DASHBOARD_DIR / "dashboard").glob("*.py"))
+    assert "ORDO_SOURCE_PATH" not in sources and "/ordo-source.yaml" not in sources
+    # and the dashboard does not mount out/ordo.yaml at all
+    manifest = (DASHBOARD_DIR / "dashboard.yaml").read_text(encoding="utf-8")
+    assert "out/ordo.yaml" not in manifest and "ORDO_SOURCE_PATH" not in manifest

@@ -354,20 +354,3 @@ async def orch_registry_list_gpus(request: Request):
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-
-
-# ── GPU lease visibility (orchestration tab) ─────────────────────────────────────────────
-# Pure presentation proxies: the scheduler records/serves the truth; the dashboard displays it.
-
-
-@router.get("/gpu/history")
-async def orchestration_gpu_history() -> dict[str, Any]:
-    """Finished leases (newest first) from the scheduler's durable lease record."""
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            # The scheduler lives in ops-controller, which requires the bearer token (#225).
-            r = await client.get(f"{OPS_CONTROLLER_URL}/jobs/history", headers=_ops_headers(None))
-            r.raise_for_status()
-            return r.json()
-    except (httpx.HTTPError, ValueError) as e:
-        raise HTTPException(status_code=502, detail=f"scheduler unreachable: {e}") from e

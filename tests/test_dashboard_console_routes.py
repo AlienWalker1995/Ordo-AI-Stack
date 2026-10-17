@@ -1,10 +1,10 @@
 """The dashboard's page endpoints: /api/overview, /api/activity, /api/services/table,
-/api/models (+ switch, delete), /api/media (+ view) and /api/perf/*.
+/api/models (+ switch, delete) and /api/perf/*.
 
 The fetchers are patched with payloads in the live shapes, so these pin the wiring and the
 safety rules at the HTTP boundary: a model switch goes through the catalog, and the control plane
-recreates what the render changed; a file a server is using cannot be deleted; the media
-proxy only fetches output files; and a down dependency reads as unavailable, never as zeros.
+recreates what the render changed; a file a server is using cannot be deleted; and a down
+dependency reads as unavailable, never as zeros.
 """
 from __future__ import annotations
 
@@ -432,51 +432,6 @@ def test_delete_refuses_anything_that_is_not_a_bare_gguf_name(live, tmp_path, na
     assert r.status_code == 400
 
 
-# --- media ---
-
-def test_media_summarises_queue_and_recent_renders(live):
-    body = live.get("/api/media").json()
-    assert body["running"] is None and body["pending"] == 0
-    assert body["recent"][0]["outputs"][0]["filename"] == "song.mp3"
-
-
-@pytest.mark.parametrize("params", [
-    {"filename": "../secret.png", "type": "output"},
-    {"filename": "a.png", "type": "input"},
-    {"filename": "a.png", "type": "output", "subfolder": "../x"},
-    {"filename": "", "type": "output"},
-])
-def test_media_view_only_fetches_output_files(live, params):
-    assert live.get("/api/media/view", params=params).status_code == 400
-
-
-def _streamed(status, headers, body):
-    async def chunks():
-        yield body[:2]
-        yield body[2:]
-    return AsyncMock(return_value=(status, headers, chunks()))
-
-
-def test_media_view_proxies_a_valid_output(live):
-    fetch = _streamed(200, {"content-type": "image/png", "content-length": "3"}, b"PNG")
-    with patch.object(routes_console, "_comfy_stream", new=fetch):
-        r = live.get("/api/media/view", params={"filename": "hero.png", "subfolder": "", "type": "output"})
-    assert r.status_code == 200 and r.content == b"PNG" and r.headers["content-type"] == "image/png"
-    assert fetch.call_args.args[3] is None  # no Range asked for, none forwarded
-
-
-def test_media_view_forwards_a_range_request(live):
-    # Browsers seek video with Range; Safari will not play a video that ignores it.
-    fetch = _streamed(206, {"content-type": "video/mp4", "content-range": "bytes 0-3/100",
-                            "accept-ranges": "bytes", "content-length": "4"}, b"mp4!")
-    with patch.object(routes_console, "_comfy_stream", new=fetch):
-        r = live.get("/api/media/view", params={"filename": "clip.mp4", "type": "output"},
-                     headers={"Range": "bytes=0-3"})
-    assert r.status_code == 206
-    assert r.headers["content-range"] == "bytes 0-3/100" and r.content == b"mp4!"
-    assert fetch.call_args.args[3] == "bytes=0-3"
-
-
 def test_comfyui_calls_are_skipped_when_no_gate_url_is_configured(monkeypatch):
     """COMFYUI_URL is the gate's URL, rendered only while comfyui is enabled. Without it there is
     nowhere legitimate to send the request (comfyui itself is reachable only by its gate), so the
@@ -486,10 +441,7 @@ def test_comfyui_calls_are_skipped_when_no_gate_url_is_configured(monkeypatch):
     monkeypatch.setattr(routes_console, "COMFYUI_URL", "")
     no_http = AsyncMock(side_effect=AssertionError("no request may be made without a gate URL"))
     with patch.object(routes_console, "_get_json", new=no_http):
-        assert asyncio.run(routes_console._comfy_json("/queue")) is None
-    with patch("dashboard.app._get_http_client",
-               side_effect=AssertionError("no request may be made without a gate URL")):
-        assert asyncio.run(routes_console._comfy_stream("a.png", "", "output", None)) is None
+        assert asyncio.run(routes_console._comfy_json("/history")) is None
 
 
 # --- performance ---

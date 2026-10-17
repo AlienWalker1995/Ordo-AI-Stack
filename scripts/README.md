@@ -32,8 +32,7 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 ## MCP
 
 There is no MCP-server-editing script any more. An MCP server is a `kind: mcp` plugin manifest,
-enabled or disabled by editing `ordo.yaml`'s `plugins:` list (or the MCP servers section of the
-dashboard's Settings drawer, which edits the same file). LiteLLM reads its MCP server list from
+enabled or disabled by editing `ordo.yaml`'s `plugins:` list. LiteLLM reads its MCP server list from
 the rendered config at startup, so there is no hot reload: apply a change with
 `ordo render` and then recreate `model-gateway`.
 

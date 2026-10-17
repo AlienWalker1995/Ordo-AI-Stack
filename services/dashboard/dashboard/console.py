@@ -1,8 +1,8 @@
-"""Pure builders for the dashboard's Overview, Services, Models and Media pages.
+"""Pure builders for the dashboard's Overview, Services and Models pages.
 
 Every function here takes plain dicts in the shapes the live sources return (control-plane
 /status, /services and /registry/models; the dashboard's own hardware stats and throughput
-store; ComfyUI's /queue and /history; llama-server's /v1/models) and returns what a page
+store; ComfyUI's /history; llama-server's /v1/models) and returns what a page
 renders. No I/O: routes_console.py fetches, these decide. That split is what lets the rules
 that matter (a render borrowing the GPU is not an outage, a finished job is not a failure, an
 in-use model file cannot be deleted) be tested without a running stack.
@@ -284,16 +284,6 @@ def summarise_renders(history: dict, limit: int) -> list[dict]:
         })
     renders.sort(key=lambda r: r["ts"] or 0, reverse=True)
     return renders[:limit]
-
-
-def summarise_media(queue: dict, history: dict, limit: int) -> dict:
-    running = (queue or {}).get("queue_running") or []
-    pending = (queue or {}).get("queue_pending") or []
-    return {
-        "running": {"prompt_id": running[0][1]} if running else None,
-        "pending": len(pending),
-        "recent": summarise_renders(history, limit),
-    }
 
 
 def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], limit: int) -> list[dict]:

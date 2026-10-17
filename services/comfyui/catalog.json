@@ -12,7 +12,7 @@
       "category": "media",
       "ops_service": "comfyui",
       "tailnet_label": "comfy",
-      "hint": "ComfyUI uses auto-detected compute (NVIDIA/AMD/Intel/CPU). Run ./compose up -d. Pull LTX-2 via dashboard."
+      "hint": "ComfyUI uses auto-detected compute (NVIDIA/AMD/Intel/CPU). Run ./compose up -d. Manage models and custom nodes in ComfyUI itself."
     }
   ]
 }

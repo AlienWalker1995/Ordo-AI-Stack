@@ -34,7 +34,7 @@ stdio child with an empty environment.
 LiteLLM's MCP gateway on `model-gateway` dials `http://mcp-memory-vault:9000/mcp`. Registered by the
 `memory-vault` `kind: mcp` plugin ([`plugin.yaml`](plugin.yaml)); `ordo render` emits it into
 `out/model-gateway/mcp_servers.yaml` (the LiteLLM fragment its entrypoint merges) and
-`out/mcp/servers.json` (the dashboard's server list).
+`out/mcp/servers.json` (the rendered server list — the native-mode checklist points operators at it).
 
 ## Vault mount (read-write)
 

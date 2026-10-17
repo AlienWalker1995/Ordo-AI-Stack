@@ -89,13 +89,8 @@ PROTECTED_ROUTES = [
     ("GET", "/api/orchestration/comfyui/status", None),
     ("GET", "/api/orchestration/registry/models", None),
     ("GET", "/api/orchestration/registry/gpus", None),
-    ("GET", "/api/orchestration/gpu/history", None),
     ("GET", "/api/orchestration/workflows", None),
     ("POST", "/api/orchestration/workflows/save", {"workflow_id": "x", "workflow": {}}),
-    ("POST", "/api/mcp/add", {"server": "x"}),
-    ("POST", "/api/mcp/remove", {"server": "x"}),
-    ("DELETE", "/api/comfyui/models/loras/x.safetensors", None),
-    ("POST", "/api/comfyui/install-node-requirements", {"confirm": True}),
     ("POST", "/api/throughput/benchmark", {}),
 ]
 
@@ -117,7 +112,7 @@ class TestOpenRoutes:
     def test_health_routes_are_open(self, from_other_container, path):
         assert from_other_container.get(path).status_code != 401
 
-    @pytest.mark.parametrize("path", ["/api/mcp/servers", "/api/models"])
+    @pytest.mark.parametrize("path", ["/api/models"])
     def test_read_only_views_are_open(self, from_other_container, path):
         assert from_other_container.get(path).status_code != 401
 

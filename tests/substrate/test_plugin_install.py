@@ -7,7 +7,7 @@ no-op edit; on an explicit list it edits + re-renders (a disable under auto is r
 no list item to remove). What the render changed is then applied by ops-controller itself
 (tests/substrate/test_control_apply.py). Core/edge/agent are refused (allowlist);
 unfittable plugins are refused with the resolve note. Every kind=mcp plugin is installable too: the
-dashboard's MCP toggle goes through this same write path instead of editing the source itself.
+plugin enable/disable API goes through this same write path instead of editing the source itself.
 """
 import json
 from pathlib import Path

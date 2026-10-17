@@ -66,8 +66,8 @@ export function HostStepsProvider({ children }) {
   )
 }
 
-// Every pending host step, newest first. Rendered above the page and inside Settings, so the
-// step is visible where the change was made and on every page after.
+// Every pending host step, newest first. Rendered above the page, so the step stays visible on
+// every page after the change that asked for it.
 export function HostStepBanners({ idPrefix }) {
   const { steps, dismissHostStep } = useHostSteps()
   if (!steps.length) return null

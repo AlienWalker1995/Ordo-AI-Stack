@@ -336,8 +336,8 @@ def _max_ctx_for_vram(model: Model, hw: HardwareProfile, reserve_gb: float,
 
 
 # Files older renders emitted into out/ and this one no longer does: the Docker mcp-gateway
-# artefacts retired by #185. write() deletes them, because out/mcp is mounted into the dashboard
-# and a stale file there looks live. An explicit list, not "everything write() did not emit":
+# artefacts retired by #185. write() deletes them, because a stale file in the rendered tree
+# looks live. An explicit list, not "everything write() did not emit":
 # out/ also holds operator-owned state (ordo.yaml, secrets.env, lease history, certs).
 RETIRED_OUTPUTS = (
     "mcp-registry.yaml",
@@ -365,10 +365,9 @@ class RenderedConfig:
     compose_profiles: list[str] = dataclasses.field(default_factory=list)
     mcp_servers: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     # server_id → plugin_id for EVERY registered kind=mcp plugin (enabled AND available-but-disabled).
-    # Emitted into out/mcp/servers.json (the dir the dashboard mounts). The dashboard reads it to
-    # translate a UI MCP toggle back to the ordo.yaml plugin it must add/remove, so the toggle updates
-    # the source of truth and PERSISTS across a re-render (which regenerates the enabled roster from
-    # that same list). Covers disabled plugins too, so the UI can re-enable an available one.
+    # Emitted into out/mcp/servers.json (the rendered server list; no compose service mounts it any
+    # more — the native-mode checklist, ordo/host/native.py, points operators at it). Covers disabled
+    # plugins too, so the list stays complete when an operator re-enables an available one.
     mcp_server_plugin_map: dict[str, str] = dataclasses.field(default_factory=dict)
     # (plugin, service) pairs for every enabled kind=service plugin — compose builds from these
     plugin_services: list[Any] = dataclasses.field(default_factory=list)
@@ -601,8 +600,9 @@ class RenderedConfig:
         mg_dir.mkdir(parents=True, exist_ok=True)
         for name, text in self.model_gateway_config_files().items():
             (mg_dir / name).write_text(text, encoding="utf-8")
-        # mcp/servers.json: the dashboard's read-only view (enabled servers + server_id->plugin_id map
-        # for the enable/disable toggle that edits ordo.yaml). Mounted at /mcp-config.
+        # mcp/servers.json: enabled servers + server_id->plugin_id map. No compose service
+        # mounts it anymore (the dashboard's /mcp-config mount went with the Settings drawer);
+        # the native-mode checklist (ordo/host/native.py) points operators at it.
         # oauth2-proxy/ - the edge's allowlist, mounted read-only into oauth2-proxy; gone when the
         # edge is off.
         allowlist_dir = out / "oauth2-proxy"
@@ -981,7 +981,7 @@ def render(source: Source, catalog: Catalog,
     mcp_servers, mcp_notes = _render_mcp(mcps)
     # server_id → plugin_id for EVERY registered kind=mcp plugin, not just the enabled ones. The
     # server_id defaults to the plugin id (mirrors _render_mcp), decoupled only when a plugin sets
-    # mcp.server_id (e.g. plugin `comfyui-mcp` → server `comfyui`). Lets the dashboard re-enable a
+    # mcp.server_id (e.g. plugin `comfyui-mcp` → server `comfyui`). Lets an operator re-enable a
     # currently-disabled MCP by mapping its server id to the plugin to add back to ordo.yaml.
     mcp_server_plugin_map = {p.mcp.server_id: p.id for p in plugins.plugins if p.kind == "mcp" and p.mcp}
 

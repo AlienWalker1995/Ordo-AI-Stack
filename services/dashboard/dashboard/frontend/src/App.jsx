@@ -1,11 +1,10 @@
-// App shell: a compact header (name, five pages, search, settings) over one page at a time.
+// App shell: a compact header (name, four pages, search) over one page at a time.
 // The page is kept in the URL hash so it can be linked to; links to the retired tabs land on
 // the page that absorbed them.
 import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import CommandPalette from './components/CommandPalette.jsx'
 import { HostStepBanners } from './components/HostSteps.jsx'
 import LocalSignIn from './components/LocalSignIn.jsx'
-import SettingsDrawer from './components/SettingsDrawer.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 
 // One page's render error is contained to that page and cleared when the page changes.
@@ -29,7 +28,6 @@ const PAGES = [
   { id: 'overview', label: 'Overview', Component: lazy(() => import('./pages/OverviewPage.jsx')) },
   { id: 'services', label: 'Services', Component: lazy(() => import('./pages/ServicesPage.jsx')) },
   { id: 'models', label: 'Models', Component: lazy(() => import('./pages/ModelsPage.jsx')) },
-  { id: 'media', label: 'Media', Component: lazy(() => import('./pages/MediaPage.jsx')) },
   { id: 'performance', label: 'Performance', Component: lazy(() => import('./pages/PerformancePage.jsx')) },
 ]
 const PAGE_IDS = new Set(PAGES.map((p) => p.id))
@@ -37,7 +35,8 @@ const PAGE_IDS = new Set(PAGES.map((p) => p.id))
 // Where each retired tab's content now lives.
 const RETIRED_TABS = {
   modelctl: 'models', throughput: 'models', gpu: 'overview', orchestration: 'overview',
-  rag: 'overview', dependencies: 'services', comfyui: 'media', grafana: 'performance', mcp: 'overview',
+  rag: 'overview', dependencies: 'services', comfyui: 'services', grafana: 'performance', mcp: 'overview',
+  media: 'overview',
 }
 
 function pageFromHash() {
@@ -51,7 +50,6 @@ const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigat
 export default function App() {
   const [active, setActive] = useState(pageFromHash)
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const tabRefs = useRef([])
 
   useEffect(() => {
@@ -81,8 +79,6 @@ export default function App() {
     setActive(id)
     history.replaceState(null, '', '#' + id)
   }, [])
-  const openSettings = useCallback(() => setSettingsOpen(true), [])
-  const closeSettings = useCallback(() => setSettingsOpen(false), [])
   const closePalette = useCallback(() => setPaletteOpen(false), [])
 
   // WAI-ARIA tabs: arrows move and wrap, Home/End jump, focus follows selection.
@@ -129,10 +125,6 @@ export default function App() {
               Search
               <kbd className="rounded-[3px] border border-border px-1 font-mono text-micro text-muted">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
             </button>
-            <button type="button" onClick={openSettings}
-                    className="inline-flex h-8 items-center rounded-sm border border-border px-3 text-label text-fg-muted transition-colors hover:border-accent/40 hover:text-fg">
-              Settings
-            </button>
           </div>
         </div>
       </header>
@@ -152,9 +144,7 @@ export default function App() {
           </PageErrorBoundary>
         </main>
       </div>
-      <SettingsDrawer open={settingsOpen} onClose={closeSettings} />
-      <CommandPalette open={paletteOpen} onClose={closePalette} pages={PAGES}
-                      onNavigate={navigate} onOpenSettings={openSettings} />
+      <CommandPalette open={paletteOpen} onClose={closePalette} pages={PAGES} onNavigate={navigate} />
     </ToastProvider>
   )
 }
