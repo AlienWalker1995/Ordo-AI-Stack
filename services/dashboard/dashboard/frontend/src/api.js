@@ -141,37 +141,50 @@ export function usePolling(fetcher, intervalMs = 5000, deps = []) {
     }
   }, [])
 
-  useEffect(() => {
-    let timer = null
-    let stopped = false
-    const schedule = () => {
-      // Don't queue the next fetch while stopped or hidden; visibilitychange resumes it.
-      if (stopped || document.hidden) return
-      timer = setTimeout(async () => {
-        timer = null
-        if (!stopped && !document.hidden) await tick()
-        schedule()
-      }, intervalMs)
-    }
-    tick()
-    schedule()
-    const onVis = () => {
-      if (document.hidden) {
-        if (timer) { clearTimeout(timer); timer = null }
-      } else {
-        // Back to visible: fetch immediately, then resume the interval.
-        tick()
-        if (!timer) schedule()
-      }
-    }
-    document.addEventListener('visibilitychange', onVis)
-    return () => {
-      stopped = true
-      if (timer) clearTimeout(timer)
-      document.removeEventListener('visibilitychange', onVis)
-    }
+  useEffect(
+    () => pollWhileVisible(tick, intervalMs),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, ...deps])
+    [intervalMs, ...deps],
+  )
 
   return { data, error, loading, lastUpdated, refresh: tick }
+}
+
+// Run `tick` now and then `intervalMs` after each run finishes, but only while the tab is visible:
+// no next run is scheduled while `document.hidden`, and returning to visible runs it at once and
+// resumes the interval. Returns the function that stops it (an effect's cleanup).
+/**
+ * @param {() => unknown} tick
+ * @param {number} intervalMs
+ * @returns {() => void}
+ */
+export function pollWhileVisible(tick, intervalMs) {
+  let timer = null
+  let stopped = false
+  const schedule = () => {
+    // Don't queue the next run while stopped or hidden; visibilitychange resumes it.
+    if (stopped || document.hidden) return
+    timer = setTimeout(async () => {
+      timer = null
+      if (!stopped && !document.hidden) await tick()
+      schedule()
+    }, intervalMs)
+  }
+  tick()
+  schedule()
+  const onVis = () => {
+    if (document.hidden) {
+      if (timer) { clearTimeout(timer); timer = null }
+    } else {
+      // Back to visible: run immediately, then resume the interval.
+      tick()
+      if (!timer) schedule()
+    }
+  }
+  document.addEventListener('visibilitychange', onVis)
+  return () => {
+    stopped = true
+    if (timer) clearTimeout(timer)
+    document.removeEventListener('visibilitychange', onVis)
+  }
 }

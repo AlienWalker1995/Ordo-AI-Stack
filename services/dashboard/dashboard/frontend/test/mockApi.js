@@ -1,7 +1,7 @@
 // A fake dashboard backend for component tests: `fetch` answers each /api/* request from the
 // fixture file at the same path (test/fixtures/api/models.json answers /api/models), unless the
-// test overrides that request. Every request is recorded, so a test can assert what was sent and,
-// just as important, what was not.
+// test overrides that request. Every request is recorded (method, path, body, any query or signal),
+// so a test can assert what was sent and, just as important, what was not.
 import { vi } from 'vitest'
 
 const FIXTURES = import.meta.glob('./fixtures/api/**/*.json', { eager: true, import: 'default' })
@@ -33,8 +33,11 @@ export function mockApi(overrides = {}) {
 
   const fetchMock = vi.fn(async (url, options = {}) => {
     const method = options.method || 'GET'
-    const path = new URL(url, 'http://dashboard.test').pathname
+    const { pathname: path, searchParams } = new URL(url, 'http://dashboard.test')
     const request = { method, path, body: options.body ? JSON.parse(options.body) : undefined }
+    // Only a request sent with a query string or an AbortSignal records one.
+    if (searchParams.size) request.query = Object.fromEntries(searchParams)
+    if (options.signal) request.signal = options.signal
     requests.push(request)
 
     const key = `${method} ${path}`

@@ -11,7 +11,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 # Lock for shared mutable state accessed from both async handlers and background threads
 _state_lock = threading.Lock()
@@ -817,19 +817,44 @@ async def ops_restart(service_id: str, request: Request):
     )
 
 
+# ops-controller's logs routes take `tail` (1-1000 lines) and `since` (the previous answer's
+# `last_ts`, exclusive), and answer the newest tail with a cursor (ordo/control/logs.py).
+_LOGS_TAIL_MAX = 1000
+
+
+def _logs_query(tail: str | None, since: str | None) -> str:
+    """The query string the logs proxies forward, or a 400 for a tail or since ops would refuse."""
+    try:
+        lines = 100 if tail is None else int(tail)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"tail must be an integer, got {tail!r}") from None
+    if not 1 <= lines <= _LOGS_TAIL_MAX:
+        raise HTTPException(status_code=400, detail=f"tail must be between 1 and {_LOGS_TAIL_MAX}, got {lines}")
+    params = {"tail": lines}
+    if since is not None:
+        if not since.strip():
+            raise HTTPException(status_code=400, detail="since must not be empty")
+        params["since"] = since
+    return urlencode(params)
+
+
 @app.get("/api/ops/services/{service_id}/logs")
-async def ops_logs(service_id: str, request: Request, tail: int = 100):
+async def ops_logs(service_id: str, request: Request, tail: str | None = None, since: str | None = None):
     """Get service logs via ops controller."""
     ops_id = OPS_SERVICE_MAP.get(service_id, service_id)
-    return await _ops_proxy("GET", f"/services/{ops_id}/logs?tail={tail}", request, timeout=_LOGS_TIMEOUT)
+    query = _logs_query(tail, since)
+    return await _ops_proxy("GET", f"/services/{ops_id}/logs?{query}", request, timeout=_LOGS_TIMEOUT)
 
 
 # A container of a managed project (another compose project listed in `managed_projects:`):
 # ordo/control/managed_projects.py answers its logs and a confirmed, rate-limited restart.
 @app.get("/api/ops/projects/{project}/containers/{name}/logs")
-async def ops_project_container_logs(project: str, name: str, request: Request, tail: int = 100):
+async def ops_project_container_logs(
+    project: str, name: str, request: Request, tail: str | None = None, since: str | None = None
+):
     """Get a managed-project container's logs via ops controller."""
-    path = f"/projects/{quote(project, safe='')}/containers/{quote(name, safe='')}/logs?tail={tail}"
+    query = _logs_query(tail, since)
+    path = f"/projects/{quote(project, safe='')}/containers/{quote(name, safe='')}/logs?{query}"
     return await _ops_proxy("GET", path, request, timeout=_LOGS_TIMEOUT)
 
 

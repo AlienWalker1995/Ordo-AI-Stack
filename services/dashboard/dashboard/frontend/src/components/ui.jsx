@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react'
 import { formatRate } from '../lib/format.js'
 
 export const BTN =
-  'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-border bg-surface px-3 text-label text-fg transition-colors hover:border-accent/40 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40'
+  'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-border bg-surface px-3 text-label text-fg transition-colors hover:border-accent/40 hover:bg-accent/[0.07] hover:text-accent aria-pressed:border-accent/50 aria-pressed:bg-accent/[0.12] aria-pressed:text-accent-soft disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40'
 export const BTN_DANGER =
   'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-border bg-surface px-3 text-label text-fg transition-colors hover:border-danger/50 hover:bg-danger/10 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40'
 export const BTN_PRIMARY =

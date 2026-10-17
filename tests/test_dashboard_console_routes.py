@@ -478,6 +478,60 @@ def test_logs_use_a_short_timeout(monkeypatch, dashboard_operator_headers):
     assert ops.timeouts == [15.0]
 
 
+LOGS_ROUTES = [("/api/ops/services/open-webui/logs", "/services/open-webui/logs"),
+               ("/api/ops/projects/media-stack/containers/media-server/logs",
+                "/projects/media-stack/containers/media-server/logs")]
+LOGS_ANSWER = {"service": "open-webui", "logs": "ready", "tail": 300, "since": "2026-10-17T04:10:21.044180797Z",
+               "last_ts": "2026-10-17T04:10:24.5Z", "truncated": False}
+
+
+@pytest.mark.parametrize("url, ops_path", LOGS_ROUTES)
+def test_logs_forward_tail_and_since_and_return_the_ops_body_unchanged(
+        url, ops_path, monkeypatch, dashboard_operator_headers):
+    # The drawer reads the newest tail once, then only what came after the last answer's last_ts.
+    from dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "t")
+    ops = _RecordingOpsClient(_OpsResponse(200, LOGS_ANSWER))
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        r = TestClient(app, headers=dashboard_operator_headers).get(
+            url, params={"tail": "300", "since": "2026-10-17T04:10:21.044180797Z"})
+    assert r.status_code == 200 and r.json() == LOGS_ANSWER
+    assert ops.calls[0][1].endswith(f"{ops_path}?tail=300&since=2026-10-17T04%3A10%3A21.044180797Z")
+    assert ops.timeouts == [dashboard_app._LOGS_TIMEOUT]
+
+
+@pytest.mark.parametrize("url, ops_path", LOGS_ROUTES)
+def test_logs_without_parameters_forward_the_default_tail_and_no_since(
+        url, ops_path, monkeypatch, dashboard_operator_headers):
+    from dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "t")
+    ops = _RecordingOpsClient(_OpsResponse(200, LOGS_ANSWER))
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        TestClient(app, headers=dashboard_operator_headers).get(url)
+    assert ops.calls[0][1].endswith(f"{ops_path}?tail=100")
+
+
+@pytest.mark.parametrize("url, _ops_path", LOGS_ROUTES)
+@pytest.mark.parametrize("params, reason", [({"tail": "abc"}, "tail must be an integer"),
+                                            ({"tail": "0"}, "tail must be between 1 and 1000"),
+                                            ({"tail": "1001"}, "tail must be between 1 and 1000"),
+                                            ({"since": ""}, "since must not be empty"),
+                                            ({"since": "  "}, "since must not be empty")])
+def test_logs_refuse_a_bad_tail_or_since_without_calling_ops(
+        url, _ops_path, params, reason, monkeypatch, dashboard_operator_headers):
+    from dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "t")
+    ops = _RecordingOpsClient(_OpsResponse(200, LOGS_ANSWER))
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        r = TestClient(app, headers=dashboard_operator_headers).get(url, params=params)
+    assert r.status_code == 400
+    assert reason in r.json()["detail"]
+    assert ops.calls == []
+
+
 # --- models ---
 
 def test_models_page_lists_slots_catalog_and_files(live):
