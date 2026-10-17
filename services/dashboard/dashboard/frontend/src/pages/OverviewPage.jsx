@@ -32,7 +32,7 @@ function StatusLine({ overview, driftCount, lastUpdated }) {
         {status.text}
       </span>
       <span className="text-caption text-muted">
-        {services.up} of {services.total} services up
+        {services.up} of {services.total} containers up
         {lastUpdated ? ` · refreshed ${Math.max(0, Math.round((Date.now() - lastUpdated) / 1000))} s ago` : ''}
       </span>
     </div>

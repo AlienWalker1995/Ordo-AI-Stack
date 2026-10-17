@@ -230,11 +230,13 @@ def chat_medians(throughput: dict, served: dict, registry: dict) -> dict:
 # ---------------------------------------------------------------------------------------------
 
 def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
-                    status_gpu: dict | None) -> list[dict]:
+                    status_gpu: dict | None, host_rows: list[dict] | None = None) -> list[dict]:
     """What needs a person, most severe first. Finished jobs and stopped services are not
     problems; a failing health probe, an unhealthy or crashed container, a nearly full disk and
     a rejected GPU job are. A chat model evicted so a render can borrow its GPU is stopped on
-    purpose, so its failing probe is not a problem either."""
+    purpose, so its failing probe is not a problem either. `host_rows` are the Services table's
+    rows outside the ordo project: a crashed one is critical and an unhealthy one a warning,
+    each naming its project; stopping or finishing one is a choice, not a problem."""
     items: list[dict] = []
     evicted = set((status_gpu or {}).get("evicted_residents") or {})
     for card in cards or []:
@@ -249,6 +251,17 @@ def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
         elif verdict == "failed":
             items.append({"severity": "critical", "title": f"{sid} exited with an error",
                           "detail": row.get("status", ""), "service": sid})
+    for row in sorted(host_rows or [], key=lambda r: str(r.get("name") or "").lower()):
+        verdict = row.get("verdict")
+        if verdict not in ("failed", "unhealthy"):
+            continue
+        detail = f"{row.get('project') or 'no project'}: {row.get('status') or ''}"
+        if verdict == "failed":
+            items.append({"severity": "critical", "title": f"{row.get('name')} exited with an error",
+                          "detail": detail, "service": row.get("name")})
+        else:
+            items.append({"severity": "warning", "title": f"{row.get('name')} is unhealthy",
+                          "detail": detail, "service": row.get("name")})
     disk = (hardware or {}).get("disk_pct")
     if isinstance(disk, int | float) and disk >= _DISK_WARN_PCT:
         detail = ""
@@ -564,3 +577,27 @@ def build_service_table(cards: list[dict], containers_by_id: dict,
         rows.append(_foreign_row(seen["project"], name, seen["host"], seen["managed"], managed_projects))
     rows.sort(key=_sort_key)
     return rows
+
+
+def service_counts(rows: list[dict]) -> dict:
+    """The Overview's container counts from the Services table's rows: every container on the
+    host, in total and per project. A finished one-shot job ('done') is not a service that
+    should be up, so it leaves the totals; a probe-only card is not a container at all, and with
+    the control plane down an ordo row carries no container either, so the counts keep only what
+    was read."""
+    by_project: dict[str, dict] = {}
+    up = 0
+    total = 0
+    for row in rows or []:
+        if not row.get("container") or row["verdict"] == "done":
+            continue
+        total += 1
+        stats = by_project.setdefault(row.get("project") or "", {"total": 0, "up": 0, "failed": 0,
+                                                                 "unhealthy": 0})
+        stats["total"] += 1
+        if row["verdict"] == "up":
+            up += 1
+            stats["up"] += 1
+        elif row["verdict"] in ("failed", "unhealthy"):
+            stats[row["verdict"]] += 1
+    return {"up": up, "total": total, "by_project": by_project}

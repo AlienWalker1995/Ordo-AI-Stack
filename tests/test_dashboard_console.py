@@ -195,6 +195,36 @@ def test_a_model_evicted_for_a_render_is_not_an_alert():
     assert [i["title"] for i in items] == ["llama.cpp (GPU) is not responding"]
 
 
+def test_a_failed_host_container_is_critical_and_names_its_project():
+    # The Overview feeds build_attention the table's rows outside the ordo project: a crashed
+    # one needs a person, and the item says which stack it is in.
+    rows = [r for r in _host_table() if r["project"] != console.ORDO_PROJECT]
+    items = console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, IDLE, host_rows=rows)
+    assert len(items) == 1
+    assert items[0]["severity"] == "critical"
+    assert items[0]["title"] == "media-indexer exited with an error"
+    assert items[0]["detail"] == "media-stack: Exited (1) 2 hours ago"
+
+
+def test_an_unhealthy_host_container_is_a_warning_that_names_its_project():
+    rows = [{"name": "media-transcode", "project": "media-stack", "verdict": "unhealthy",
+             "status": "Up 3 hours (unhealthy)"}]
+    items = console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, IDLE, host_rows=rows)
+    assert [(i["severity"], i["title"]) for i in items] == [("warning", "media-transcode is unhealthy")]
+    assert items[0]["detail"] == "media-stack: Up 3 hours (unhealthy)"
+
+
+def test_stopped_and_finished_host_containers_are_not_alerts():
+    # Stopping is a choice and exit 0 is a finished job: neither needs a person.
+    rows = [
+        {"name": "web-site-stopped-1", "project": "web-site", "verdict": "stopped",
+         "status": "Exited (137) 1 day ago"},
+        {"name": "web-site-done-1", "project": "web-site", "verdict": "done",
+         "status": "Exited (0) 1 day ago"},
+    ]
+    assert console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, IDLE, host_rows=rows) == []
+
+
 # --- renders, media, activity ---
 
 HISTORY = {
@@ -512,6 +542,27 @@ def test_with_the_control_plane_down_ordo_rows_are_unknown_with_no_actions():
 def test_the_table_has_no_groups():
     assert not hasattr(console, "_GROUP_ORDER")
     assert all("group" not in r for r in _host_table())
+
+
+def test_service_counts_cover_every_project_and_leave_out_finished_jobs():
+    # The Overview counts the table's rows: every container on the host, per project. evals and
+    # web-site-job-1 finished (exit 0) and leave the totals; media-indexer crashed; the probe-only
+    # card is not a container at all.
+    counts = console.service_counts(_host_table())
+    assert counts["up"] == 6 and counts["total"] == 7
+    assert counts["by_project"] == {
+        "ordo": {"total": 3, "up": 3, "failed": 0, "unhealthy": 0},
+        "media-stack": {"total": 2, "up": 1, "failed": 1, "unhealthy": 0},
+        "web-site": {"total": 1, "up": 1, "failed": 0, "unhealthy": 0},
+        "": {"total": 1, "up": 1, "failed": 0, "unhealthy": 0},  # adhoc: compose did not start it
+    }
+
+
+def test_service_counts_keep_only_what_was_read_with_the_control_plane_down():
+    # No /services answer: the ordo rows carry no container, so the counts say nothing about them
+    # instead of guessing everything stopped.
+    rows = console.build_service_table([WEBUI_CARD], {}, control_plane_up=False)
+    assert console.service_counts(rows) == {"up": 0, "total": 0, "by_project": {}}
 
 
 def test_the_dashboard_names_the_compose_project_the_stack_runs_as():

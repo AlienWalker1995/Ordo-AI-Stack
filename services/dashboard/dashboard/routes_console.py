@@ -182,11 +182,15 @@ def _registry(payload: dict | None) -> dict:
     return (payload or {}).get("models", {}) or {}
 
 
-def _status_line(status_gpu: dict | None, attention: list[dict]) -> dict:
+def _status_line(status_gpu: dict | None, attention: list[dict], host_containers_down: bool = False) -> dict:
     # The Overview adds /api/drift's findings to this count (OverviewPage.jsx `withDrift`).
     if status_gpu is None:
         return {"level": "unknown", "text": "The control plane is not answering"}
     if not attention:
+        # Without the host-wide list the counts cover only what was read, so "all normal" would
+        # be a claim about containers nobody looked at.
+        if host_containers_down:
+            return {"level": "warning", "text": "Host containers could not be read"}
         return {"level": "ok", "text": "All systems normal"}
     level = "critical" if any(a["severity"] == "critical" for a in attention) else "warning"
     n = len(attention)
@@ -199,21 +203,29 @@ def _status_line(status_gpu: dict | None, attention: list[dict]) -> dict:
 
 @router.get("/overview")
 async def overview() -> dict:
-    status, services, registry, hardware, cards, rag, throughput, served = await asyncio.gather(
-        _ops_json("/status"), _ops_json("/services"), _ops_json("/registry/models"),
-        _hardware(), _service_cards(), _rag(), _throughput(), _served(),
-    )
+    status, services, registry, hardware, cards, rag, throughput, served, host_containers, managed = \
+        await asyncio.gather(
+            _ops_json("/status"), _ops_json("/services"), _ops_json("/registry/models"),
+            _hardware(), _service_cards(), _rag(), _throughput(), _served(),
+            _host_containers(), _ops_json("/projects"),
+        )
     status_gpu = (status or {}).get("gpu") if status else None
     containers = _containers(services)
-    attention = console.build_attention(cards, containers, hardware, status_gpu)
+    # The same rows the Services page lists: the counts and the attention below cover every
+    # container on the host, not only the ordo project.
+    rows = console.build_service_table(cards, containers, status_gpu,
+                                       control_plane_up=services is not None,
+                                       host_containers=host_containers, managed=managed)
+    host_rows = [r for r in rows if r["project"] != console.ORDO_PROJECT]
+    attention = console.build_attention(cards, containers, hardware, status_gpu, host_rows=host_rows)
     engine = console.chat_engine(status_gpu, containers)
     medians = console.chat_medians(throughput, served, _registry(registry))
-    verdicts = [console.classify_container(c.get("state"), c.get("health"), c.get("status"))
-                for c in containers.values()]
     return {
-        "status": _status_line(status_gpu, attention),
+        "status": _status_line(status_gpu, attention, host_containers_down=host_containers is None),
         # A one-shot job that finished ("done", exit 0) is not a service that should be up.
-        "services": {"up": sum(v == "up" for v in verdicts), "total": sum(v != "done" for v in verdicts)},
+        "services": console.service_counts(rows),
+        # Whether the rows outside the ordo project could be read at all.
+        "host_containers": "up" if host_containers is not None else "down",
         "gpus": console.gpu_cards((hardware or {}).get("gpus") or [], _registry(registry), status_gpu),
         "chat": {**engine, **medians},
         "attention": attention,
