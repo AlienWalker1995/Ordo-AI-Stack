@@ -249,6 +249,16 @@ def test_overview_without_the_host_list_says_so_instead_of_all_normal():
                                                "media-stack": {"total": 1, "up": 1, "failed": 0, "unhealthy": 0}}}
 
 
+def test_the_status_line_reports_the_host_gap_even_when_attention_is_non_empty(live):
+    # /containers unread while something else needs attention: the gap must not be silently
+    # dropped behind the "N things need you" count — that is the under-counting this PR removes.
+    with patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=None)):
+        body = TestClient(app).get("/api/overview").json()
+    assert body["host_containers"] == "down"
+    assert body["status"]["level"] == "critical"
+    assert body["status"]["text"] == "2 things need you · host containers unread"
+
+
 # --- drift (hostile audit OPS-3) ---
 
 def test_drift_lists_the_checks_ordo_doctor_would_flag(live):

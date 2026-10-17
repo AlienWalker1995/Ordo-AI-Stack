@@ -194,7 +194,12 @@ def _status_line(status_gpu: dict | None, attention: list[dict], host_containers
         return {"level": "ok", "text": "All systems normal"}
     level = "critical" if any(a["severity"] == "critical" for a in attention) else "warning"
     n = len(attention)
-    return {"level": level, "text": f"{n} thing{'s' if n != 1 else ''} need{'s' if n == 1 else ''} you"}
+    text = f"{n} thing{'s' if n != 1 else ''} need{'s' if n == 1 else ''} you"
+    if host_containers_down:
+        # The counts below the line cover only what was read; say so instead of letting the
+        # number stand alone, or the gap is invisible whenever anything else needs attention.
+        text += " · host containers unread"
+    return {"level": level, "text": text}
 
 
 # ---------------------------------------------------------------------------------------------

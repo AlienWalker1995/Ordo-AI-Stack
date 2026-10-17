@@ -55,6 +55,15 @@ describe('the status line with drift', () => {
     expect(screen.getByText('2 things need you')).toBeTruthy()
   })
 
+  it('keeps the unread-host-list note when drift rebuilds the count', async () => {
+    // The backend's gap note must survive withDrift's rebuild, or the count would quietly cover
+    // only what was still read while a Drift callout is on screen.
+    mockApi({ 'GET /api/overview': () => ({ ...fixture('/api/overview'), host_containers: 'down' }) })
+    renderInShell(<OverviewPage />)
+    await screen.findByRole('heading', { name: 'Drift' })
+    expect(screen.getByText('2 things need you · host containers unread')).toBeTruthy()
+  })
+
   it.each([
     ['no findings', { available: true, findings: [] }],
     ['the check could not run', { available: false, findings: [] }],
