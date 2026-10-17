@@ -55,12 +55,13 @@ export function isConfirmed(action, before, row) {
   const was = uptimeSeconds(before.uptime)
   const now = uptimeSeconds(row.uptime)
   if (was == null || now == null) return row.status !== before.status
-  // A smaller value proves the restart. While both texts are per-second ("Less than a second",
-  // "N seconds"), the reset may already have grown past the old value by the first confirming
-  // read: `before` is up to a poll stale, and the first read that shows the post-restart state
-  // lands at most CONFIRM_FAST_MS after it appeared, so allow that lag. Coarser texts plateau
-  // ("2 days" stays "2 days" for hours), so there only a decrease proves it. A no-op restart on
-  // a sub-minute container can look the same (its uptime grows ~2 s per read too); that reads as
-  // done rather than stuck — the started_at path above removes the ambiguity.
-  return now < was || (was < 60 && now < 60 && now - was <= CONFIRM_FAST_MS / 1000)
+  // A smaller value proves the restart at any granularity. Coarser texts plateau ("2 days" stays
+  // "2 days" for hours) and grow on their own, so there only a decrease proves it. A sub-minute
+  // snapshot is different: its text changes every second anyway, and the first confirming read
+  // may land long after the new start — `before` is up to a poll stale, a slow fetch adds more,
+  // and a hidden tab pauses the loop entirely, so the gap can be far larger and only grows from
+  // there — there, any different text confirms it. A no-op restart on a sub-minute container
+  // reads as done rather than stuck — the started_at path above removes the ambiguity.
+  if (was < 60) return row.uptime.trim() !== before.uptime.trim()
+  return now < was
 }

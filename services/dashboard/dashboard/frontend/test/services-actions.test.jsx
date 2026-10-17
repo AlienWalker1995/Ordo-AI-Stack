@@ -242,6 +242,32 @@ describe('Services: an action is pending until the table confirms it', () => {
     expect(toastTexts()).toEqual(['evals: started'])
   })
 
+  it('confirms a restart when the first read back from hidden lands far past the new start', async () => {
+    let hidden = false
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden })
+    const { state } = backend({ 'POST /api/ops/services/open-webui/restart': { ok: true } })
+    // The snapshot is sub-minute: the row was up "Less than a second" when the restart was asked.
+    state.table = tableWith({ 'ordo:open-webui': { verdict: 'up', uptime: 'Less than a second', status: 'Up Less than a second (health: starting)' } })
+    renderInShell(<ServicesPage />)
+    await advance()
+
+    confirmAction('Open WebUI', 'Restart')
+    await advance()
+
+    // The tab hides while the restart runs: the loop pauses and misses the new start.
+    hidden = true
+    document.dispatchEvent(new Event('visibilitychange'))
+    state.table = tableWith({ 'ordo:open-webui': { verdict: 'up', uptime: '10 seconds', status: 'Up 10 seconds' } })
+    await advance(30000)
+    expect(toastTexts()).toEqual([])
+
+    // Back in view, the first read shows the new uptime grown well past the snapshot: restarted.
+    hidden = false
+    document.dispatchEvent(new Event('visibilitychange'))
+    await advance()
+    expect(toastTexts()).toEqual(['Open WebUI: restarted'])
+  })
+
   it('confirms a restart by its start time when the row carries one', async () => {
     const { state } = backend({ 'POST /api/ops/services/open-webui/restart': { ok: true } })
     state.table = tableWith({ 'ordo:open-webui': { started_at: '2026-10-15T08:00:00Z' } })
@@ -352,11 +378,14 @@ describe('Services: what confirms an action', () => {
     ['restart', up, { verdict: 'failed', uptime: null, status: 'Restarting (1) 2 seconds ago' }, false],
     ['restart', { ...up, started_at: 'a' }, { ...up, started_at: 'b' }, true],
     ['restart', { ...up, started_at: 'a' }, { verdict: 'up', uptime: '1 second', started_at: 'a' }, false],
-    // Per-second texts: `before` is up to a poll stale, so by the first confirming read the
-    // restarted container's new uptime may have grown to or past the old value.
-    ['restart', { verdict: 'up', uptime: '3 seconds', status: 'Up 3 seconds' }, { verdict: 'up', uptime: '3 seconds', status: 'Up 3 seconds' }, true],
+    // Sub-minute snapshots: the first confirming read may land long after the new start (a slow
+    // fetch, a hidden tab), so growth past the old value still confirms — any different text does.
     ['restart', { verdict: 'up', uptime: 'Less than a second', status: 'Up Less than a second' }, { verdict: 'starting', uptime: '2 seconds', status: 'Up 2 seconds (health: starting)' }, true],
+    ['restart', { verdict: 'up', uptime: 'Less than a second', status: 'Up Less than a second' }, { verdict: 'up', uptime: '10 seconds', status: 'Up 10 seconds' }, true],
     ['restart', { verdict: 'up', uptime: '1 second', status: 'Up 1 second' }, { verdict: 'up', uptime: '2 seconds', status: 'Up 2 seconds' }, true],
+    ['restart', { verdict: 'up', uptime: '59 seconds', status: 'Up 59 seconds' }, { verdict: 'up', uptime: 'About a minute', status: 'Up About a minute' }, true],
+    // Unchanged text proves nothing: the read raced the restart, or it was a no-op. The next read decides.
+    ['restart', { verdict: 'up', uptime: '3 seconds', status: 'Up 3 seconds' }, { verdict: 'up', uptime: '3 seconds', status: 'Up 3 seconds' }, false],
     // Coarser texts plateau: the same "About an hour" twice is not proof of a restart.
     ['restart', { verdict: 'up', uptime: 'About an hour', status: 'Up About an hour' }, { verdict: 'up', uptime: 'About an hour', status: 'Up About an hour' }, false],
   ])('%s from %j to %j: %s', (action, before, row, confirmed) => {
