@@ -601,8 +601,9 @@ class RenderedConfig:
         mg_dir.mkdir(parents=True, exist_ok=True)
         for name, text in self.model_gateway_config_files().items():
             (mg_dir / name).write_text(text, encoding="utf-8")
-        # mcp/servers.json: the dashboard's read-only view (enabled servers + server_id->plugin_id map
-        # for the enable/disable toggle that edits ordo.yaml). Mounted at /mcp-config.
+        # mcp/servers.json: enabled servers + server_id->plugin_id map. No compose service
+        # mounts it anymore (the dashboard's /mcp-config mount went with the Settings drawer);
+        # the native-mode checklist (ordo/host/native.py) points operators at it.
         # oauth2-proxy/ - the edge's allowlist, mounted read-only into oauth2-proxy; gone when the
         # edge is off.
         allowlist_dir = out / "oauth2-proxy"
