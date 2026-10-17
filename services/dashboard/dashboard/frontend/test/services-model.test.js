@@ -145,6 +145,25 @@ describe('sortRows', () => {
     expect(sortRows(media)[0].name).toBe('media-indexer')
   })
 
+  it('keeps an evicted resident behind the real warnings when a render borrows the GPU', () => {
+    // The backend sends the evicted resident as stopped with lent: true, never a "lent" verdict;
+    // its severity is info, so it sorts behind the genuine stopped rows, not among them.
+    const evicted = ordo().map((r) => {
+      if (r.id === 'ordo:llamacpp') return { ...r, verdict: 'stopped', lent: true }
+      if (r.id === 'ordo:caddy' || r.id === 'ordo:ops-controller') return { ...r, verdict: 'stopped' }
+      return r
+    })
+    expect(sortRows(evicted).map((r) => r.name)).toEqual([
+      'Codebase Memory', 'caddy', 'ops-controller', 'llama.cpp (GPU)', 'ComfyUI',
+      'llama.cpp (CPU fallback)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI', 'Qdrant', 'evals',
+    ])
+    // Descending flips the health order but keeps the lent row behind the running ones.
+    expect(sortRows(evicted, { dir: 'desc' }).map((r) => r.name)).toEqual([
+      'ComfyUI', 'llama.cpp (CPU fallback)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI',
+      'Qdrant', 'llama.cpp (GPU)', 'caddy', 'ops-controller', 'Codebase Memory', 'evals',
+    ])
+  })
+
   it('sorts by name in both directions', () => {
     const names = ordo().map((r) => r.name)
     expect(sortRows(ordo(), { key: 'name' }).map((r) => r.name)).toEqual([...names].sort((a, b) => a.localeCompare(b)))
@@ -232,5 +251,17 @@ describe('statusCounts', () => {
     expect(statusCounts([
       row({ verdict: 'stopped', lent: true }), row({ verdict: 'starting' }), row({ verdict: 'up' }),
     ])).toEqual({ total: 3, running: 1, failed: 0, unhealthy: 0, stopped: 0, jobs: 0 })
+  })
+
+  it('keeps a lent row out of every problem bucket, whatever its verdict', () => {
+    // A crash mid-lease arrives as failed with lent: true; severity reads it as information, so
+    // the strip must not count it as failed while the section header calls it info.
+    expect(statusCounts([
+      row({ verdict: 'failed', lent: true }),
+      row({ verdict: 'unhealthy', lent: true }),
+      row({ verdict: 'stopped', lent: true }),
+      row({ verdict: 'failed' }),
+      row({ verdict: 'up' }),
+    ])).toEqual({ total: 5, running: 1, failed: 1, unhealthy: 0, stopped: 0, jobs: 0 })
   })
 })

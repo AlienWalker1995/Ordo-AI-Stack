@@ -13,7 +13,7 @@ import { uptimeSeconds } from './serviceActions.js'
  * @property {string | null} container Container name, null for probe-only cards.
  * @property {string | null} compose Compose service name, null outside ordo.
  * @property {string | null} card_id Dashboard card id when the row has one.
- * @property {'up'|'starting'|'unhealthy'|'failed'|'stopped'|'done'|'lent'|'unknown'} verdict
+ * @property {'up'|'starting'|'unhealthy'|'failed'|'stopped'|'done'|'unknown'} verdict
  * @property {string | null} uptime Docker uptime text, null when not running.
  * @property {string | null} status Raw docker status line.
  * @property {string | null} open_url Link to open, when the row has one.
@@ -167,7 +167,8 @@ export function sectionOrder(sections) {
 }
 
 // Row order inside a section: problems first (failed, unhealthy, starting, stopped), then running
-// by name, finished jobs last. The rank map keeps that exact order; "lent" and "unknown" sit
+// by name, finished jobs last. The rank map keeps that exact order; lent residents — the backend
+// sends them as stopped or failed with lent: true, never a "lent" verdict — and "unknown" sit
 // between the warnings and the running rows, where their severity puts them.
 const ROW_RANK = { failed: 0, unhealthy: 1, starting: 2, stopped: 3, lent: 4, unknown: 5, up: 6, done: 7 }
 
@@ -210,8 +211,10 @@ export function sortRows(rows, options = {}, pressure = null) {
         const ja = a.verdict === 'done' ? 1 : 0
         const jb = b.verdict === 'done' ? 1 : 0
         if (ja !== jb) return ja - jb
-        const ra = ROW_RANK[a.verdict] ?? 9
-        const rb = ROW_RANK[b.verdict] ?? 9
+        // A lent resident arrives as stopped (or failed) with lent: true; its severity is info,
+        // so it sorts in the lent slot, not the warning tier its verdict would give it.
+        const ra = a.lent ? ROW_RANK.lent : ROW_RANK[a.verdict] ?? 9
+        const rb = b.lent ? ROW_RANK.lent : ROW_RANK[b.verdict] ?? 9
         if (ra !== rb) return sign * (ra - rb)
         return byName(a, b)
       }
@@ -240,7 +243,7 @@ export function displayIdentifier(row) {
 
 /**
  * Counts for the status strip: the toggle buttons and their numbers. "running" counts verdict
- * "up" only; a lent row is not counted as stopped.
+ * "up" only; a lent row reads as information (severity), so it counts toward total only.
  * @param {ServiceRow[]} rows
  * @returns {{ total: number, running: number, failed: number, unhealthy: number, stopped: number, jobs: number }}
  */
@@ -248,9 +251,10 @@ export function statusCounts(rows) {
   const counts = { total: rows.length, running: 0, failed: 0, unhealthy: 0, stopped: 0, jobs: 0 }
   for (const row of rows) {
     if (row.verdict === 'up') counts.running += 1
+    else if (row.lent) continue
     else if (row.verdict === 'failed') counts.failed += 1
     else if (row.verdict === 'unhealthy') counts.unhealthy += 1
-    else if (row.verdict === 'stopped' && !row.lent) counts.stopped += 1
+    else if (row.verdict === 'stopped') counts.stopped += 1
     else if (row.verdict === 'done') counts.jobs += 1
   }
   return counts
