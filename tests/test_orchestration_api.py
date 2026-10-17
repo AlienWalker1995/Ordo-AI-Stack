@@ -251,10 +251,6 @@ def test_orch_registry_list_models_503_without_token(dash_client, monkeypatch):
     assert r.status_code == 503
 
 
-
-# ── GPU lease proxies (orchestration tab) ────────────────────────────────────────────────
-
-
 class _FakeResp:
     def __init__(self, payload):
         self._payload = payload
@@ -264,32 +260,6 @@ class _FakeResp:
 
     def json(self):
         return self._payload
-
-
-class _FakeAsyncClient:
-    payload: dict = {}
-    requests: list = []
-
-    def __init__(self, *a, **kw):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *a):
-        return False
-
-    async def get(self, url, headers=None):
-        _FakeAsyncClient.requests.append((url, headers or {}))
-        return _FakeResp(self.payload)
-
-
-def test_gpu_history_route_passes_through(client):
-    _FakeAsyncClient.payload = {"history": [{"id": "lease-abc", "outcome": "completed"}]}
-    with patch("dashboard.routes_orchestration.httpx.AsyncClient", _FakeAsyncClient):
-        r = client.get("/api/orchestration/gpu/history")
-    assert r.status_code == 200
-    assert r.json()["history"][0]["outcome"] == "completed"
 
 
 def test_media_readiness_fails_loud_without_a_gate_url(monkeypatch):
@@ -305,23 +275,6 @@ def test_media_readiness_fails_loud_without_a_gate_url(monkeypatch):
     assert media["ok"] is False and "COMFYUI_URL" in media["error"]
     assert out["ok"] is False
     assert all("8188" not in str(call.args[0]) for call in probe.call_args_list)
-
-
-def test_gpu_history_authenticates_to_the_control_plane(client, monkeypatch):
-    # ops-controller refuses every unauthenticated call (#225); this route sent no token and
-    # the Performance page's lease history read 502 "401 Unauthorized".
-    from dashboard import routes_orchestration
-
-    monkeypatch.setattr(routes_orchestration, "OPS_CONTROLLER_TOKEN", "test-token")
-    _FakeAsyncClient.requests = []
-    _FakeAsyncClient.payload = {"history": []}
-    with patch("dashboard.routes_orchestration.httpx.AsyncClient", _FakeAsyncClient):
-        r = client.get("/api/orchestration/gpu/history")
-    assert r.status_code == 200
-    url, headers = _FakeAsyncClient.requests[-1]
-    assert url == f"{routes_orchestration.OPS_CONTROLLER_URL}/jobs/history"
-    assert headers.get("Authorization") == "Bearer test-token"
-    assert headers.get("X-Actor") == "orchestration"   # the caller ops-controller's audit log records
 
 
 # ── Destructive routes confirm with JSON true only ───────────────────────────────────────
@@ -363,7 +316,6 @@ def ops_calls(monkeypatch):
 
 CONFIRM_GATED_DASHBOARD_ROUTES = [
     ("/api/orchestration/comfyui/restart", {}),
-    ("/api/comfyui/install-node-requirements", {"node_path": "some-pack"}),
 ]
 
 

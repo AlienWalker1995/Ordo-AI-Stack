@@ -1,10 +1,9 @@
 id: dashboard
 name: Ordo control-plane dashboard
 description: >
-  The operator's control-plane UI: five pages (Overview, Services, Models, Media, Performance)
-  plus a Settings drawer (MCP servers, ComfyUI custom-node requirements) and a Ctrl/Cmd K command
-  palette. Models switches the GPU model through ops-controller; Performance embeds the Grafana
-  "Ordo performance" dashboard (/grafana/). Token auth and Caddy SSO trust.
+  The operator's control-plane UI: four pages (Overview, Services, Models, Performance) plus a
+  Ctrl/Cmd K command palette. Models switches the GPU model through ops-controller; Performance
+  embeds the Grafana "Ordo performance" dashboard (/grafana/). Token auth and Caddy SSO trust.
 
   The frontend is same-origin (it calls /api/* only, with no baked backend hostname) and the
   FastAPI backend reads OPS_CONTROLLER_URL at runtime, so it points straight at `ops-controller`,
@@ -60,17 +59,10 @@ environment:
   # Backend service URLs the dashboard reads at runtime (all V2 service names).
   LLAMACPP_URL: http://llamacpp:8080
   MODEL_GATEWAY_URL: http://model-gateway:11435
-  # LiteLLM's MCP gateway is the model-gateway itself (MODEL_GATEWAY_URL above). The enabled server
-  # set is the render-emitted out/mcp/servers.json (mounted read-only at /mcp-config); health comes
-  # from LiteLLM (/v1/mcp/server/health + tools/list outcomes), so a crashed server shows red. A UI
-  # MCP toggle maps server_id -> plugin_id (inside servers.json) and asks ops-controller to
-  # enable/disable that plugin: ops-controller is the only writer of the operator source.
-  MCP_SERVERS_PATH: /mcp-config/servers.json
   QDRANT_URL: http://qdrant:6333
-  # On-disk model dirs (bind-mounted below): /api/llm/* scans GGUF_MODELS_DIR; MODELS_DIR is comfyui.
+  # On-disk model dir (mounted below): the Models page scans GGUF_MODELS_DIR.
   GGUF_MODELS_DIR: /gguf-models
-  MODELS_DIR: /models
-  # Dashboard state (orchestration jobs, throughput samples, MCP registry) — staged V2 data tree.
+  # Dashboard state (orchestration jobs, throughput samples) — staged V2 data tree.
   # V1 defaults DASHBOARD_DATA_PATH to ./data/dashboard under /app (not writable by appuser); pin it
   # to the mounted /data/dashboard so startup mkdir succeeds.
   DASHBOARD_DATA_PATH: /data/dashboard
@@ -88,22 +80,16 @@ environment:
   # the React grid renders it. Missing/unreadable -> the loader falls back to reading the repo
   # fragments directly (dev checkouts) and logs loudly if neither source exists.
   SERVICES_CATALOG_PATH: /ordo-services-catalog.json
-# The dashboard reads on-disk GGUFs from GGUF_MODELS_DIR (the models-gguf volume) and lists
-# comfyui models via MODELS_DIR; its own state lives in the staged V2 data tree.
+# The dashboard reads on-disk GGUFs from GGUF_MODELS_DIR (the models-gguf volume); its own state
+# lives in the staged V2 data tree.
 volumes:
   # RW view of the SAME models-gguf volume the llama.cpp services read, so the Models page's
   # delete removes the file the backends load; 9p bind retired 2026-08-07 (see ordo/render/compose.py).
   - models-gguf:/gguf-models
-  # RW view of the SAME comfyui-models volume ComfyUI reads, so the Media page's model
-  # delete removes the file ComfyUI loads; 9p bind retired 2026-08-07 (Stage 2, see
-  # services/comfyui/plugin.yaml for the seam rationale).
-  - comfyui-models:/models
   - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/dashboard:/data/dashboard
-  # ${BASE_PATH}/out/ (not ./) on the three binds below: ops-controller recreates the dashboard
+  # ${BASE_PATH}/out/ (not ./) on the two binds below: ops-controller recreates the dashboard
   # with the project dir at its own /config mount, where ./x resolves to a host path that
   # does not exist (tests/substrate/test_compose.py pins this).
-  # The rendered out/mcp dir (servers.json). READ-ONLY: nothing live is written here any more.
-  - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/mcp:/mcp-config:ro
   # The rendered manifest (out/manifest.json). Read-only: the grid's
   # enabled-gate only reads plugins_enabled. See MANIFEST_PATH above.
   - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/manifest.json:/ordo-manifest.json:ro

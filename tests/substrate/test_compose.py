@@ -605,8 +605,7 @@ def test_db_state_on_named_volumes_never_9p():
 def test_comfyui_models_on_named_volume():
     # Stage-2 of the 9p eviction: the ~390GB ComfyUI weights tree is the largest
     # state mount; it wedged --enable-assets and rode the same doomed bridge.
-    # comfyui reads RO; dashboard RW (model-pack pull UI lands downloads where
-    # ComfyUI reads); the control plane lists the same tree.
+    # comfyui reads RO; the control plane writes downloads into the same tree.
     from ordo.render.dashboards import DashboardRegistry
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": ["comfyui"]})
@@ -615,7 +614,6 @@ def test_comfyui_models_on_named_volume():
     assert "comfyui-models" in c["volumes"]
     expected = {
         "comfyui": "comfyui-models:/root/ComfyUI/models:ro",
-        "dashboard": "comfyui-models:/models",
         "ops-controller": "comfyui-models:/models/comfyui",
     }
     for name, mount in expected.items():
@@ -625,7 +623,8 @@ def test_comfyui_models_on_named_volume():
         # /models/comfyui are fine — that's the volume's mountpoint)
         bad = [v for v in vols if "${" in v and "models/comfyui" in v]
         assert not bad, f"{name} still binds models/comfyui over 9p: {bad}"
-    assert "comfyui-models:/models:ro" not in c["services"]["dashboard"]["volumes"]
+    # the dashboard no longer touches ComfyUI's models (ComfyUI manages its own)
+    assert not [v for v in c["services"]["dashboard"]["volumes"] if v.startswith("comfyui-models:")]
 
 
 # ── LiteLLM Postgres + key bootstrap + the internal MCP network (spec §3) ─────────────────────

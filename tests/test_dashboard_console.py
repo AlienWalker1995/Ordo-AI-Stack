@@ -1,4 +1,4 @@
-"""Pure builders behind the dashboard's Overview, Services, Models and Media pages.
+"""Pure builders behind the dashboard's Overview, Services and Models pages.
 
 Everything here takes plain dicts shaped like the live payloads (control-plane /status,
 /services and /registry/models; the dashboard's hardware stats and throughput store; ComfyUI's
@@ -214,19 +214,6 @@ def test_renders_are_newest_first_with_their_media_kind():
     assert renders[2]["kind"] == "audio"
     assert renders[0]["ok"] is False and renders[0]["kind"] == "unknown"
     assert renders[1]["ts"] == 1790171900.0
-
-
-def test_media_summary_reports_the_running_job_and_queue_depth():
-    queue = {"queue_running": [[5, "run-1", {}, {}, []]], "queue_pending": [[6, "p1", {}, {}, []], [7, "p2", {}, {}, []]]}
-    media = console.summarise_media(queue, HISTORY, limit=2)
-    assert media["running"] == {"prompt_id": "run-1"}
-    assert media["pending"] == 2
-    assert len(media["recent"]) == 2
-
-
-def test_an_empty_queue_has_nothing_running():
-    media = console.summarise_media({"queue_running": [], "queue_pending": []}, {}, limit=5)
-    assert media == {"running": None, "pending": 0, "recent": []}
 
 
 def test_activity_merges_sources_newest_first_and_drops_read_only_noise():

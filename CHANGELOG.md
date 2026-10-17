@@ -76,6 +76,18 @@ All notable changes to this project are documented here. The format is loosely b
   2026-10-14 an uncommitted edit took the Hermes site down with a 502. A Caddyfile change now reaches
   caddy only through `ordo apply`, which recreates it from the file's content digest label.
 
+### Removed
+- **The dashboard's Media page and Settings drawer.** The dashboard is the stack's orchestration
+  plane: Overview, Services, Models, Performance and the Ctrl/Cmd K palette. Media (ComfyUI queue,
+  recent outputs, GPU lease history, ComfyUI model files) and Settings (MCP server toggles, ComfyUI
+  custom-node requirements) duplicated tools that own those jobs: manage MCP servers in the LiteLLM
+  UI or `ordo.yaml`'s `plugins:` list, and media in ComfyUI. Their routes are retired (`/api/media`,
+  `/api/media/view`, `/api/comfyui/models`, `DELETE /api/comfyui/models/{category}/{filename}`,
+  `/api/comfyui/install-node-requirements`, `/api/mcp/*`, `/api/orchestration/gpu/history`), as are
+  the dashboard's `comfyui-models` and `out/mcp` mounts and its `MODELS_DIR` and `MCP_SERVERS_PATH`
+  env. ComfyUI restart stays on its Services card, and renders and leases stay in Overview's
+  activity feed. Old `#media` links land on Overview, `#comfyui` on Services.
+
 ### Added
 - **`ordo deploy` keeps the stack on `origin/main`.** A merged PR used to wait for the operator to run
   `ordo apply`. A scheduled task (`ordo deploy --install-schedule`) now runs a pass every 2 minutes:

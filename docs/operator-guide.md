@@ -185,7 +185,7 @@ that did something to `out/deploy/deploy.log`. Elsewhere
 ### Changes made through the control plane
 
 A model switch (the dashboard's Models page, `set_active_model`, `POST /model-config`) and a plugin
-enable or disable (Hermes' `enable_service`, the dashboard's MCP toggle, `POST /plugins/{id}/...`)
+enable or disable (Hermes' `enable_service`, `POST /plugins/{id}/...`)
 write `ordo.yaml`, render, and then apply the render from ops-controller: it recreates exactly the
 changed set (`--no-deps --force-recreate`, netns members with their owner, refused while it would
 start a GPU-evicted resident) and stops the services the render dropped. It cannot recreate itself or

@@ -1,9 +1,9 @@
-// Command palette (Ctrl/Cmd+K): jump to a page, open a tool, or open settings. Keyboard first:
+// Command palette (Ctrl/Cmd+K): jump to a page or open a tool. Keyboard first:
 // arrows move, Enter runs, Escape closes. Services and tool links come from the live overview.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api.js'
 
-export default function CommandPalette({ open, onClose, pages, onNavigate, onOpenSettings }) {
+export default function CommandPalette({ open, onClose, pages, onNavigate }) {
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
   const [links, setLinks] = useState([])
@@ -26,9 +26,8 @@ export default function CommandPalette({ open, onClose, pages, onNavigate, onOpe
 
   const commands = useMemo(() => [
     ...pages.map((p) => ({ id: `page-${p.id}`, label: `Go to ${p.label}`, hint: 'Page', run: () => onNavigate(p.id) })),
-    { id: 'settings', label: 'Open settings', hint: 'Settings', run: onOpenSettings },
     ...links.map((l) => ({ id: `link-${l.url}`, label: `Open ${l.name}`, hint: 'Tool', run: () => window.open(l.url, '_blank', 'noopener') })),
-  ], [pages, links, onNavigate, onOpenSettings])
+  ], [pages, links, onNavigate])
 
   const q = query.trim().toLowerCase()
   const matches = q ? commands.filter((c) => c.label.toLowerCase().includes(q)) : commands
@@ -58,10 +57,10 @@ export default function CommandPalette({ open, onClose, pages, onNavigate, onOpe
       <div role="dialog" aria-modal="true" aria-label="Command palette"
            className="w-full max-w-lg overflow-hidden rounded-md border border-border bg-bg-elevated shadow-card-lg"
            onClick={(e) => e.stopPropagation()}>
-        <label htmlFor="palette-input" className="sr-only">Search pages, tools and actions</label>
+        <label htmlFor="palette-input" className="sr-only">Search pages and tools</label>
         <input id="palette-input" ref={inputRef} value={query} onKeyDown={onKeyDown}
                onChange={(e) => { setQuery(e.target.value); setIndex(0) }}
-               placeholder="Search pages, tools and actions"
+               placeholder="Search pages and tools"
                role="combobox" aria-expanded="true" aria-controls="palette-list"
                aria-activedescendant={matches[active] ? `palette-${matches[active].id}` : undefined}
                className="h-11 w-full border-b border-border-subtle bg-transparent px-4 text-body text-fg outline-none placeholder:text-muted" />

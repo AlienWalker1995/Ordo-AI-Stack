@@ -23,7 +23,6 @@ from fastapi.testclient import TestClient
 
 from dashboard import routes_console
 from dashboard.app import app
-from ordo.control.lease_history import LeaseHistory
 
 FIXTURES = Path(__file__).resolve().parents[1] / "services/dashboard/dashboard/frontend/test/fixtures"
 
@@ -74,7 +73,6 @@ CARDS = [
 SERVED = {"gpu": GPU_FILE, "cpu": CPU_FILE, "embed": EMBED_FILE}
 DISK = [{"name": GPU_FILE, "size": 22_400_000_000}, {"name": "spare.gguf", "size": 5_000_000_000}]
 THROUGHPUT = {"models": {GPU_FILE: {"p50": 22.2}, CPU_FILE: {"p50": 2.7}}}
-QUEUE = {"queue_running": [[0, "8f14e45f-ceea-467a-9575-1b0f3a1d5d2c", {}, {}, []]], "queue_pending": [[1, "p2"]]}
 COMFY_HISTORY = {"r1": {"status": {"status_str": "success", "messages": [["execution_success", {"timestamp": 400000}]]},
                         "outputs": {"9": {"images": [{"filename": "ordo_00001_.png", "subfolder": "",
                                                       "type": "output"}]}}}}
@@ -86,21 +84,10 @@ STATS_SERVICES = {"gpu": {"total_gb": 34.2, "used_gb": 29.6, "utilization_pct": 
                   "services": {"open-webui": {"cpu_pct": 1.5, "mem_gb": 0.6, "mem_pct": 0.5, "vram_gb": 0.0,
                                               "vram_pct": 0.0, "running": True}},
                   "vram_aggregate_unavailable": False}
-# out/mcp/servers.json as the render writes it (ordo/render/engine.py, the `servers.json` block).
-# ControlPlane.apply_render's answer, which the switch and an MCP toggle pass on.
+# ControlPlane.apply_render's answer, which the switch passes on.
 APPLIED = {"dry_run": False, "recreated": ["llamacpp", "llamacpp-cpu", "model-gateway"], "stopped": [],
            "restart_required_on_host": ["agent"], "host_command": "ordo apply --only agent",
            "host_reasons": {"agent": "agent runs the control plane"}}
-MCP_SERVERS_JSON = {
-    "servers": [{"id": "searxng", "litellm_name": "searxng", "plugin_id": "mcp-searxng", "name": "SearXNG",
-                 "service": "mcp-searxng", "url": "http://mcp-searxng:8080/mcp", "network": True,
-                 "tools": ["search"], "hosted": False},
-                {"id": "codebase-memory", "litellm_name": "codebase_memory", "plugin_id": "mcp-codebase-memory",
-                 "name": "Codebase Memory", "service": "mcp-codebase-memory",
-                 "url": "http://mcp-codebase-memory:8080/mcp", "network": True, "tools": ["search_graph"],
-                 "hosted": False}],
-    "plugin_map": {"searxng": "mcp-searxng", "codebase-memory": "mcp-codebase-memory", "github": "mcp-github"},
-}
 
 
 def _get_json(url, timeout=10.0):
@@ -112,12 +99,12 @@ def _get_json(url, timeout=10.0):
 
 
 def _comfy_json(path):
-    return QUEUE if path == "/queue" else COMFY_HISTORY
+    return COMFY_HISTORY
 
 
 def _ops_controller_client(payloads: dict[str, dict]):
-    """An httpx.AsyncClient stand-in answering ops-controller GETs by path suffix. One stand-in
-    for both callers, because dashboard.app and routes_orchestration share the httpx module."""
+    """An httpx.AsyncClient stand-in answering ops-controller GETs by path suffix (dashboard.app's
+    /api/hardware/service-pressure calls ops-controller through httpx directly)."""
     async def get(url, **_kwargs):
         response = MagicMock(status_code=200)
         response.json.return_value = next(body for suffix, body in payloads.items() if url.endswith(suffix))
@@ -130,41 +117,17 @@ def _ops_controller_client(payloads: dict[str, dict]):
     return client
 
 
-def _lease_history(tmp_path) -> dict:
-    """/jobs/history as the scheduler records it (ordo/control/lease_history.py), passed through
-    verbatim by the dashboard's /api/orchestration/gpu/history."""
-    history = LeaseHistory(tmp_path / "leases.jsonl")
-    history.submitted("gate-comfyui", "media", 18.0)
-    history.started("gate-comfyui")
-    history.ended("gate-comfyui", "completed")
-    return {"history": history.tail(100)}
-
-
 @pytest.fixture
-def client(tmp_path, monkeypatch, dashboard_operator_headers):
+def client(dashboard_operator_headers):
     """The dashboard app with only its I/O replaced."""
-    import dashboard.app as dashboard_app
-
-    (tmp_path / "comfy" / "checkpoints").mkdir(parents=True)
-    (tmp_path / "comfy" / "checkpoints" / "sdxl.safetensors").write_bytes(b"\0" * 2048)
-    monkeypatch.setattr(dashboard_app, "MODELS_DIR", tmp_path / "comfy")
-    servers_json = tmp_path / "servers.json"
-    servers_json.write_text(json.dumps(MCP_SERVERS_JSON), encoding="utf-8")
-    monkeypatch.setattr(dashboard_app, "MCP_SERVERS_PATH", str(servers_json))
-
     async def ops_json(path, timeout=None):
         return OPS.get(path)
 
     async def ops_call(method, path, json=None):  # the switch's one control-plane call
         return 200, {"ok": True, "active_model": json["model"], "ctx_size": 131072, "apply": APPLIED}
 
-    async def ops_request(method, path, **_kwargs):  # an MCP toggle's plugin enable/disable
-        # A disabled plugin's container is one the render no longer defines, so the apply stops it.
-        return 200, {"ok": True, "apply": {**APPLIED, "stopped": ["mcp-searxng"]}}
-
     with patch.object(routes_console, "_ops_json", side_effect=ops_json), \
          patch.object(routes_console, "_ops_call", side_effect=ops_call), \
-         patch.object(dashboard_app, "_ops_request", side_effect=ops_request), \
          patch.object(routes_console, "_hardware", new=AsyncMock(return_value=HARDWARE)), \
          patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=CARDS)), \
          patch.object(routes_console, "_rag", new=AsyncMock(return_value={"ok": True, "points_count": 2483})), \
@@ -173,11 +136,8 @@ def client(tmp_path, monkeypatch, dashboard_operator_headers):
          patch.object(routes_console, "_disk_files", new=AsyncMock(return_value=DISK)), \
          patch.object(routes_console, "_comfy_json", new=AsyncMock(side_effect=_comfy_json)), \
          patch.object(routes_console, "_get_json", new=AsyncMock(side_effect=_get_json)), \
-         patch.object(dashboard_app, "_litellm_mcp_health", new=AsyncMock(return_value={"searxng": "healthy"})), \
-         patch.object(dashboard_app, "_litellm_mcp_outcomes", new=AsyncMock(
-             return_value=(True, {"searxng": {"status": "ok", "tool_count": 1}}, None))), \
          patch("httpx.AsyncClient", return_value=_ops_controller_client(
-             {"/stats/services": STATS_SERVICES, "/jobs/history": _lease_history(tmp_path)})):
+             {"/stats/services": STATS_SERVICES})):
         yield TestClient(app, headers=dashboard_operator_headers)
 
 
@@ -199,11 +159,6 @@ def _type_name(value) -> str:
     return "object"
 
 
-# Objects keyed by an id rather than records with fixed fields: their keys are data, so each
-# value is compared with the backend's values instead of key by key.
-KEYED_BY_ID = frozenset({"api/mcp/servers.json.registry.servers"})
-
-
 def _shape_mismatches(fixture, real, where: str) -> list[str]:
     """Every place `fixture` is not shaped like `real`; empty when they match."""
     if fixture is None or real is None:
@@ -211,8 +166,6 @@ def _shape_mismatches(fixture, real, where: str) -> list[str]:
     fixture_type, real_type = _type_name(fixture), _type_name(real)
     if fixture_type != real_type:
         return [f"{where}: fixture has {fixture_type}, the backend returns {real_type}"]
-    if fixture_type == "object" and where in KEYED_BY_ID:
-        return _shape_mismatches(list(fixture.values()), list(real.values()), f"{where}[*]")
     if fixture_type == "object":
         problems = []
         missing = sorted(set(real) - set(fixture))
@@ -248,15 +201,9 @@ REAL_REQUESTS = {
     "api/hardware/service-pressure.json": ("GET", "/api/hardware/service-pressure", None),
     "api/models.json": ("GET", "/api/models", None),
     "api/models/switch.json": ("POST", "/api/models/switch", {"model": "turbo"}),
-    "api/media.json": ("GET", "/api/media", None),
-    "api/comfyui/models.json": ("GET", "/api/comfyui/models", None),
-    "api/orchestration/gpu/history.json": ("GET", "/api/orchestration/gpu/history", None),
     "api/perf/series.json": ("GET", "/api/perf/series", None),
     "api/perf/grafana.json": ("GET", "/api/perf/grafana", None),
     "api/auth/session.json": ("GET", "/api/auth/session", None),
-    "api/mcp/servers.json": ("GET", "/api/mcp/servers", None),
-    "api/mcp/health.json": ("GET", "/api/mcp/health", None),
-    "api/mcp/remove.json": ("POST", "/api/mcp/remove", {"server": "searxng"}),
 }
 
 

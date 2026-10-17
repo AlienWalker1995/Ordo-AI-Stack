@@ -4,7 +4,6 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import App from '../src/App.jsx'
 import { HostStepsProvider } from '../src/components/HostSteps.jsx'
-import MediaPage from '../src/pages/MediaPage.jsx'
 import ModelsPage from '../src/pages/ModelsPage.jsx'
 import OverviewPage from '../src/pages/OverviewPage.jsx'
 import PerformancePage from '../src/pages/PerformancePage.jsx'
@@ -26,8 +25,6 @@ describe('a page whose backend is down says so', () => {
       'The service list is unavailable: The control plane is not answering'],
     ['Models', ModelsPage, 'GET /api/models', DOWN,
       'Models are unavailable: The control plane is not answering'],
-    ['Media', MediaPage, 'GET /api/media', { status: 503, body: { detail: 'ComfyUI is not answering' } },
-      'ComfyUI is not answering. After a restart it takes one to five minutes to come back.'],
     ['Performance', PerformancePage, 'GET /api/perf/grafana', networkFailure,
       'Could not check Grafana: Network error contacting /api/perf/grafana'],
     ['Overview (network down)', OverviewPage, 'GET /api/overview', networkFailure,
@@ -50,13 +47,6 @@ describe('a page whose backend is down says so', () => {
     mockApi({ 'GET /api/services/table': () => ({ groups: [], control_plane: false }) })
     renderInShell(<ServicesPage />)
     await screen.findByText('The control plane is not answering; states may be stale.')
-  })
-
-  it('Media keeps the rest of the page when only the scheduler is down', async () => {
-    mockApi({ 'GET /api/orchestration/gpu/history': { status: 502, body: { detail: 'scheduler unreachable' } } })
-    renderInShell(<MediaPage />)
-    await screen.findByText('The scheduler is not answering.')
-    expect(await screen.findByText('Rendering now')).toBeTruthy()
   })
 
   it('Performance says Grafana is not running instead of drawing an empty frame', async () => {

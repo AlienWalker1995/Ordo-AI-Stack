@@ -1,4 +1,4 @@
-"""Endpoints behind the Overview, Services, Models, Media and Performance pages.
+"""Endpoints behind the Overview, Services, Models and Performance pages.
 
 Each route fetches what it needs concurrently and hands plain dicts to dashboard.console, which
 decides what they mean. The fetchers are small module-level functions so tests can replace them
@@ -9,14 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from dashboard import console
@@ -51,7 +49,6 @@ _GPU_TOKEN_RATE_QUERY = (
 _CPU_TOKEN_RATE_QUERY = 'sum by (job) (rate(llamacpp:tokens_predicted_total{job="llamacpp-cpu"}[5m]))'
 _TOKEN_RATE_QUERY = f"{_GPU_TOKEN_RATE_QUERY} or {_CPU_TOKEN_RATE_QUERY}"
 
-_SEGMENT = re.compile(r"^[A-Za-z0-9._ -]{1,128}$")
 # A switch is one ops-controller call that renders and recreates the changed set in one compose
 # call (600s at most there, DockerBackend.recreate_services), so this outlasts it.
 _RECREATE_TIMEOUT = 660.0
@@ -92,43 +89,6 @@ async def _comfy_json(path: str) -> dict | None:
     if not COMFYUI_URL:
         return None
     return await _get_json(f"{COMFYUI_URL}{path}", timeout=10.0)
-
-
-# Response headers worth passing through from ComfyUI's /view: enough for a browser to seek.
-_PASSTHROUGH_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges")
-
-
-async def _comfy_stream(filename: str, subfolder: str, kind: str, byte_range: str | None):
-    """Open ComfyUI's /view as a stream: (status, headers, body chunks), or None. A video is
-    never buffered whole, and a Range request is forwarded so the browser can seek."""
-    if not COMFYUI_URL:
-        return None
-    from dashboard.app import _get_http_client
-
-    client = _get_http_client()
-    request = client.build_request(
-        "GET", f"{COMFYUI_URL}/view",
-        params={"filename": filename, "subfolder": subfolder, "type": kind},
-        headers={"Range": byte_range} if byte_range else None,
-        timeout=30.0,
-    )
-    try:
-        r = await client.send(request, stream=True)
-    except Exception as exc:
-        logger.debug("ComfyUI /view failed: %s", exc)
-        return None
-    if r.status_code not in (200, 206):
-        await r.aclose()
-        return None
-
-    async def body():
-        try:
-            async for chunk in r.aiter_bytes():
-                yield chunk
-        finally:
-            await r.aclose()
-
-    return r.status_code, {k: v for k, v in r.headers.items() if k.lower() in _PASSTHROUGH_HEADERS}, body()
 
 
 async def _hardware() -> dict:
@@ -370,34 +330,6 @@ async def _delete(name: str) -> dict:
     path.unlink()
     logger.info("MODEL_DELETED file=%s", name)
     return {"ok": True, "deleted": name}
-
-
-# ---------------------------------------------------------------------------------------------
-# media
-# ---------------------------------------------------------------------------------------------
-
-@router.get("/media")
-async def media(limit: int = Query(24, ge=1, le=100)) -> dict:
-    queue, history = await asyncio.gather(_comfy_json("/queue"), _comfy_json(f"/history?max_items={limit}"))
-    if queue is None:
-        raise HTTPException(status_code=503, detail="ComfyUI is not answering")
-    return console.summarise_media(queue, history or {}, limit)
-
-
-@router.get("/media/view")
-async def media_view(request: Request, filename: str = "", subfolder: str = "",
-                     type: str = "output") -> StreamingResponse:  # noqa: A002
-    """Proxy one finished output for a thumbnail. Only `output` files, bare names, and safe
-    subfolder segments: this reaches into ComfyUI's filesystem on the caller's behalf."""
-    if type != "output" or not filename or not _SEGMENT.match(filename) or ".." in filename:
-        raise HTTPException(status_code=400, detail="Only a bare output filename can be viewed")
-    if subfolder and (".." in subfolder or not all(_SEGMENT.match(s) for s in subfolder.split("/"))):
-        raise HTTPException(status_code=400, detail="Invalid subfolder")
-    got = await _comfy_stream(filename, subfolder, type, request.headers.get("range"))
-    if got is None:
-        raise HTTPException(status_code=404, detail="Not found")
-    status, headers, body = got
-    return StreamingResponse(body, status_code=status, headers={**headers, "Cache-Control": "private, max-age=3600"})
 
 
 # ---------------------------------------------------------------------------------------------
