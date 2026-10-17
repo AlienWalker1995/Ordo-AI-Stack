@@ -434,9 +434,11 @@ def test_model_download_sends_the_token_to_the_hub_only():
     see the token. No token means no Authorization header at all."""
     from ordo.control.comfyui import _download_headers
     hub = _download_headers("https://huggingface.co/org/m/resolve/main/x.safetensors", "hf_abc")
+    www = _download_headers("https://www.huggingface.co/org/m/resolve/main/x.safetensors", "hf_abc")
     cdn = _download_headers("https://us.aws.cdn.hf.co/repos/x?X-Amz-Signature=1", "hf_abc")
     none = _download_headers("https://huggingface.co/org/m/resolve/main/x.safetensors", "")
     assert hub["Authorization"] == "Bearer hf_abc"
+    assert www["Authorization"] == "Bearer hf_abc"
     assert "Authorization" not in cdn and "Authorization" not in none
 
 
