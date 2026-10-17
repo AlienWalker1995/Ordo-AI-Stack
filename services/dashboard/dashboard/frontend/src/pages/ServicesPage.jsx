@@ -3,12 +3,16 @@
 //   GET  /api/hardware/service-pressure                         CPU and memory per container (slow: ~8 s, so async)
 //   POST /api/ops/services/{compose}/{action}                   start | stop | restart an ordo service
 //   GET  /api/ops/services/{compose}/logs                       tail, polled while the drawer is open
-//   POST /api/ops/projects/{project}/containers/{name}/restart  restart a managed project's container
+//   POST /api/ops/projects/{project}/containers/{name}/restart  restart a managed project's container (start, stop when offered)
 //   GET  /api/ops/projects/{project}/containers/{name}/logs     its tail
+// An action is reported done only once the table shows it (serviceActions.js).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, usePolling } from '../api.js'
-import { BTN, BTN_DANGER, Dot, Drawer, INPUT, Skeleton, Unavailable } from '../components/ui.jsx'
+import { BTN, BTN_DANGER, ConfirmDialog, Dot, Drawer, INPUT, Skeleton, Unavailable } from '../components/ui.jsx'
 import { useToast } from '../components/Toast.jsx'
+import {
+  CONFIRM_FAST_FOR_MS, CONFIRM_FAST_MS, CONFIRM_SLOW_MS, GIVE_UP_MS, isConfirmed, outcomeUnknown,
+} from './serviceActions.js'
 
 const VERDICT_LABEL = {
   up: 'Running', starting: 'Starting', unhealthy: 'Unhealthy', failed: 'Failed', stopped: 'Stopped', done: 'Finished',
@@ -16,6 +20,14 @@ const VERDICT_LABEL = {
 }
 const VERDICT_TONE = {
   up: 'ok', starting: 'starting', unhealthy: 'unhealthy', failed: 'failed', stopped: 'stopped', done: 'done',
+}
+const VERB = { start: 'Start', stop: 'Stop', restart: 'Restart' }
+const PENDING_TEXT = { start: 'Starting…', stop: 'Stopping…', restart: 'Restarting…' }
+const DONE_TEXT = { start: 'started', stop: 'stopped', restart: 'restarted' }
+// What the confirmation dialog says each destructive action does.
+const CONSEQUENCE = {
+  stop: 'It stays stopped until you start it again.',
+  restart: 'It is unavailable until it is back up.',
 }
 
 // The control kinds whose container has logs the control plane will read: an ordo service (the
@@ -35,6 +47,13 @@ function opsPath(row) {
 // projects can each run a `caddy`), so a row outside ordo carries its project.
 function rowLabel(row) {
   return ['managed', 'none'].includes(row.control) && row.project ? `${row.name} (${row.project})` : row.name
+}
+
+// A row's state as the table last showed it, for a give-up message.
+function describeRow(row) {
+  if (!row) return 'not listed'
+  const verdict = VERDICT_LABEL[row.verdict] || row.verdict
+  return row.status ? `${verdict} (${row.status})` : verdict
 }
 
 function formatCpu(pct) {
@@ -85,6 +104,18 @@ function LogsDrawer({ service, onClose }) {
   )
 }
 
+// While a row's action is pending its buttons stay focusable (aria-disabled, not disabled), so
+// focus returning from the confirmation dialog lands on the button that asked, not the page.
+function ActionButton({ row, action, onAction, busy }) {
+  return (
+    <button type="button" className={action === 'stop' ? BTN_DANGER : BTN} aria-label={`${VERB[action]} ${rowLabel(row)}`}
+            aria-disabled={busy || undefined} aria-busy={busy || undefined}
+            onClick={busy ? undefined : () => onAction(row, action)}>
+      {VERB[action]}
+    </button>
+  )
+}
+
 // State actions sit inline in a fixed-width slot so Logs lines up down the column. A dropdown
 // here would be clipped by the table's horizontal scroller.
 function StateActions({ row, onAction, busy }) {
@@ -97,12 +128,11 @@ function StateActions({ row, onAction, busy }) {
   if (row.lent) {
     return <span className="text-caption text-muted" title="Its GPU is lent to a render; it restarts when the render finishes">Back after the render</span>
   }
-  const label = rowLabel(row)
   return (
     <>
-      {row.actions.includes('start') && <button type="button" className={BTN} disabled={busy} onClick={() => onAction(row, 'start')} aria-label={`Start ${label}`}>Start</button>}
-      {row.actions.includes('restart') && <button type="button" className={BTN} disabled={busy} onClick={() => onAction(row, 'restart')} aria-label={`Restart ${label}`}>Restart</button>}
-      {row.actions.includes('stop') && <button type="button" className={BTN_DANGER} disabled={busy} onClick={() => onAction(row, 'stop')} aria-label={`Stop ${label}`}>Stop</button>}
+      {['start', 'restart', 'stop'].filter((action) => row.actions.includes(action)).map((action) => (
+        <ActionButton key={action} row={row} action={action} onAction={onAction} busy={busy} />
+      ))}
     </>
   )
 }
@@ -114,8 +144,16 @@ function NotManaged({ row }) {
 }
 
 // Status, name and the per-row actions are shared by the wide table row and the narrow card, so
-// the two layouts cannot drift apart.
-function ServiceStatus({ row }) {
+// the two layouts cannot drift apart. `action` is the row's action state (see useRowActions).
+function ServiceStatus({ row, action }) {
+  if (isBusy(action)) {
+    return (
+      <span className="flex items-center gap-2">
+        <Dot tone="starting" />
+        <span className="text-caption text-fg-muted">{PENDING_TEXT[action.action]}</span>
+      </span>
+    )
+  }
   return (
     <span className="flex items-center gap-2">
       {/* An evicted resident exits cleanly, but "Finished" would misread a loan as done. */}
@@ -125,7 +163,8 @@ function ServiceStatus({ row }) {
   )
 }
 
-function ServiceName({ row }) {
+// A failed or unconfirmed action's reason stays on its row after the toast has gone.
+function ServiceName({ row, action }) {
   return (
     <div className="flex min-w-0 flex-col">
       <span className="truncate text-body text-fg">
@@ -138,6 +177,7 @@ function ServiceName({ row }) {
           {[row.compose && row.name !== row.compose ? row.compose : null, row.error].filter(Boolean).join(' · ')}
         </span>
       )}
+      {action?.phase === 'failed' && <span className="text-micro text-danger">{action.note}</span>}
     </div>
   )
 }
@@ -147,11 +187,11 @@ function LogsButton({ row, onLogs }) {
   return <button type="button" className={BTN} onClick={() => onLogs(row)} aria-label={`Logs for ${rowLabel(row)}`}>Logs</button>
 }
 
-function ServiceRow({ row, usage, onLogs, onAction, busy }) {
+function ServiceRow({ row, usage, onLogs, onAction, action }) {
   return (
     <tr className="border-b border-border-subtle last:border-b-0 hover:bg-surface/60">
-      <td className="py-2 pl-3 pr-2"><ServiceStatus row={row} /></td>
-      <td className="px-2 py-2"><ServiceName row={row} /></td>
+      <td className="py-2 pl-3 pr-2"><ServiceStatus row={row} action={action} /></td>
+      <td className="px-2 py-2"><ServiceName row={row} action={action} /></td>
       <td className="whitespace-nowrap px-2 py-2 text-caption text-fg-muted">{row.project || '—'}</td>
       <td className="whitespace-nowrap px-2 py-2 text-caption tabular-nums text-muted">{row.uptime || '—'}</td>
       <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{usage ? formatCpu(usage.cpu_pct) : '—'}</td>
@@ -163,7 +203,7 @@ function ServiceRow({ row, usage, onLogs, onAction, busy }) {
             <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
               <LogsButton row={row} onLogs={onLogs} />
               <div className="flex w-[8.5rem] items-center gap-1.5">
-                <StateActions row={row} onAction={onAction} busy={busy} />
+                <StateActions row={row} onAction={onAction} busy={isBusy(action)} />
               </div>
             </div>
           )}
@@ -174,12 +214,12 @@ function ServiceRow({ row, usage, onLogs, onAction, busy }) {
 
 // The same row as a card, for widths where the table would need a sideways scroll: status and
 // name first, then the numbers, then every action on its own line so none sits off-screen.
-function ServiceCard({ row, usage, onLogs, onAction, busy }) {
+function ServiceCard({ row, usage, onLogs, onAction, action }) {
   return (
     <li className="grid gap-2 border-b border-border-subtle px-3 py-3 last:border-b-0">
       <div className="flex items-start justify-between gap-3">
-        <ServiceName row={row} />
-        <div className="shrink-0 whitespace-nowrap"><ServiceStatus row={row} /></div>
+        <ServiceName row={row} action={action} />
+        <div className="shrink-0 whitespace-nowrap"><ServiceStatus row={row} action={action} /></div>
       </div>
       <dl className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted">
         <div className="flex gap-1"><dt>Project</dt><dd className="text-fg-muted">{row.project || '—'}</dd></div>
@@ -193,7 +233,7 @@ function ServiceCard({ row, usage, onLogs, onAction, busy }) {
           : (
             <>
               <LogsButton row={row} onLogs={onLogs} />
-              <StateActions row={row} onAction={onAction} busy={busy} />
+              <StateActions row={row} onAction={onAction} busy={isBusy(action)} />
             </>
           )}
       </div>
@@ -205,13 +245,120 @@ function matches(row, query) {
   return [row.name, row.project, row.compose].some((value) => (value || '').toLowerCase().includes(query))
 }
 
+// A row is busy while its action is requesting or confirming; idle and failed rows can act.
+function isBusy(action) {
+  return action?.phase === 'requesting' || action?.phase === 'confirming'
+}
+
+// Each row's action state, by row id: { phase, action, before, since, seen, note }. A row with no
+// entry is idle. `before` is the row as it was when asked, `since` when confirming began, `seen`
+// the row as the last table read showed it, `note` a failed row's reason. The transitions are
+// drawn in serviceActions.js.
+function useRowActions(refreshTable, toast) {
+  const [states, setStates] = useState({})
+  // The async steps below read and write through this, so a poll never acts on a stale render.
+  const statesRef = useRef({})
+
+  const setRow = useCallback((id, next) => {
+    const copy = { ...statesRef.current }
+    if (next) copy[id] = next
+    else delete copy[id]
+    statesRef.current = copy
+    setStates(copy)
+  }, [])
+
+  const fail = useCallback((id, state, message) => {
+    toast(`${rowLabel(state.before)}: ${message}`, 'error')
+    setRow(id, { ...state, phase: 'failed', note: `${VERB[state.action]} failed: ${message}` })
+    refreshTable()
+  }, [toast, setRow, refreshTable])
+
+  const run = useCallback(async (row, action) => {
+    const requesting = { phase: 'requesting', action, before: row }
+    setRow(row.id, requesting)
+    try {
+      await api.post(`${opsPath(row)}/${action}`)
+    } catch (e) {
+      if (!outcomeUnknown(e)) { fail(row.id, requesting, e.message); return }
+    }
+    setRow(row.id, { ...requesting, phase: 'confirming', since: Date.now() })
+  }, [setRow, fail])
+
+  // One table read, checked against every confirming row.
+  const settle = useCallback((data) => {
+    const now = Date.now()
+    for (const [id, state] of Object.entries(statesRef.current)) {
+      if (state.phase !== 'confirming') continue
+      const row = data ? data.rows.find((r) => r.id === id) : undefined
+      if (row && isConfirmed(state.action, state.before, row)) {
+        setRow(id, null)
+        toast(`${rowLabel(row)}: ${DONE_TEXT[state.action]}`, 'success')
+      } else if (now - state.since >= GIVE_UP_MS) {
+        const message = `No change confirmed after ${GIVE_UP_MS / 1000} s; last seen: ${describeRow(row || state.seen || state.before)}`
+        toast(`${rowLabel(state.before)}: ${message}`, 'error')
+        setRow(id, { ...state, phase: 'failed', note: `${VERB[state.action]}: ${message}` })
+      } else if (row) {
+        setRow(id, { ...state, seen: row })
+      }
+    }
+  }, [setRow, toast])
+
+  // While any row is confirming, read the table every CONFIRM_FAST_MS, after CONFIRM_FAST_FOR_MS
+  // every CONFIRM_SLOW_MS, and not at all while the tab is hidden (back in view, read at once).
+  const confirming = Object.values(states).some((state) => state.phase === 'confirming')
+  useEffect(() => {
+    if (!confirming) return undefined
+    let timer = null
+    let reading = false
+    let stopped = false
+    const delay = () => {
+      const now = Date.now()
+      const young = Object.values(statesRef.current)
+        .some((state) => state.phase === 'confirming' && now - state.since < CONFIRM_FAST_FOR_MS)
+      return young ? CONFIRM_FAST_MS : CONFIRM_SLOW_MS
+    }
+    const schedule = () => {
+      if (stopped || reading || timer || document.hidden) return
+      timer = setTimeout(read, delay())
+    }
+    const read = async () => {
+      timer = null
+      reading = true
+      const data = await refreshTable()
+      reading = false
+      if (stopped) return
+      settle(data)
+      schedule()
+    }
+    const onVisibility = () => {
+      if (document.hidden) {
+        clearTimeout(timer)
+        timer = null
+      } else if (!timer && !reading) {
+        read()
+      }
+    }
+    schedule()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [confirming, refreshTable, settle])
+
+  return { states, run }
+}
+
 export default function ServicesPage() {
   const toast = useToast()
   const table = usePolling(() => api.get('/api/services/table'), 10000)
   const pressure = usePolling(() => api.get('/api/hardware/service-pressure'), 20000)
   const [filter, setFilter] = useState('')
   const [logsFor, setLogsFor] = useState(null)
-  const [busyId, setBusyId] = useState(null)
+  // The stop or restart waiting on the confirmation dialog: { row, action }.
+  const [asking, setAsking] = useState(null)
+  const { states: actionStates, run } = useRowActions(table.refresh, toast)
 
   const usageById = useMemo(() => {
     const out = {}
@@ -219,20 +366,17 @@ export default function ServicesPage() {
     return out
   }, [pressure.data])
 
-  const onAction = useCallback(async (row, action) => {
-    const label = rowLabel(row)
-    if (action !== 'start' && !window.confirm(`${action === 'stop' ? 'Stop' : 'Restart'} ${label}?`)) return
-    setBusyId(row.id)
-    try {
-      await api.post(`${opsPath(row)}/${action}`)
-      toast(`${label}: ${action === 'start' ? 'started' : action === 'stop' ? 'stopped' : 'restarted'}`, 'success')
-      table.refresh()
-    } catch (e) {
-      toast(`${label}: ${e.message}`, 'error')
-    } finally {
-      setBusyId(null)
-    }
-  }, [toast, table])
+  // Start changes nothing that is running, so it goes straight out; stop and restart ask first.
+  const onAction = useCallback((row, action) => {
+    if (action === 'start') run(row, action)
+    else setAsking({ row, action })
+  }, [run])
+
+  const cancelAsking = useCallback(() => setAsking(null), [])
+  const confirmAsking = useCallback(() => {
+    setAsking(null)
+    run(asking.row, asking.action)
+  }, [asking, run])
 
   const closeLogs = useCallback(() => setLogsFor(null), [])
 
@@ -269,7 +413,7 @@ export default function ServicesPage() {
           <ul className="lg:hidden">
             {rows.map((row) => (
               <ServiceCard key={row.id} row={row} usage={usageFor(row)}
-                           onLogs={setLogsFor} onAction={onAction} busy={busyId === row.id} />
+                           onLogs={setLogsFor} onAction={onAction} action={actionStates[row.id]} />
             ))}
           </ul>
           <div className="relative overflow-x-auto max-lg:hidden">
@@ -288,7 +432,7 @@ export default function ServicesPage() {
               <tbody>
                 {rows.map((row) => (
                   <ServiceRow key={row.id} row={row} usage={usageFor(row)}
-                              onLogs={setLogsFor} onAction={onAction} busy={busyId === row.id} />
+                              onLogs={setLogsFor} onAction={onAction} action={actionStates[row.id]} />
                 ))}
               </tbody>
             </table>
@@ -296,6 +440,11 @@ export default function ServicesPage() {
         </div>
       )}
       <LogsDrawer service={logsFor} onClose={closeLogs} />
+      <ConfirmDialog open={!!asking} title={asking ? `${VERB[asking.action]} ${rowLabel(asking.row)}?` : ''}
+                     confirmLabel={asking ? VERB[asking.action] : ''} danger={asking?.action === 'stop'}
+                     onConfirm={confirmAsking} onCancel={cancelAsking}>
+        {asking && CONSEQUENCE[asking.action]}
+      </ConfirmDialog>
     </div>
   )
 }

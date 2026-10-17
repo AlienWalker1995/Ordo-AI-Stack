@@ -23,7 +23,8 @@ function jsonResponse(status, body) {
  * `overrides` maps 'METHOD /api/path' to how that request is answered:
  *   - a plain value: sent as a 200 JSON body;
  *   - { status, body }: sent with that status (an error, for one);
- *   - a function (request) => either of those, or throws to simulate a network failure.
+ *   - a function (request) => either of those (or a promise of one, to hold the request in
+ *     flight), or throws to simulate a network failure.
  * A request with neither an override nor a fixture gets a 404, and is listed in `unhandled`.
  */
 export function mockApi(overrides = {}) {
@@ -38,7 +39,7 @@ export function mockApi(overrides = {}) {
 
     const key = `${method} ${path}`
     let answer = overrides[key]
-    if (typeof answer === 'function') answer = answer(request)
+    if (typeof answer === 'function') answer = await answer(request)
     if (answer === undefined) {
       const body = FIXTURES[`./fixtures${path}.json`]
       if (body === undefined) {

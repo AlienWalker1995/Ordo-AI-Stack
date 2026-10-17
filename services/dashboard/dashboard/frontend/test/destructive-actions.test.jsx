@@ -1,5 +1,6 @@
 // Every action that stops, restarts, removes or deletes something asks first, and a cancelled
-// confirmation sends nothing. The request only goes out once the operator says yes.
+// confirmation sends nothing. The request only goes out once the operator says yes. Services asks
+// in its own dialog; the other pages still use the browser's confirm().
 import { fireEvent, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import ModelsPage from '../src/pages/ModelsPage.jsx'
@@ -24,41 +25,44 @@ describe('Services: Stop and Restart', () => {
     ['Restart', 'restart'],
   ])('%s asks first and sends nothing when cancelled', async (label, action) => {
     const api = mockApi()
-    const confirm = answerConfirm(false)
+    const confirm = answerConfirm(true)
     renderInShell(<ServicesPage />)
 
     fireEvent.click(await firstButton(`${label} Open WebUI`))
 
-    expect(confirm).toHaveBeenCalledWith(`${label} Open WebUI?`)
+    const dialog = screen.getByRole('alertdialog', { name: `${label} Open WebUI?` })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(confirm).not.toHaveBeenCalled()
     expect(api.sent('POST', `/api/ops/services/open-webui/${action}`)).toEqual([])
   })
 
   it.each([
-    ['Stop', 'stop', 'stopped'],
-    ['Restart', 'restart', 'restarted'],
-  ])('%s goes out once confirmed', async (label, action, done) => {
+    ['Stop', 'stop', 'stopped', 'Stopping…'],
+    ['Restart', 'restart', 'restarted', 'Restarting…'],
+  ])('%s goes out once confirmed', async (label, action, done, pending) => {
     const api = mockApi({
       [`POST /api/ops/services/open-webui/${action}`]: { ok: true, service: 'open-webui', action: done },
     })
-    answerConfirm(true)
     renderInShell(<ServicesPage />)
 
     fireEvent.click(await firstButton(`${label} Open WebUI`))
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: label }))
 
-    await screen.findByText(`Open WebUI: ${done}`)
+    // Done is said only once the table shows it (services-actions.test.jsx); until then the row waits.
+    expect((await screen.findAllByText(pending)).length).toBeGreaterThan(0)
     expect(api.sent('POST', `/api/ops/services/open-webui/${action}`)).toHaveLength(1)
   })
 
   it('Start is not destructive and does not ask', async () => {
     const api = mockApi({ 'POST /api/ops/services/evals/start': { ok: true, service: 'evals', action: 'started' } })
-    const confirm = answerConfirm(false)
     renderInShell(<ServicesPage />)
 
     const evalsCard = (await screen.findAllByText('evals'))[0].closest('li')
     fireEvent.click(within(evalsCard).getByRole('button', { name: 'Start evals' }))
 
-    await screen.findByText('evals: started')
-    expect(confirm).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect((await screen.findAllByText('Starting…')).length).toBeGreaterThan(0)
     expect(api.sent('POST', '/api/ops/services/evals/start')).toHaveLength(1)
   })
 
