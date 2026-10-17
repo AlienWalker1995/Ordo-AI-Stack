@@ -300,3 +300,23 @@ def test_gpu_pin_models_never_include_the_failover_alias(monkeypatch):
     assert gate.gpu_pin_models() == {"local-chat-gpu"}
     monkeypatch.delenv("GPU_MODEL_NAME")
     assert gate.gpu_pin_models() == {"local-chat-gpu"}
+
+
+# --- configuration: the metrics read timeout ---------------------------------------
+
+
+def test_metrics_timeout_default_stays_above_the_chat_health_probe(monkeypatch):
+    """The default must stay above ops-controller's 3 s /health probe (MetricsCollector._chat_up).
+
+    /metrics is computed synchronously per scrape, so a hung (black-holed) chat engine makes
+    every scrape take ~3 s. A shorter gate timeout gives up mid-scrape exactly in the "down"
+    case this hook exists for, caches the fail-open None, and lets the pin wait out the hung
+    engine instead of answering 503.
+    """
+    monkeypatch.delenv("GPU_LEASE_GATE_TIMEOUT_SEC", raising=False)
+    # A fresh execution of the module source (the test loader keeps it out of sys.modules,
+    # so importlib.reload would refuse it), with the env override unset: the default.
+    assert _spec is not None
+    fresh = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(fresh)
+    assert fresh.METRICS_TIMEOUT > 3.0

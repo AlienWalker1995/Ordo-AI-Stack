@@ -42,7 +42,12 @@ logger = logging.getLogger("gpu_lease_fallback_gate")
 # ops-controller serves the GPU lease/eviction state unauthenticated (Prometheus scrapes
 # it without a token), the same as /health.
 METRICS_URL = os.environ.get("GPU_LEASE_GATE_METRICS_URL", "http://ops-controller:9000/metrics")
-METRICS_TIMEOUT = float(os.environ.get("GPU_LEASE_GATE_TIMEOUT_SEC", "2"))
+# Must stay above ops-controller's 3 s /health probe (MetricsCollector._chat_up,
+# ordo/control/metrics.py): it computes /metrics synchronously per scrape, so a hung
+# (black-holed) chat engine makes every scrape take ~3 s. A shorter timeout would give up
+# mid-scrape exactly in the "down" case this hook exists for, cache the fail-open None, and
+# let the pin wait out the hung engine (the 500 "Connection error" this PR removes).
+METRICS_TIMEOUT = float(os.environ.get("GPU_LEASE_GATE_TIMEOUT_SEC", "4"))
 CACHE_TTL = float(os.environ.get("GPU_LEASE_GATE_CACHE_TTL_SEC", "5"))
 # An unreachable ops-controller is logged once per this many seconds, not once per scrape.
 UNREADABLE_WARN_INTERVAL = 60.0

@@ -93,9 +93,9 @@ model_list:
       supports_reasoning: true
       description: >-
         Explicit pin of the GPU chat deployment (same backend as local-chat but with NO CPU
-        failover routing — errors when the GPU model is evicted for a render). See
-        weights_file for the exact GGUF; supports_vision reflects whether an mmproj is
-        loaded on the GPU server.
+        failover routing — while the GPU model is evicted for a render or down it answers
+        503 at once with the reason in error.message). See weights_file for the exact GGUF;
+        supports_vision reflects whether an mmproj is loaded on the GPU server.
       weights_file: __GPU_WEIGHTS__
       served_by: llamacpp (__GPU_IMAGE__, RTX 5090)
 
@@ -132,9 +132,10 @@ model_list:
       supports_reasoning: true
       description: >-
         Stable alias for the GPU deployment, for work deliberately pinned to the GPU: the same
-        model as local-chat with NO CPU failover routing, so it errors while the GPU model is
-        evicted for a render instead of silently moving to the CPU. See weights_file for the
-        exact GGUF; supports_vision reflects whether an mmproj is loaded on the GPU server.
+        model as local-chat with NO CPU failover routing, so while the GPU model is evicted
+        for a render or down it answers 503 at once with the reason in error.message instead
+        of silently moving to the CPU. See weights_file for the exact GGUF; supports_vision
+        reflects whether an mmproj is loaded on the GPU server.
       weights_file: __GPU_WEIGHTS__
       served_by: llamacpp (__GPU_IMAGE__, RTX 5090)
 
