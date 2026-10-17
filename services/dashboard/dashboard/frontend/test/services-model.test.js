@@ -28,7 +28,6 @@ describe('severity', () => {
     // Stopping is a legitimate operator choice, but a lent resident is information, not a warning.
     ['stopped', { lent: true }, 'info'],
     ['done', {}, 'job'],
-    ['lent', {}, 'info'],
     ['unknown', {}, 'info'],
   ])('verdict %j %j reads as %s', (verdict, extra, expected) => {
     expect(severity(row({ verdict, ...extra }))).toBe(expected)

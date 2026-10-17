@@ -54,7 +54,7 @@ import { uptimeSeconds } from './serviceActions.js'
 // stays a warning, not a problem: stopping is a legitimate operator choice. "unknown" is neither
 // a problem nor confirmed up: the state could not be read, so it reads as information.
 export function severity(row) {
-  if (row.verdict === 'lent' || row.lent) return 'info'
+  if (row.lent) return 'info'
   switch (row.verdict) {
     case 'failed':
     case 'unhealthy':
