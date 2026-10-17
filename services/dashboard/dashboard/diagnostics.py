@@ -28,14 +28,15 @@ logger = logging.getLogger(__name__)
 # outbound helpers (slice 2) and read `unknown` in snapshot() until something records them.
 DEPENDENCIES = ("OPS", "GATEWAY", "PROMETHEUS", "GRAFANA", "COMFYUI", "LLAMACPP", "QDRANT", "EDGE", "PROBE", "FS")
 
-# The KIND part of a code, and what each means. TIMEOUT, UNREACHABLE, HTTP5XX, HTTP4XX and AUTH
-# come from classify_failure; BADPAYLOAD and NOTCONFIGURED are declared by the caller (an
-# unparseable body, a missing URL or token).
+# The KIND part of a code, and what each means. TIMEOUT, UNREACHABLE, HTTP5XX and AUTH come from
+# classify_failure; BADPAYLOAD and NOTCONFIGURED are declared by the caller (an unparseable body,
+# a missing URL or token). classify_failure also returns HTTP4XX for a 400-499 other than AUTH,
+# but the central helpers treat that as the dependency having answered and mark ok instead of
+# recording it, so no DEP-*-HTTP4XX code ever reaches the ring and it is not advertised here.
 KIND_MEANINGS = {
     "UNREACHABLE": "the connection failed before a response (refused, DNS, protocol error)",
     "TIMEOUT": "the dependency did not answer within the client's timeout",
     "HTTP5XX": "the dependency answered with a 5xx status",
-    "HTTP4XX": "the dependency answered with a 4xx status",
     "BADPAYLOAD": "the response body could not be parsed as JSON",
     "AUTH": "the dependency rejected the credentials (HTTP 401/403)",
     "NOTCONFIGURED": "the dependency's URL or token is not set",

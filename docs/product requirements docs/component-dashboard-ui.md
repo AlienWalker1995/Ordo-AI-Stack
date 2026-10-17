@@ -88,10 +88,12 @@ The KIND part names how it failed:
 | `UNREACHABLE` | the connection failed before a response (refused, DNS, protocol error) |
 | `TIMEOUT` | the dependency did not answer within the client's timeout |
 | `HTTP5XX` | the dependency answered with a 5xx status |
-| `HTTP4XX` | the dependency answered with a 4xx status |
 | `BADPAYLOAD` | the response body could not be parsed as JSON |
 | `AUTH` | the dependency rejected the credentials (HTTP 401/403) |
 | `NOTCONFIGURED` | the dependency's URL or token is not set |
+
+A 4xx other than AUTH is not a failure kind: the dependency answered, so the central helpers mark
+it ok instead of recording it, and no `DEP-*-HTTP4XX` code exists.
 
 `GET /api/diagnostics` answers `{"generated_at", "dependencies": [{dep, status: ok|failing|unknown, last_ok, last_failure: {code, at, detail}, consecutive_failures}], "recent": [...newest first...], "codes": [{code, meaning}]}`.
 

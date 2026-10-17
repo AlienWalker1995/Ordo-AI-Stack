@@ -696,7 +696,6 @@ OPS_CONTROLLER_TOKEN = read_secret("OPS_CONTROLLER_TOKEN")
 async def _ops_request(
     method: str,
     path: str,
-    request: Request | None = None,
     *,
     timeout: float = 30.0,
     **kwargs,
@@ -778,7 +777,7 @@ def _ops_error_detail(code: int, data: dict) -> str:
 
 async def _ops_proxy(method: str, path: str, request: Request, *, timeout: float, **kwargs) -> dict:
     """An ops-controller call whose failure reaches the page as an HTTPException with its reason."""
-    code, data = await _ops_request(method, path, request=request, timeout=timeout, **kwargs)
+    code, data = await _ops_request(method, path, timeout=timeout, **kwargs)
     if code >= 400:
         raise HTTPException(status_code=code, detail=_ops_error_detail(code, data))
     return data

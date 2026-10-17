@@ -265,6 +265,17 @@ def test_ops_request_caller_supplied_x_request_id_wins_over_the_trace_id(monkeyp
     assert ops.request.call_args.kwargs["headers"]["X-Request-ID"] == "caller-override"
 
 
+def test_ops_request_has_no_dead_request_parameter():
+    # The outbound X-Request-ID comes from the trace id (current_trace_id), not the raw inbound
+    # header, so _ops_request never needed the Request object; pin the signature so the dead
+    # parameter does not come back.
+    import inspect
+
+    import dashboard.app as app
+
+    assert "request" not in inspect.signature(app._ops_request).parameters
+
+
 # --- _get_json: non-200 is no longer silent ---------------------------------------
 
 
@@ -411,6 +422,15 @@ def test_diagnostics_endpoint_shape(monkeypatch):
     codes = {c["code"] for c in body["codes"]}
     assert {"DEP-OPS-TIMEOUT", "DEP-LLAMACPP-UNREACHABLE", "DEP-QDRANT-AUTH"} <= codes
     assert all(set(c) == {"code", "meaning"} for c in body["codes"])
+
+
+def test_diagnostics_codes_do_not_advertise_http4xx():
+    # A non-AUTH 4xx marks the dependency ok (it answered), so no DEP-*-HTTP4XX code is ever
+    # recorded; the codes table must not advertise one an operator could never find in the ring.
+    import dashboard.app as app
+
+    body = TestClient(app.app).get("/api/diagnostics").json()
+    assert all(not c["code"].endswith("-HTTP4XX") for c in body["codes"])
 
 
 def test_diagnostics_reports_unknown_until_anything_is_observed():
