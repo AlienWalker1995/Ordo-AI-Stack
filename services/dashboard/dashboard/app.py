@@ -256,12 +256,15 @@ def _load_throughput_state() -> None:
 
 
 def _save_throughput_state() -> None:
-    """Persist throughput state to disk via atomic write-then-rename."""
+    """Persist throughput state to disk via atomic write-then-rename. While the v3 -> v4
+    migration is pending the file stays v3-shaped: a restart must reload the per-file series
+    and retry the migration, not read a v4 file whose role_samples the v3 load never populated
+    and drop the migration forever."""
     try:
         _THROUGHPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = _THROUGHPUT_FILE.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
-            "version": _THROUGHPUT_STORE_VERSION,
+            "version": _THROUGHPUT_STORE_VERSION - 1 if _migration_pending else _THROUGHPUT_STORE_VERSION,
             "samples": _throughput_samples,
             "role_samples": _role_samples,
             "ttft_samples": _ttft_samples,
@@ -291,7 +294,8 @@ _migration_lock = asyncio.Lock()
 # The v3 -> v4 migration needs the render's /model-config, which can be unreachable for minutes
 # mid-deploy, and the gateway posts a record after every completion. So at most ONE caller pays
 # for an attempt (bounded by the 5 s read) per cooldown window; every other caller skips without
-# waiting and the medians use the file-name guess meanwhile.
+# waiting. While the migration waits, the Overview answers from the per-file series alone: .ninfer
+# and embedding files classify by name, chat files wait for the config.
 _MIGRATION_RETRY_SECONDS = 30.0
 _migration_in_progress = False
 _migration_next_try = 0.0
@@ -509,8 +513,9 @@ async def throughput_stats():
         role_snapshot = {r: list(s) for r, s in _role_samples.items()}
         pending = _migration_pending
         benchmark = dict(_last_benchmark) if _last_benchmark else None
-    # While the v3 migration waits for /model-config, the role series is computed on the fly
-    # from the per-file series with the file-name guess, so the Overview still answers.
+    # While the v3 migration waits for /model-config, the role series is computed on the fly from
+    # the per-file series: .ninfer and embedding files classify by name, chat files wait for the
+    # config, so the Overview's chat medians show nothing until it answers.
     if pending:
         _merge_into_roles(role_snapshot, snapshot, None)
     for model, samples in snapshot.items():

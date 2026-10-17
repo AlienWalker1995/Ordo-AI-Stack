@@ -123,6 +123,44 @@ def test_migration_waits_while_the_render_config_cannot_be_read(tmp_path, monkey
     assert not f.read_text().startswith('{"version": 4')
 
 
+def test_saving_while_the_migration_is_pending_keeps_the_file_v3(tmp_path, monkeypatch):
+    """A debounced save while /model-config cannot be read must not claim v4: a restart then
+    reloads the v3 file and the migration still runs, instead of reading a v4 file whose
+    role_samples the v3 load never populated and dropping the migration forever."""
+    import dashboard.app as dashboard_app
+    f = tmp_path / "throughput.json"
+    now = time.time()
+    f.write_text(json.dumps({
+        "version": 3,
+        "samples": {"Qwen3.6-35B-A3B.gguf": [{"tps": 19.3, "ts": now - 100}]},
+        "ttft_samples": {},
+        "last_benchmark": None,
+    }))
+    monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
+    _reset_store(dashboard_app)
+    dashboard_app._load_throughput_state()
+    assert dashboard_app._migration_pending is True
+    with patch.object(dashboard_app, "_ops_request", new=AsyncMock(return_value=(None, None))):
+        client = TestClient(dashboard_app.app)
+        assert client.post("/api/throughput/record", json={
+            "model": "Qwen3.6-35B-A3B.gguf", "output_tokens_per_sec": 18.0,
+            "alias": "local-chat", "backend": "llamacpp-cpu"}).status_code == 200
+    data = json.loads(f.read_text())
+    assert data["version"] == 3
+    assert {s["tps"] for s in data["samples"]["Qwen3.6-35B-A3B.gguf"]} == {19.3, 18.0}
+    # Restart: fresh module state, same file on disk.
+    _reset_store(dashboard_app)
+    dashboard_app._load_throughput_state()
+    assert dashboard_app._migration_pending is True
+    cfg = {"model_files": [{"file": "Qwen3.6-35B-A3B.gguf", "service": "llamacpp-cpu"}],
+           "active_file": "Qwen3.8-27B.gguf"}
+    with patch.object(dashboard_app, "_ops_request", new=AsyncMock(return_value=(200, cfg))):
+        asyncio.run(dashboard_app._migrate_throughput_store())
+    assert dashboard_app._migration_pending is False
+    cpu = dashboard_app._role_samples["cpu-fallback"]
+    assert {s["tps"] for s in cpu} == {19.3, 18.0}
+
+
 def test_eviction_prunes_the_role_series_too():
     import dashboard.app as dashboard_app
     _reset_store(dashboard_app)
