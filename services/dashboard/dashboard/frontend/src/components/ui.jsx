@@ -4,11 +4,11 @@ import { useEffect, useRef } from 'react'
 import { formatRate } from '../lib/format.js'
 
 export const BTN =
-  'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-border bg-surface px-3 text-label text-fg transition-colors hover:border-accent/40 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40'
+  'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-border bg-surface px-3 text-label text-fg transition-colors hover:border-accent/40 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40'
 export const BTN_DANGER =
-  'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-border bg-surface px-3 text-label text-fg transition-colors hover:border-danger/50 hover:bg-danger/10 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40'
+  'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-border bg-surface px-3 text-label text-fg transition-colors hover:border-danger/50 hover:bg-danger/10 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40'
 export const BTN_PRIMARY =
-  'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-accent/50 bg-accent/[0.12] px-3 text-label font-semibold text-accent-soft transition-colors hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-40'
+  'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-accent/50 bg-accent/[0.12] px-3 text-label font-semibold text-accent-soft transition-colors hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40'
 export const INPUT =
   'h-8 rounded-sm border border-border bg-bg px-3 text-body text-fg outline-none transition-colors focus:border-accent/60 disabled:cursor-not-allowed disabled:opacity-40'
 
@@ -155,6 +155,56 @@ export function Sparkline({ points, tone = 'accent', label, height = 32, domain 
       <path d={line} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
       <circle cx={px(last[0])} cy={py(last[1])} r="2.2" fill="currentColor" />
     </svg>
+  )
+}
+
+// A modal yes/no question, in place of the browser's confirm(). Focus moves to Cancel (the choice
+// that changes nothing), Tab stays inside, Escape or a click outside cancels, and focus returns to
+// whatever opened it.
+/**
+ * @param {{ open: boolean, title: string, children?: import('react').ReactNode, confirmLabel: string,
+ *           danger?: boolean, onConfirm: () => void, onCancel: () => void }} props
+ */
+export function ConfirmDialog({ open, title, children, confirmLabel, danger = false, onConfirm, onCancel }) {
+  const panelRef = useRef(null)
+  const cancelRef = useRef(null)
+  const returnTo = useRef(null)
+
+  useEffect(() => {
+    if (!open) return undefined
+    returnTo.current = document.activeElement
+    cancelRef.current?.focus()
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); onCancel(); return }
+      if (e.key !== 'Tab' || !panelRef.current) return
+      const buttons = panelRef.current.querySelectorAll('button')
+      const first = buttons[0]
+      const last = buttons[buttons.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      returnTo.current?.focus?.()
+    }
+  }, [open, onCancel])
+
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-[450] flex items-start justify-center bg-black/50 px-4 pt-[12vh]" onClick={onCancel}>
+      <div ref={panelRef} role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title"
+           aria-describedby={children ? 'confirm-dialog-body' : undefined}
+           className="w-full max-w-md rounded-md border border-border bg-bg-elevated p-5 shadow-card-lg"
+           onClick={(e) => e.stopPropagation()}>
+        <h2 id="confirm-dialog-title" className="text-title text-fg">{title}</h2>
+        {children && <div id="confirm-dialog-body" className="mt-2 text-body text-fg-muted">{children}</div>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button ref={cancelRef} type="button" className={BTN} onClick={onCancel}>Cancel</button>
+          <button type="button" className={danger ? BTN_DANGER : BTN_PRIMARY} onClick={onConfirm}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
   )
 }
 

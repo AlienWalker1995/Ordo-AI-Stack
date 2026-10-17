@@ -1,6 +1,6 @@
 // A backend that fails is stated on the page, never drawn as a blank page or as zeros: each page
 // names what is unavailable and why, and a page that throws is contained by the shell.
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import App from '../src/App.jsx'
 import { HostStepsProvider } from '../src/components/HostSteps.jsx'
@@ -81,13 +81,13 @@ describe('the app shell', () => {
         return { status: 401, body: { detail: LOCAL_401 } }
       },
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     history.replaceState(null, '', '#services')
     renderApp()
 
     const [restart] = await screen.findAllByRole('button', { name: 'Restart Open WebUI' })
     expect(screen.queryByRole('heading', { name: 'Sign in to make changes' })).toBeNull()
     restart.click()
+    within(await screen.findByRole('alertdialog', { name: 'Restart Open WebUI?' })).getByRole('button', { name: 'Restart' }).click()
 
     await screen.findByRole('heading', { name: 'Sign in to make changes' })
     await screen.findByText(`Open WebUI: ${LOCAL_401}`)

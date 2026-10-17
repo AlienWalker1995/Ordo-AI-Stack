@@ -1,7 +1,7 @@
 // The Services page is one flat list of every container on the host: no group headers, a filter
 // over name and project, and per row exactly the controls its control kind allows.
 import { fireEvent, screen, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import ServicesPage from '../src/pages/ServicesPage.jsx'
 import { fixture, mockApi } from './mockApi.js'
 import { renderInShell } from './renderInShell.jsx'
@@ -91,14 +91,14 @@ describe('Services: one flat list', () => {
   it('restarts a managed container through its project route once confirmed', async () => {
     const path = '/api/ops/projects/media-stack/containers/media-server/restart'
     const api = mockApi({ [`POST ${path}`]: { ok: true, project: 'media-stack', container: 'media-server', action: 'restarted' } })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderInShell(<ServicesPage />)
 
     const [restart] = await screen.findAllByRole('button', { name: 'Restart media-server (media-stack)' })
     fireEvent.click(restart)
+    const dialog = screen.getByRole('alertdialog', { name: 'Restart media-server (media-stack)?' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Restart' }))
 
-    await screen.findByText('media-server (media-stack): restarted')
-    expect(confirm).toHaveBeenCalledWith('Restart media-server (media-stack)?')
+    expect((await screen.findAllByText('Restarting…')).length).toBeGreaterThan(0)
     expect(api.sent('POST', path)).toHaveLength(1)
   })
 

@@ -20,6 +20,22 @@ export class ApiError extends Error {
   }
 }
 
+// The reason a failed response gives, wherever the backend put it: FastAPI's `detail` (a string,
+// or an object carrying `error`), else ops-controller's own `error`. "HTTP <code>" only when the
+// body says nothing. The browser's statusText ("Conflict") is not part of the message: it is
+// protocol-dependent (present on HTTP/1.1, empty over h2/h3), so relying on it would make the same
+// failure read differently behind the edge than on the local http:// dashboard.
+/**
+ * @param {unknown} payload
+ * @param {number} status
+ */
+function errorMessage(payload, status) {
+  const body = payload && typeof payload === 'object' ? /** @type {Record<string, any>} */ (payload) : {}
+  const candidates = [body.detail, body.detail?.error, body.error]
+  const message = candidates.find((value) => typeof value === 'string' && value.trim())
+  return message || `HTTP ${status}`
+}
+
 /**
  * @param {string} path
  * @param {{ method?: string, body?: unknown, headers?: Record<string, string>, signal?: AbortSignal }} [options]
@@ -51,8 +67,7 @@ async function request(path, { method = 'GET', body, headers, signal } = {}) {
 
   if (!res.ok) {
     if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
-    const detail = (payload && (payload.detail || payload.error)) || res.statusText
-    throw new ApiError(typeof detail === 'string' ? detail : `HTTP ${res.status}`, res.status, payload)
+    throw new ApiError(errorMessage(payload, res.status), res.status, payload)
   }
   return payload
 }
@@ -101,7 +116,8 @@ export function useFetch(fetcher, deps = []) {
 // no next tick is scheduled while `document.hidden`, and returning to visible triggers an
 // immediate fetch and resumes the interval. Returns `error` and `lastUpdated` (ms epoch of
 // the last SUCCESSFUL fetch) additively so callers can surface a calm stale/reconnecting
-// indicator instead of presenting stale numbers as live.
+// indicator instead of presenting stale numbers as live. `refresh()` resolves to the data it
+// fetched (undefined when the fetch failed), so a caller can act on exactly what is now shown.
 export function usePolling(fetcher, intervalMs = 5000, deps = []) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -116,8 +132,10 @@ export function usePolling(fetcher, intervalMs = 5000, deps = []) {
       setData(d)
       setError(null)
       setLastUpdated(Date.now())
+      return d
     } catch (e) {
       if (e.name !== 'AbortError') setError(e)
+      return undefined
     } finally {
       setLoading(false)
     }

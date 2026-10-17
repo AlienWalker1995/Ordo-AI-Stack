@@ -60,6 +60,16 @@ All notable changes to this project are documented here. The format is loosely b
   notification when the GPU model is back.
 
 ### Fixed
+- **A Services action reads as done only once the table shows it.** Each row has its own action
+  state, so a second click no longer clears the first row's pending state: the row says
+  Starting…, Stopping… or Restarting… with its buttons held, and the table is re-read (every 2 s
+  for a minute, then every 5 s, not while the tab is hidden) until the row shows the result; only
+  then is "started", "stopped" or "restarted" reported. A timeout or a 503 from the proxy is
+  checked against the table instead of reported as a failure; a refusal shows its reason (from
+  `detail`, `detail.error` or `error`) on the row and in the toast; after 180 s without the result
+  the row says what it last saw, and that note clears (with the action reported done) if a later
+  read shows the result. Stop and restart ask in an in-app dialog instead of the browser's
+  `confirm()`.
 - **The GPU pin fails fast while the GPU chat model is away.** A request for `local-chat-gpu` (or the
   deployment-named GPU alias) while a render holds the lease or the GPU engine is down answered a
   500 "Connection error", which Hermes retries as a server error, so a turn waited out the whole
