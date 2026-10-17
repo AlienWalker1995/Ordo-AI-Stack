@@ -6,6 +6,12 @@
       "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git",
       "ref": "44c8a36b7c31ee00b4271daed11dc2a4aa481140",
       "note": "2026-10-14 master. The May 2026 copy failed to import on ComfyUI 0.41 (interleaved_freqs_cis removed from core); this ref ships the LTX-2.5 graphs, IC-LoRA guides, inpaint preprocess and the looping sampler."
+    },
+    {
+      "name": "ComfyUI-Chatterbox",
+      "url": "https://github.com/wildminder/ComfyUI-Chatterbox.git",
+      "ref": "4597af8f59d4460d441e13533eae24b092e40952",
+      "note": "2026-10-16 v2.0.3. OSS Chatterbox TTS (Resemble AI) for the dark-patterns-reel narration, replacing VibeVoice. Node classes ChatterboxTTS/MTLTTS/SRT/Dialog/VC; only extra dep is s3tokenizer. Classic English pack (ResembleAI/chatterbox: ve/t3_cfg/s3gen.safetensors + tokenizer.json + conds.pt) is pre-staged into the comfyui-models volume at tts/chatterbox/resembleai_default_voice so first run does not float-download."
     }
   ]
 }
