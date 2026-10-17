@@ -132,3 +132,109 @@ def test_eviction_prunes_the_role_series_too():
         ]
         dashboard_app._evict_stale_models(now)
     assert [s["model"] for s in dashboard_app._role_samples["gpu-chat"]] == ["new.gguf"]
+
+
+def test_v4_reload_restores_the_role_series(tmp_path, monkeypatch):
+    """A v4 file's role series must land in the MODULE-LEVEL _role_samples. Without it in the
+    global statement the assignment binds a local, every restart reloads into a throwaway dict,
+    and the next debounced save overwrites the file with an empty role_samples."""
+    import dashboard.app as dashboard_app
+    f = tmp_path / "throughput.json"
+    now = time.time()
+    f.write_text(json.dumps({
+        "version": 4,
+        "samples": {"Qwen3.8-27B.gguf": [{"tps": 20.0, "ts": now - 100}]},
+        "role_samples": {
+            "gpu-chat": [{"tps": 20.0, "ts": now - 100, "model": "Qwen3.8-27B.gguf"}],
+            "cpu-fallback": [{"tps": 8.0, "ts": now - 90, "model": "Qwen3.6-35B-A3B.gguf"}],
+        },
+        "ttft_samples": {},
+        "last_benchmark": None,
+    }))
+    monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
+    _reset_store(dashboard_app)
+    dashboard_app._load_throughput_state()
+    assert dashboard_app._migration_pending is False
+    assert [s["tps"] for s in dashboard_app._role_samples["gpu-chat"]] == [20.0]
+    assert [s["tps"] for s in dashboard_app._role_samples["cpu-fallback"]] == [8.0]
+    # The live stats see the restored history instead of restarting from n=0.
+    stats = asyncio.run(dashboard_app.throughput_stats())
+    assert stats["roles"]["gpu-chat"]["n"] == 1 and stats["roles"]["gpu-chat"]["p50"] == 20.0
+
+
+def test_samples_recorded_while_migration_waits_are_not_double_counted(tmp_path, monkeypatch):
+    """While /model-config cannot be read, each new sample must reach the role series exactly
+    once: when the migration later rebuilds it from the per-file series, not also by the direct
+    append at record time (which would count it twice in the persisted store and in the live
+    roles stats)."""
+    import dashboard.app as dashboard_app
+    f = tmp_path / "throughput.json"
+    now = time.time()
+    # A .ninfer artifact: the file-name guess, the render's mapping and the gateway's backend
+    # all agree it is the GPU chat server's, so every path in this test lands in gpu-chat.
+    f.write_text(json.dumps({
+        "version": 3,
+        "samples": {"qwen3.8-27b.ninfer": [{"tps": 20.0, "ts": now - 100}]},
+        "ttft_samples": {},
+        "last_benchmark": None,
+    }))
+    monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
+    _reset_store(dashboard_app)
+    dashboard_app._load_throughput_state()
+    cfg = {"model_files": [{"file": "qwen3.8-27b.ninfer", "service": "llamacpp"}],
+           "active_file": "qwen3.8-27b.ninfer"}
+    ops = AsyncMock(return_value=(None, None))   # render down: the migration waits
+    with patch.object(dashboard_app, "_ops_request", new=ops):
+        client = TestClient(dashboard_app.app)
+        for i in range(20):
+            assert client.post("/api/throughput/record", json={
+                "model": "qwen3.8-27b.ninfer", "output_tokens_per_sec": 30.0 + i,
+                "alias": "local-chat", "backend": "llamacpp"}).status_code == 200
+        assert dashboard_app._migration_pending is True
+        # While pending the live roles view merges the per-file series on the fly: 21 samples,
+        # none of them counted twice.
+        stats = asyncio.run(dashboard_app.throughput_stats())
+        assert stats["roles"]["gpu-chat"]["n"] == 21
+    ops.return_value = (200, cfg)   # render back: the next record completes the migration
+    with patch.object(dashboard_app, "_ops_request", new=ops):
+        client.post("/api/throughput/record", json={
+            "model": "qwen3.8-27b.ninfer", "output_tokens_per_sec": 99.0,
+            "alias": "local-chat", "backend": "llamacpp"})
+    assert dashboard_app._migration_pending is False
+    # 1 pre-existing + 20 recorded while waiting + 1 that triggered the migration = 22, each once.
+    gpu = dashboard_app._role_samples["gpu-chat"]
+    assert len(gpu) == 22
+    assert len({s["tps"] for s in gpu}) == 22
+    dashboard_app._save_throughput_state()
+    data = json.loads(f.read_text())
+    assert data["version"] == 4
+    assert len(data["role_samples"]["gpu-chat"]) == 22
+    assert len({s["tps"] for s in data["role_samples"]["gpu-chat"]}) == 22
+
+
+def test_migration_trims_role_buckets_to_the_sample_cap(tmp_path, monkeypatch):
+    """Several files classifying into one role must not push its bucket past
+    _MAX_SAMPLES_PER_MODEL; the newest samples survive the trim."""
+    import dashboard.app as dashboard_app
+    f = tmp_path / "throughput.json"
+    now = time.time()
+    samples = {}
+    for i in range(3):
+        fname = f"model-{i}.gguf"
+        samples[fname] = [{"tps": float(i * 1000 + j), "ts": now - 10000 + i * 1000 + j}
+                          for j in range(300)]
+    f.write_text(json.dumps({"version": 3, "samples": samples, "ttft_samples": {},
+                             "last_benchmark": None}))
+    monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
+    _reset_store(dashboard_app)
+    dashboard_app._load_throughput_state()
+    cfg = {"model_files": [{"file": f"model-{i}.gguf", "service": "llamacpp-cpu"}
+                           for i in range(3)],
+           "active_file": "model-0.gguf"}
+    with patch.object(dashboard_app, "_ops_request", new=AsyncMock(return_value=(200, cfg))):
+        asyncio.run(dashboard_app._migrate_throughput_store())
+    assert dashboard_app._migration_pending is False
+    cpu = dashboard_app._role_samples["cpu-fallback"]
+    assert len(cpu) == dashboard_app._MAX_SAMPLES_PER_MODEL
+    assert cpu[-1]["model"] == "model-2.gguf"
+    assert cpu[-1]["ts"] == now - 10000 + 2 * 1000 + 299

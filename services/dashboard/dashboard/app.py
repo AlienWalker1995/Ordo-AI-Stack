@@ -213,7 +213,7 @@ def _load_throughput_state() -> None:
     alias-conflated; only last_benchmark carries over. A v3 file loads its per-file
     series as-is and stays marked for migration: _migrate_throughput_store assigns
     them to roles once the render's /model-config can be read, then rewrites it as v4."""
-    global _throughput_samples, _ttft_samples, _last_benchmark, _migration_pending
+    global _throughput_samples, _ttft_samples, _last_benchmark, _migration_pending, _role_samples
     if not _THROUGHPUT_FILE.exists():
         return
     try:
@@ -326,8 +326,11 @@ async def _migrate_throughput_store() -> None:
     """One-shot v3 -> v4: assign the per-file series to the roles the render served them under,
     then persist. The render's /model-config names the service that loads each file; while it
     cannot be read the store stays v3-shaped in memory and the medians fall back to the
-    file-name guess, so a misclassification is never persisted."""
-    global _migration_pending
+    file-name guess, so a misclassification is never persisted. The role series is REBUILT from
+    the per-file series rather than merged into the live one: every sample already sits in the
+    per-file series (records made while the migration waited included), so merging into the live
+    buckets would count the pending ones twice; rebuilding also trims each bucket to the cap."""
+    global _migration_pending, _role_samples
     if not _migration_pending:
         return
     async with _migration_lock:
@@ -338,7 +341,12 @@ async def _migrate_throughput_store() -> None:
         if config is None:
             return
         with _state_lock:
-            _merge_into_roles(_role_samples, _throughput_samples, config)
+            migrated: dict[str, list[dict]] = {}
+            _merge_into_roles(migrated, _throughput_samples, config)
+            for role in migrated:
+                if len(migrated[role]) > _MAX_SAMPLES_PER_MODEL:
+                    migrated[role] = migrated[role][-_MAX_SAMPLES_PER_MODEL:]
+            _role_samples = migrated
             _migration_pending = False
             _save_throughput_state()
 
@@ -399,10 +407,15 @@ async def throughput_record(req: ThroughputRecordRequest):
         _throughput_samples[model].append({"tps": req.output_tokens_per_sec, "ts": now})
         if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:
             _throughput_samples[model] = _throughput_samples[model][-_MAX_SAMPLES_PER_MODEL:]
-        bucket = _role_samples.setdefault(role, [])
-        bucket.append({"tps": req.output_tokens_per_sec, "ts": now, "model": model})
-        if len(bucket) > _MAX_SAMPLES_PER_MODEL:
-            _role_samples[role] = bucket[-_MAX_SAMPLES_PER_MODEL:]
+        # While the v3 migration waits for /model-config the per-file series is the single source
+        # of truth: this sample reaches the role series exactly once, when the migration rebuilds
+        # it. Appending here as well would count it twice after the merge (and in the live roles
+        # stats, which merges the per-file series on the fly while pending).
+        if not _migration_pending:
+            bucket = _role_samples.setdefault(role, [])
+            bucket.append({"tps": req.output_tokens_per_sec, "ts": now, "model": model})
+            if len(bucket) > _MAX_SAMPLES_PER_MODEL:
+                _role_samples[role] = bucket[-_MAX_SAMPLES_PER_MODEL:]
         if req.ttft_ms > 0 and (model in _ttft_samples or len(_ttft_samples) < _MAX_TRACKED_MODELS):
             if model not in _ttft_samples:
                 _ttft_samples[model] = []
