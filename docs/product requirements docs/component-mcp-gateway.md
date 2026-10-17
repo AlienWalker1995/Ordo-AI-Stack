@@ -89,8 +89,9 @@ mcp:
   `/config` and merged into the proxy config by the entrypoint. The file is **required**: a render
   with no MCP plugins emits `mcp_servers: {}`, and a missing file is a fail-loud start error.
 - `out/mcp/servers.json`: `{server_id, litellm_name, plugin_id, service, url, tools, network}` per
-  server plus the registered-plugin map, read by the dashboard at
-  `MCP_SERVERS_PATH=/mcp-config/servers.json`.
+  server plus the registered-plugin map. No compose service consumes it anymore (the dashboard's
+  read-only mount went with the Settings drawer); the native-mode checklist (`ordo/host/native.py`)
+  points operators at it.
 
 A hosted server (`url:` instead of `image:`) renders into both files but has no compose service.
 
@@ -118,7 +119,8 @@ LiteLLM namespaces tools **`<litellm_name>-<tool>`**, and Hermes prefixes its ow
 - `require_key_mcp_access_defined: true` means a key sees **only** the servers its
   `object_permission.mcp_servers` grant lists. No grant, no tools; no key, 401.
 - The edge hands external clients `LITELLM_KEY_EDGE` for both `/llm/*` and `/mcp`. The dashboard
-  keeps `LITELLM_MASTER_KEY`: it is the control plane (`/model/info`, `/v1/mcp/server/health`).
+  keeps `LITELLM_MASTER_KEY`: it is the control plane (readiness probes against `/mcp`, the
+  throughput benchmark against `/v1/chat/completions`).
 - Per-tool narrowing (`allowed_tools`) is supported by the schema and set by no manifest today.
 
 ## Health and observability
@@ -126,9 +128,10 @@ LiteLLM namespaces tools **`<litellm_name>-<tool>`**, and Hermes prefixes its ow
 - `GET /v1/mcp/server/health` on the gateway reports every registered server.
 - A `tools/list` call on `/mcp` carries `_meta["litellm.ai/server_outcomes"]`, giving per-server
   `status` and `tool_count`.
-- The dashboard's `GET /api/mcp/health` combines both: a server is `ok` only when the health probe
-  says `healthy` **and** its outcome is `ok` with `tool_count > 0`. There is no fallback to
-  gateway-level status, which is what previously let three dead servers report green for weeks.
+- Both signals matter: a server is `ok` only when the health probe says `healthy` **and** its
+  `tools/list` outcome is `ok` with `tool_count > 0`. There is no fallback to gateway-level status,
+  which is what previously let three dead servers report green for weeks. Operators see per-server
+  health in the LiteLLM UI.
 - Prometheus scrapes `model-gateway:11435/metrics`; `litellm_mcp_tool_calls_total{mcp_server_name,
   mcp_tool_name}` increments per tool call.
 
@@ -168,9 +171,8 @@ In all three cases, finish by adding the plugin id to `ordo.yaml`'s `plugins:` l
 
 ## Operations
 
-- **Enable or disable a server:** edit `ordo.yaml`'s `plugins:` list, directly or through the
-  MCP section of the dashboard's Settings drawer (which performs the same comment-preserving edit
-  through ops-controller, then applies it: the response lists what was `recreated` and `stopped`).
+- **Enable or disable a server:** edit `ordo.yaml`'s `plugins:` list (directly, or through the
+  LiteLLM UI), then `ordo apply`.
 - **No hot reload.** LiteLLM reads config-file MCP servers at startup, so a change takes effect
   when `model-gateway` is recreated. Its definition carries the digest of `out/model-gateway/`
   (`ordo.rendered-config`), so any render that changes the MCP set puts it in the changed set.

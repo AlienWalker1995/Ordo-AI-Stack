@@ -24,7 +24,7 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 - [MCP & Tool Aggregation](component-mcp-gateway.md) – One `/mcp` endpoint on the model gateway; the `mcp-*` servers behind it, scoped per LiteLLM key.
 - [RAG Pipeline](component-rag-pipeline.md) – Qdrant vector search + document ingestion.
 - [Orchestration Layer](component-orchestration-layer.md) – Multi-service workflow coordination (target architecture; implementation evolves with the repo).
-- [Dashboard UI](component-dashboard-ui.md) – Ops dashboard: Overview, Services, Models, Media and Performance pages, Settings drawer.
+- [Dashboard UI](component-dashboard-ui.md) – Ops dashboard: Overview, Services, Models and Performance pages.
 - [Security & Trust Model](security-and-trust-model.md) – Threat model, auth tiers, SSRF, secret handling.
 - [Environment Variables Reference](appendix-env-vars.md) – All env vars, services, defaults.
 - [Rollback Procedures](appendix-rollback.md) – Per-component rollback playbook.

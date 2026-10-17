@@ -294,14 +294,14 @@ def test_write_emits_server_plugin_map_in_servers_json(tmp_path):
     assert m["comfyui"] == "comfyui-mcp"
     assert {"qdrant-rag", "searxng", "orchestration",
             "codebase-memory", "memory-vault"} <= set(m)
-    # servers.json is the ONLY file in the dir the dashboard mounts at /mcp-config
+    # servers.json is the ONLY file the render emits into out/mcp (no compose service mounts it anymore)
     assert [p.name for p in (tmp_path / "mcp").iterdir()] == ["servers.json"]
 
 
 
 def test_write_prunes_the_retired_mcp_gateway_artefacts(tmp_path):
     """A re-render over an existing out/ removes the files older renders emitted: they sat in the
-    dir the dashboard mounts, looking live. Operator-owned files in out/ are never touched."""
+    dir the dashboard used to mount, looking live. Operator-owned files in out/ are never touched."""
     retired = ("mcp/servers.txt", "mcp/registry-custom.yaml", "mcp/registry-custom.docker.yaml",
                "mcp/server-plugin-map.json", "mcp-registry.yaml")
     operator_owned = ("ordo.yaml", "secrets.env", "lease-history.jsonl", "auth/caddy/tailnet.crt")

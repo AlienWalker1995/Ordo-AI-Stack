@@ -2,13 +2,11 @@
 
 ## Purpose
 A web-based control plane that provides a single pane of glass for:
-- Seeing stack health, GPU tenancy and what needs attention (Overview)
-- Managing Docker-Compose services (start/stop/restart, logs) (Services)
+- Seeing stack health, GPU tenancy, recent renders and GPU leases, and what needs attention (Overview)
+- Managing Docker-Compose services (start/stop/restart, logs; ComfyUI restarts from its card) (Services)
 - Switching the GPU chat model and managing GGUF files on disk (Models)
-- Watching ComfyUI renders, GPU lease history and ComfyUI model files (Media)
 - Viewing token throughput and GPU metrics via the embedded Grafana "Ordo performance" dashboard at `/grafana/` (Performance)
-- Rarely used controls in a Settings drawer: MCP server enable/disable and ComfyUI custom-node requirement installs
-- A Ctrl/Cmd K command palette to jump to a page, open a tool, or open Settings
+- A Ctrl/Cmd K command palette to jump to a page or open a tool
 
 ## API Reference
 
@@ -34,20 +32,10 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/throughput/benchmark` | POST | Y | Short generation against `local-chat` |
 | `/api/perf/series` | GET | None | Tokens per second per chat server (Prometheus) |
 | `/api/perf/grafana` | GET | None | Whether Grafana is up + the embed path (Performance page) |
-| `/api/media` | GET | None | Running ComfyUI job, queue depth, recent renders (Media page) |
-| `/api/media/view` | GET | None | Proxy one ComfyUI output file (thumbnails, players) |
-| `/api/comfyui/models` | GET | None | Installed ComfyUI model files |
-| `/api/comfyui/models/{cat}/{file}` | DELETE | Y | Delete a ComfyUI model file |
-| `/api/comfyui/install-node-requirements` | POST | Y | pip-install a custom-node pack's requirements (Settings drawer) |
-| `/api/mcp/servers` | GET | None | Enabled servers + registered `kind: mcp` plugins, from `out/mcp/servers.json` |
-| `/api/mcp/health` | GET | None | Per-server health from LiteLLM |
-| `/api/mcp/add` | POST | Y | Enable a registered MCP plugin in `ordo.yaml` |
-| `/api/mcp/remove` | POST | Y | Disable an MCP plugin in `ordo.yaml` |
 | `/api/orchestration/readiness` | GET | None | Orchestration readiness check |
 | `/api/orchestration/workflows*`, `/validate`, `/outputs` | GET/POST | Y | Workflow store used by the orchestration MCP server (`services/orchestration/server.py`) |
-| `/api/orchestration/comfyui/restart`, `/comfyui/status` | POST/GET | Y | Restart ComfyUI / its status (Media page) |
+| `/api/orchestration/comfyui/restart`, `/comfyui/status` | POST/GET | Y | Restart ComfyUI / its status (called by the orchestration MCP server; the Services card restarts ComfyUI through the generic service action) |
 | `/api/orchestration/registry/models`, `/registry/gpus` | GET | Y | Served models and GPU pins derived from the render, proxied from ops-controller |
-| `/api/orchestration/gpu/history` | GET | Y | Finished GPU leases |
 
 To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url + category); pull a GGUF with `ordo fetch <catalog-id>` (downloaded and checksum-verified into the `models-gguf` volume).
 
@@ -55,7 +43,7 @@ To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url +
 
 - **Docker Lifecycle** – Calls the Ops Controller API (`/services/{id}/start|stop|restart|recreate`) with `OPS_CONTROLLER_TOKEN` (from `out/secrets.env`) as a Bearer header. The UI never mounts `docker.sock`; it uses the controller as a proxy.
 - **Model Management** – The Models page lists what each chat server runs and the GGUF files on disk. A switch names a catalog entry; ops-controller rewrites `ordo.yaml`, re-renders and recreates what the render changed (one switch at a time; ops-controller rolls the source back on a failed apply). Dashboard state lives in `data/dashboard/`, mounted as `/data/dashboard`.
-- **MCP settings** – The Settings drawer lists the registered MCP servers with per-server health and tool counts from LiteLLM. Tools are namespaced `<litellm_name>-<tool>` (Hermes adds its own prefix, e.g. `gateway__memory_vault-read_note`).
+- **MCP servers** – Managed outside the dashboard: enable or disable them in the LiteLLM UI or `ordo.yaml`'s `plugins:` list (applied by `ordo apply`). Per-server health and tool counts come from LiteLLM (`/v1/mcp/server/health`, `tools/list` outcomes). Tools are namespaced `<litellm_name>-<tool>` (Hermes adds its own prefix, e.g. `gateway__memory_vault-read_note`).
 
 ## Security Model
 - The dashboard publishes no host port; it is reached through the Caddy edge or over the internal `ordo-net` docker network. Calls to the Ops Controller carry `OPS_CONTROLLER_TOKEN` (from `out/secrets.env`) as an `Authorization: Bearer …` header, which ops-controller verifies.
@@ -76,7 +64,7 @@ To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url +
 2. The SSO front door (Caddy + oauth2-proxy) signs you in; the dashboard trusts the identity Caddy forwards for its operator actions.
 3. Use the Services page to stop or restart a service if an issue is suspected.
 4. Switch the GPU chat model on the Models page (the model must already be on disk).
-5. In Settings (or Ctrl/Cmd K, then Settings), enable a registered MCP server. The change is saved to `ordo.yaml`'s `plugins:` list and applied by ops-controller (the toast names what restarted).
+5. Enable or disable an MCP server in the LiteLLM UI or `ordo.yaml`'s `plugins:` list, then `ordo apply` — it recreates `model-gateway`, which is how the new MCP set takes effect.
 
 ---
 

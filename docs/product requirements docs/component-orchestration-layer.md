@@ -20,7 +20,7 @@ The orchestration layer today is an **MCP server** (`services/orchestration/serv
 
 ## Integration with Existing Stack
 - **Agent clients** (Hermes, etc.) – Invoke the orchestrator through the gateway's namespaced MCP tools (`gateway__orchestration-<tool>`) or the dashboard HTTP routes.
-- **Dashboard** – The Media page shows GPU lease history and restarts ComfyUI via `routes_orchestration.py`; the orchestration MCP server uses the same routes for workflows.
+- **Dashboard** – Overview's activity feed shows GPU lease history and renders (`/api/activity`); ComfyUI restarts from the Services card. `routes_orchestration.py` serves the orchestration MCP server's workflow routes plus `/comfyui/restart` and `/comfyui/status`.
 
 ---
 
