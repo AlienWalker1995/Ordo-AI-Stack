@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -19,6 +20,12 @@ import psutil
 
 logger = logging.getLogger(__name__)
 
+# uvicorn configures its own loggers only, so the root logger has no handler and this app's INFO
+# and DEBUG records are dropped. Give the root a WARNING handler once: dependency failures log
+# through it (dashboard/diagnostics.py).
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
 import httpx as _httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -26,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.gzip import GZipMiddleware
 
-from dashboard import auth
+from dashboard import auth, diagnostics
 from dashboard.console import CHAT_MODEL_SUFFIXES
 from dashboard.routes_auth import router as auth_router
 from dashboard.routes_console import router as console_router
@@ -70,7 +77,11 @@ app.include_router(orchestration_router)
 async def _global_exception_handler(request: Request, exc: Exception):
     """Catch unhandled exceptions — log the traceback but return a safe 500 to the client."""
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    # An exception unwinds past the trace middleware (which has reset its ContextVar by then), so
+    # the id comes from request.state; the 500 stamps its own header and body.
+    trace = getattr(request.state, "trace_id", None) or diagnostics.current_trace_id()
+    return JSONResponse(status_code=500, content={"detail": "Internal server error", "trace_id": trace},
+                        headers={"X-Trace-Id": trace})
 
 
 @app.middleware("http")
@@ -116,6 +127,35 @@ async def auth_middleware(request: Request, call_next):
             content={"detail": f"{how}, or send Authorization: Bearer <OPS_CONTROLLER_TOKEN>"},
         )
     return await call_next(request)
+
+
+# A sane inbound X-Request-ID is reused as the trace id so an operator can correlate their own
+# calls; anything else gets a fresh one. It is correlation metadata, not authentication: any
+# client may set it (spoofable/collidable) — the regex only bounds length and charset against
+# log injection.
+_REQUEST_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+@app.middleware("http")
+async def trace_middleware(request: Request, call_next):
+    """Mint (or reuse) the request's trace id and stamp X-Trace-Id on every response.
+
+    Defined after auth_middleware in source order, so it wraps OUTSIDE it (the decorators wrap in
+    reverse): 401s from the auth middleware carry the header too. The global 500 handler stamps
+    its own, because an exception unwinds past this middleware.
+    """
+    inbound = request.headers.get("X-Request-ID", "").strip()
+    trace = inbound if _REQUEST_ID_RE.fullmatch(inbound) else diagnostics.new_trace_id()
+    # request.state outlives the ContextVar: an exception unwinds past this middleware (which has
+    # reset the var by then), and the global 500 handler reads the id back from here.
+    request.state.trace_id = trace
+    token = diagnostics.set_trace_id(trace)
+    try:
+        response = await call_next(request)
+    finally:
+        diagnostics.reset_trace_id(token)
+    response.headers["X-Trace-Id"] = trace
+    return response
 
 
 # GZip compression for text responses (JSON payloads, the HTML shell, JS/CSS assets).
@@ -656,36 +696,72 @@ OPS_CONTROLLER_TOKEN = read_secret("OPS_CONTROLLER_TOKEN")
 async def _ops_request(
     method: str,
     path: str,
-    request: Request | None = None,
     *,
     timeout: float = 30.0,
     **kwargs,
 ) -> tuple[int, dict]:
     """Proxy request to ops controller. Returns (status_code, json_body).
-    Forwards X-Request-ID when present for audit correlation.
+    Sends X-Request-ID (the request's trace id, unless a caller overrides it) for audit
+    correlation, and records every failure with a DEP-OPS-* code (dashboard/diagnostics.py);
+    a success — including a 4xx other than AUTH, which means the controller answered — marks OPS ok.
     """
     if not OPS_CONTROLLER_TOKEN:
+        diagnostics.record_failure("OPS", "NOTCONFIGURED", "OPS_CONTROLLER_TOKEN not set",
+                                   target=path, elapsed_ms=0.0)
         return 503, {"detail": "OPS_CONTROLLER_TOKEN not configured"}
     url = f"{OPS_CONTROLLER_URL.rstrip('/')}{path}"
     extra = kwargs.pop("headers", {})
-    if request and request.headers.get("X-Request-ID"):
-        extra = {**extra, "X-Request-ID": request.headers["X-Request-ID"]}
+    # The trace id is the default; a caller may override it (the same convention as X-Actor below).
+    extra = {"X-Request-ID": diagnostics.current_trace_id(), **extra}
     # X-Actor names the caller in ops-controller's audit log; a caller may override it.
     headers = {"Authorization": f"Bearer {OPS_CONTROLLER_TOKEN}", "X-Actor": "dashboard", **extra}
+    started = time.perf_counter()
     try:
         r = await _get_http_client().request(method, url, headers=headers, timeout=timeout, **kwargs)
-        try:
-            data = r.json()
-        except (ValueError, UnicodeDecodeError):
-            data = {"detail": r.text or "Unknown error"}
-        return r.status_code, data
     except _httpx.TimeoutException:
+        elapsed_ms = (time.perf_counter() - started) * 1000
         detail = f"ops-controller did not answer {method} {path} within {timeout:g} s"
         if method != "GET":
             detail += "; the action may still be running, so check the service before retrying"
+        diagnostics.record_failure("OPS", "TIMEOUT", detail, target=path, elapsed_ms=elapsed_ms)
         return 503, {"detail": detail}
     except Exception as e:
-        return 503, {"detail": str(e) or type(e).__name__}
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        # The class name plus the message: str(e) alone embeds internal hostnames and ports.
+        detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        diagnostics.record_failure("OPS", diagnostics.classify_failure(e), detail,
+                                   target=path, elapsed_ms=elapsed_ms)
+        # Reuse the sanitized detail in the body too: the raw exception text is exactly what
+        # embeds internal hostnames and ports.
+        return 503, {"detail": diagnostics.sanitize_detail(detail)}
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    try:
+        data = r.json()
+    except (ValueError, UnicodeDecodeError):
+        data = {"detail": r.text or "Unknown error"}
+        if 400 <= r.status_code < 500 and r.status_code not in (401, 403):
+            # A non-AUTH 4xx means ops-controller answered — it is up, so mark ok and pass the
+            # body through, matching the parseable path below.
+            diagnostics.mark_ok("OPS")
+            return r.status_code, data
+        # An unparseable body is a BADPAYLOAD failure on its own; only an unparseable 5xx/AUTH
+        # keeps the status kind.
+        kind = "BADPAYLOAD" if r.status_code < 500 and r.status_code not in (401, 403) \
+            else diagnostics.classify_failure(status=r.status_code)
+        diagnostics.record_failure("OPS", kind, f"unparseable JSON body from {method} {path} (HTTP {r.status_code})",
+                                   target=path, elapsed_ms=elapsed_ms)
+        return r.status_code, data
+    if r.status_code >= 400:
+        kind = diagnostics.classify_failure(status=r.status_code)
+        if kind == "HTTP4XX":
+            # A 4xx other than AUTH means ops-controller answered — it is up, so mark ok.
+            diagnostics.mark_ok("OPS")
+        else:
+            diagnostics.record_failure("OPS", kind, f"HTTP {r.status_code} from {method} {path}",
+                                       target=path, elapsed_ms=elapsed_ms)
+    else:
+        diagnostics.mark_ok("OPS")
+    return r.status_code, data
 
 
 # One docker start/stop/restart is 60 s at most in ops-controller (DockerBackend), and an owner
@@ -708,7 +784,7 @@ def _ops_error_detail(code: int, data: dict) -> str:
 
 async def _ops_proxy(method: str, path: str, request: Request, *, timeout: float, **kwargs) -> dict:
     """An ops-controller call whose failure reaches the page as an HTTPException with its reason."""
-    code, data = await _ops_request(method, path, request=request, timeout=timeout, **kwargs)
+    code, data = await _ops_request(method, path, timeout=timeout, **kwargs)
     if code >= 400:
         raise HTTPException(status_code=code, detail=_ops_error_detail(code, data))
     return data
@@ -884,10 +960,6 @@ async def service_pressure():
     never 0: a zero reads as "idle", which is a claim this endpoint cannot make for it."""
     from dashboard.services_catalog import OPS_SERVICE_MAP, SERVICES
 
-    ops_url = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
-    token = read_secret("OPS_CONTROLLER_TOKEN")
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-
     host_info = {
         "cpu_cores": psutil.cpu_count() or 0,
         "ram_total_gb": round(psutil.virtual_memory().total / 1e9, 1),
@@ -909,15 +981,19 @@ async def service_pressure():
         return {"gpu": None, "host": host_info, "services": services_out, "vram_aggregate_unavailable": True,
                 "unavailable": True, "reason": reason}
 
-    try:
-        async with _httpx.AsyncClient(timeout=8.0) as client:
-            r = await client.get(f"{ops_url}/stats/services", headers=headers)
-            if r.status_code != 200:
-                return _unavailable_payload(f"ops-controller answered HTTP {r.status_code}")
-            raw = r.json()
-    except (_httpx.RequestError, OSError) as e:
-        logger.debug("service-pressure: ops-controller unreachable: %s", e)
-        return _unavailable_payload("ops-controller is not answering")
+    # Through _ops_request (the shared client, X-Actor and X-Request-ID, DEP-OPS-* codes). Its own
+    # failures come back as a 503 with a `detail`, which reads as "not answering"; a real answer
+    # keeps its status in the reason.
+    code, raw = await _ops_request("GET", "/stats/services", timeout=8.0)
+    if code != 200:
+        detail = raw.get("detail") if isinstance(raw, dict) else None
+        if code == 503 and isinstance(detail, str):
+            return _unavailable_payload("ops-controller is not answering")
+        return _unavailable_payload(f"ops-controller answered HTTP {code}")
+    # A 200 whose body did not parse comes back as {"detail": ...} (DEP-OPS-BADPAYLOAD): treat it
+    # as unavailable, not as an empty answer.
+    if not isinstance(raw, dict) or not isinstance(raw.get("services"), dict):
+        return _unavailable_payload("ops-controller returned an unparseable stats payload")
 
     def _measured(value) -> float | None:
         return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
@@ -954,6 +1030,18 @@ async def service_pressure():
         "unavailable": False,
         "reason": None,
     }
+
+
+# --- Diagnostics ---
+
+
+@app.get("/api/diagnostics")
+async def api_diagnostics() -> dict:
+    """Dependency health and recent failures (dashboard/diagnostics.py). Open read like the other
+    /api views: per-dependency status, the failure ring newest first, and the code table. Failure
+    details are sanitized before they enter the ring (exception class plus a summary, URLs
+    stripped), so the open view leaks no internal hostnames or ports."""
+    return diagnostics.snapshot()
 
 
 # --- Static ---

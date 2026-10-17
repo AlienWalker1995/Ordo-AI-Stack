@@ -107,7 +107,7 @@ APPLIED = {"dry_run": False, "recreated": ["llamacpp", "llamacpp-cpu", "model-ga
            "host_reasons": {"agent": "agent runs the control plane"}}
 
 
-def _get_json(url, timeout=10.0):
+def _get_json(url, timeout=10.0, dep="PROBE"):
     if "/api/v1/query_range" in url:
         return PROMETHEUS_RANGE
     if url.endswith("/api/health"):
@@ -120,23 +120,26 @@ def _comfy_json(path):
 
 
 def _ops_controller_client(payloads: dict[str, dict]):
-    """An httpx.AsyncClient stand-in answering ops-controller GETs by path suffix (dashboard.app's
-    /api/hardware/service-pressure calls ops-controller through httpx directly)."""
-    async def get(url, **_kwargs):
+    """A stand-in for the dashboard's shared httpx client; /api/hardware/service-pressure reaches
+    ops-controller through _ops_request, which calls .request on it."""
+    async def request(method, url, headers=None, timeout=None, **_kwargs):
         response = MagicMock(status_code=200)
         response.json.return_value = next(body for suffix, body in payloads.items() if url.endswith(suffix))
         return response
 
     client = MagicMock()
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=None)
-    client.get = get
+    client.request = request
     return client
 
 
 @pytest.fixture
-def client(dashboard_operator_headers):
+def client(dashboard_operator_headers, monkeypatch):
     """The dashboard app with only its I/O replaced."""
+    import dashboard.app as dashboard_app
+
+    # service-pressure reaches ops-controller through _ops_request, which needs the token.
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "fixture-ops-token")
+
     async def ops_json(path, timeout=None):
         return OPS.get(path)
 
@@ -154,7 +157,7 @@ def client(dashboard_operator_headers):
          patch.object(routes_console, "_disk_files", new=AsyncMock(return_value=DISK)), \
          patch.object(routes_console, "_comfy_json", new=AsyncMock(side_effect=_comfy_json)), \
          patch.object(routes_console, "_get_json", new=AsyncMock(side_effect=_get_json)), \
-         patch("httpx.AsyncClient", return_value=_ops_controller_client(
+         patch("dashboard.app._get_http_client", return_value=_ops_controller_client(
              {"/stats/services": STATS_SERVICES})):
         yield TestClient(app, headers=dashboard_operator_headers)
 
