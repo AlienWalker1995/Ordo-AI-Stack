@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Fixed
-- Keep dashboard throughput medians across model swaps by tracking GPU chat, CPU fallback, and embedding samples by role, migrating v3 history, and marking thin medians provisional. A model file the render no longer names is not migrated into a role — it could have served on either chat engine, so it keeps its per-file history only and the affected role median starts fresh after the migration. The migration never holds up a request: one attempt at a time, with a 30 s cooldown after a failed read; while it waits the store stays v3-shaped on disk, so a restart retries the migration instead of losing it.
+- Keep dashboard throughput medians across model swaps by tracking GPU chat, CPU fallback, and embedding samples by role, migrating v3 history, and marking thin medians provisional. A model file the render no longer names is not migrated into a role — it could have served on either chat engine, so it keeps its per-file history only and the affected role median starts fresh after the migration. At most one request per 30 s waits on the migration, and only for the bounded 5 s `/model-config` read: one attempt at a time, with a 30 s cooldown after a failed read; while it waits the store stays v3-shaped on disk, so a restart retries the migration instead of losing it.
 
 ### Changed
 - **The CPU fallback decodes speculatively with its MTP head** (`--spec-type draft-mtp
