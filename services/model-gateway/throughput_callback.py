@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -193,21 +194,67 @@ def _engine_timings(response_obj: Any) -> dict[str, Any]:
     return timings if isinstance(timings, dict) else {}
 
 
+# Streamed replies need their own clock. The gateway assembles the chunks into one response and
+# drops the engine's `timings` (sent on the final chunk), and LiteLLM's completion_start_time is
+# the first chunk of any kind: NInfer sends an empty role chunk the moment a request is queued, so
+# "first chunk to end" still counted minutes of waiting. The streaming iterator hook records, per
+# litellm_call_id, the final chunk's timings and when the first token-bearing chunk arrived; the
+# success logger takes them out. Bounded, so streams that never log success cannot pile up.
+_STREAM_OBSERVATIONS: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_MAX_STREAM_OBSERVATIONS = 1024
+
+
+def _chunk_carries_tokens(chunk: Any) -> bool:
+    """True for a chunk with generated output: content, reasoning or a tool call."""
+    for choice in getattr(chunk, "choices", None) or []:
+        delta = getattr(choice, "delta", None)
+        if delta is None:
+            continue
+        if (getattr(delta, "content", None) or getattr(delta, "reasoning_content", None)
+                or getattr(delta, "tool_calls", None)):
+            return True
+    return False
+
+
+def _observe_stream_chunk(call_id: str, chunk: Any, now: datetime) -> None:
+    observation = _STREAM_OBSERVATIONS.get(call_id)
+    if observation is None:
+        observation = _STREAM_OBSERVATIONS[call_id] = {}
+        while len(_STREAM_OBSERVATIONS) > _MAX_STREAM_OBSERVATIONS:
+            _STREAM_OBSERVATIONS.popitem(last=False)
+    if "first_token" not in observation and _chunk_carries_tokens(chunk):
+        observation["first_token"] = now
+    timings = _engine_timings(chunk)
+    if timings:
+        observation["timings"] = timings
+
+
+def _predicted_per_second(timings: dict[str, Any]) -> float | None:
+    try:
+        predicted = float(timings.get("predicted_per_second") or 0)
+    except (TypeError, ValueError):
+        return None
+    return predicted if predicted > 0 else None
+
+
 def _generation_tokens_per_sec(response_obj, kwargs, completion_tokens: int, end_time: Any) -> float | None:
     """How fast the engine generated, excluding time spent queued and reading the prompt.
 
     Dividing by the whole request time instead reported a 206 tok/s engine as 17 tok/s while
-    requests waited minutes in its queue. Preferred source: the engine's own `predicted_per_second`.
-    Otherwise, for a streamed reply, tokens over first-token-to-end. Neither available: None, so
-    no sample is recorded rather than one that mostly measures waiting.
+    requests waited minutes in its queue. In order: the engine's own `predicted_per_second` on the
+    response, then on the stream's final chunk, then tokens over first-token-bearing-chunk to end.
+    None of those: no sample, rather than one that mostly measures waiting.
     """
-    predicted = _engine_timings(response_obj).get("predicted_per_second")
-    try:
-        if predicted and float(predicted) > 0:
-            return float(predicted)
-    except (TypeError, ValueError):
-        pass
-    first_token = kwargs.get("completion_start_time")
+    # Take the observation out before any early return: whichever timing source wins, the
+    # stream's entry leaves the bounded map exactly once.
+    observation = _STREAM_OBSERVATIONS.pop(str(kwargs.get("litellm_call_id") or ""), None) or {}
+    predicted = _predicted_per_second(_engine_timings(response_obj))
+    if predicted:
+        return predicted
+    predicted = _predicted_per_second(observation.get("timings") or {})
+    if predicted:
+        return predicted
+    first_token = observation.get("first_token")
     if isinstance(first_token, datetime) and isinstance(end_time, datetime):
         generating = (end_time - first_token).total_seconds()
         if generating > 0:
@@ -268,6 +315,17 @@ class ThroughputRecorder(CustomLogger):
     Both sync and async hooks are implemented so the recorder works whether
     LiteLLM dispatches via the sync or async code path.
     """
+
+    async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
+        """Pass every chunk through unchanged, noting when generation really started."""
+        call_id = str((request_data or {}).get("litellm_call_id") or "")
+        async for chunk in response:
+            if call_id:
+                try:
+                    _observe_stream_chunk(call_id, chunk, datetime.now())
+                except Exception as exc:  # telemetry must never break a stream
+                    logger.debug("throughput_recorder could not observe a chunk: %s", exc)
+            yield chunk
 
     async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
         payload = _build_payload(kwargs, response_obj, start_time, end_time)

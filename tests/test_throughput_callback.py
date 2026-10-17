@@ -110,17 +110,183 @@ def test_a_queued_request_records_the_engines_speed_not_the_wait():
     assert payload["output_tokens_per_sec"] == 206.48
 
 
-def test_a_streamed_reply_without_engine_timings_counts_from_the_first_token():
-    start = datetime(2026, 10, 12, 18, 0, 0)
-    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "completion_start_time": start + timedelta(seconds=100)}
-    end = start + timedelta(seconds=110)
-    payload = tc._build_payload(kw, _response(completion_tokens=1000), start, end)
-    assert payload["output_tokens_per_sec"] == 100.0
+def _chunk(content=None, reasoning=None, timings=None):
+    """A ModelResponseStream-shaped chunk: one choice with a delta, timings on the final one."""
+    from types import SimpleNamespace
+    choices = [] if timings else [SimpleNamespace(delta=SimpleNamespace(
+        role="assistant", content=content, reasoning_content=reasoning, tool_calls=None))]
+    return SimpleNamespace(choices=choices, timings=timings)
+
+
+def _stream_through_hook(call_id: str, chunks_at: list) -> list:
+    """Run chunks through the recorder's iterator hook, stamping each with its arrival time."""
+    import asyncio
+
+    clock = iter([at for at, _ in chunks_at])
+
+    async def source():
+        for _, chunk in chunks_at:
+            yield chunk
+
+    async def drain():
+        hook = tc.ThroughputRecorder().async_post_call_streaming_iterator_hook(
+            None, source(), {"litellm_call_id": call_id})
+        return [chunk async for chunk in hook]
+
+    real_now = tc.datetime
+    class _Clock(real_now):
+        @classmethod
+        def now(cls, tz=None):
+            return next(clock)
+    tc.datetime = _Clock
+    try:
+        return asyncio.run(drain())
+    finally:
+        tc.datetime = real_now
+
+
+def test_a_streamed_reply_uses_the_final_chunks_engine_timings():
+    """Live NInfer stream, 2026-10-12: an empty role chunk at once, 312 s queued, then tokens, then
+    a final chunk carrying timings (217 tok/s). The gateway's assembled response drops timings."""
+    t0 = datetime(2026, 10, 12, 19, 0, 0)
+    chunks = [(t0, _chunk(content="")), (t0 + timedelta(seconds=312), _chunk(content="1")),
+              (t0 + timedelta(seconds=312.3), _chunk(timings={"predicted_per_second": 217.15}))]
+    passed = _stream_through_hook("call-timed", chunks)
+    assert passed == [c for _, c in chunks]                  # every chunk passes through unchanged
+    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "litellm_call_id": "call-timed",
+          "completion_start_time": t0}
+    payload = tc._build_payload(kw, _response(completion_tokens=60), t0, t0 + timedelta(seconds=312.3))
+    assert payload["output_tokens_per_sec"] == 217.15
+
+
+def test_a_streamed_reply_without_timings_counts_from_the_first_token_bearing_chunk():
+    """The empty role chunk sent at queue time must not start the clock."""
+    t0 = datetime(2026, 10, 12, 19, 0, 0)
+    chunks = [(t0, _chunk(content="")), (t0 + timedelta(seconds=300), _chunk(reasoning="Let me")),
+              (t0 + timedelta(seconds=305), _chunk(content="done"))]
+    _stream_through_hook("call-untimed", chunks)
+    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "litellm_call_id": "call-untimed",
+          "completion_start_time": t0}
+    end = t0 + timedelta(seconds=310)
+    payload = tc._build_payload(kw, _response(completion_tokens=1000), t0, end)
+    assert payload["output_tokens_per_sec"] == 100.0                 # 1000 tokens over 10 s, not 310
+
+
+def test_observations_are_bounded():
+    for i in range(tc._MAX_STREAM_OBSERVATIONS + 5):
+        tc._observe_stream_chunk(f"call-{i}", _chunk(content="x"), datetime(2026, 10, 12))
+    assert len(tc._STREAM_OBSERVATIONS) == tc._MAX_STREAM_OBSERVATIONS
+    tc._STREAM_OBSERVATIONS.clear()
 
 
 def test_no_sample_when_generation_time_is_unknown():
-    """A non-streamed reply without engine timings: its only clock includes the queue, so skip it."""
+    """No engine timings and no observed stream: the only clock left (completion_start_time, the
+    first chunk of any kind) includes the queue, so skip it."""
     start = datetime(2026, 10, 12, 18, 0, 0)
     end = start + timedelta(seconds=239)
-    kw = _kwargs(GPU_GGUF, "http://llamacpp:8080/v1")
+    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "completion_start_time": start}
     assert tc._build_payload(kw, _response(completion_tokens=30), start, end) is None
+
+
+def test_a_streamed_reply_with_response_timings_does_not_leak_its_observation():
+    """The response's own timings win, but the stream's observation must still be taken out:
+    otherwise every such reply lingers in the bounded map until evicted, shrinking the budget
+    for the untimed streams this exists to measure."""
+    t0 = datetime(2026, 10, 12, 19, 0, 0)
+    chunks = [(t0, _chunk(content="1")),
+              (t0 + timedelta(seconds=2), _chunk(timings={"predicted_per_second": 217.15}))]
+    _stream_through_hook("call-leak", chunks)
+    assert "call-leak" in tc._STREAM_OBSERVATIONS
+    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "litellm_call_id": "call-leak",
+          "completion_start_time": t0}
+    payload = tc._build_payload(kw, _response(completion_tokens=60, predicted_per_second=180.0),
+                                t0, t0 + timedelta(seconds=2))
+    assert payload["output_tokens_per_sec"] == 180.0      # the response's timings win
+    assert "call-leak" not in tc._STREAM_OBSERVATIONS     # ...and the observation is gone
+
+
+def test_a_tool_call_only_chunk_starts_the_stream_clock():
+    """A reply made entirely of tool calls carries no content or reasoning; its first
+    tool-call chunk is still generated output and must start the clock."""
+    from types import SimpleNamespace
+    tool_chunk = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+        role="assistant", content=None, reasoning_content=None,
+        tool_calls=[{"id": "c1", "type": "function",
+                     "function": {"name": "search", "arguments": ""}}]))])
+    assert tc._chunk_carries_tokens(tool_chunk)
+    t0 = datetime(2026, 10, 12, 19, 0, 0)
+    chunks = [(t0, _chunk(content="")), (t0 + timedelta(seconds=400), tool_chunk)]
+    _stream_through_hook("call-tool", chunks)
+    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "litellm_call_id": "call-tool",
+          "completion_start_time": t0}
+    end = t0 + timedelta(seconds=410)
+    payload = tc._build_payload(kw, _response(completion_tokens=40), t0, end)
+    assert payload["output_tokens_per_sec"] == 4.0        # 40 tokens over 10 s, not 410
+    tc._STREAM_OBSERVATIONS.clear()
+
+
+def test_an_error_in_the_stream_passes_through_to_the_caller():
+    """The hook wraps the source iterator: an exception raised mid-stream must reach the caller
+    unchanged (telemetry must never swallow a failed completion), and the chunks before it were
+    observed."""
+    import asyncio
+
+    async def source():
+        yield _chunk(content="x")
+        raise RuntimeError("boom")
+
+    async def drain():
+        hook = tc.ThroughputRecorder().async_post_call_streaming_iterator_hook(
+            None, source(), {"litellm_call_id": "call-err"})
+        try:
+            [chunk async for chunk in hook]
+        except RuntimeError as exc:
+            return exc
+        return None
+
+    exc = asyncio.run(drain())
+    assert isinstance(exc, RuntimeError) and str(exc) == "boom"
+    assert "first_token" in tc._STREAM_OBSERVATIONS.get("call-err", {})
+    tc._STREAM_OBSERVATIONS.clear()
+
+
+def test_stopping_early_closes_the_source_without_error():
+    """A consumer that breaks out of the stream closes the wrapper; the close must propagate to
+    the source (its cleanup runs) without raising."""
+    import asyncio
+
+    closed = []
+
+    async def source():
+        try:
+            yield _chunk(content="x")
+            yield _chunk(content="y")
+        finally:
+            closed.append(True)
+
+    async def drain():
+        hook = tc.ThroughputRecorder().async_post_call_streaming_iterator_hook(
+            None, source(), {"litellm_call_id": "call-close"})
+        first = None
+        async for chunk in hook:
+            first = chunk
+            break
+        await hook.aclose()
+        return first
+
+    first = asyncio.run(drain())
+    assert first is not None and closed == [True]
+    tc._STREAM_OBSERVATIONS.clear()
+
+
+def test_a_stream_without_a_call_id_passes_through_unobserved():
+    """No litellm_call_id (a gateway old enough not to send one): every chunk still passes
+    through, nothing is recorded, and the success logger finds nothing to take out — no sample
+    rather than a wrong one."""
+    t0 = datetime(2026, 10, 12, 19, 0, 0)
+    chunks = [(t0, _chunk(content="a")), (t0 + timedelta(seconds=1), _chunk(content="b"))]
+    passed = _stream_through_hook("", chunks)
+    assert passed == [c for _, c in chunks]
+    assert "" not in tc._STREAM_OBSERVATIONS
+    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "completion_start_time": t0}
+    assert tc._build_payload(kw, _response(completion_tokens=30), t0, t0 + timedelta(seconds=2)) is None
