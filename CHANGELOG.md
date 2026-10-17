@@ -60,6 +60,14 @@ All notable changes to this project are documented here. The format is loosely b
   notification when the GPU model is back.
 
 ### Fixed
+- **The GPU pin fails fast while the GPU chat model is away.** A request for `local-chat-gpu` (or the
+  deployment-named GPU alias) while a render holds the lease or the GPU engine is down answered a
+  500 "Connection error", which Hermes retries as a server error, so a turn waited out the whole
+  render instead of moving to its fallback. The gateway now answers 503 at once (up to ~3 s on a
+  cold metrics read while the engine hangs) with the reason in `error.message`
+  ("GPU chat model is evicted for a render (lease held); ..."); Hermes
+  treats that as overloaded: two quick retries, then its next fallback, announced. `local-chat` and `local-chat-cpu`
+  are unchanged, and an unreadable ops-controller `/metrics` never blocks the pin.
 - **The Services page reports what it knows, not a guess.** A refused start, stop, restart or
   logs call shows the control plane's reason instead of "HTTP 409" (ops-controller answers
   `{"error": ...}`, which the proxy dropped); lifecycle calls wait 180 s instead of 30 s, so a 40 s

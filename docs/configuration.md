@@ -298,7 +298,7 @@ same GPU deployment and does not appear in `/registry/models`:
 | Alias | Serves | When to use |
 |---|---|---|
 | `local-chat` | the GPU chat model, failing over to the CPU fallback while a render holds the GPU | the default for every consumer: a turn is never lost to a GPU failure |
-| `local-chat-gpu` | the GPU chat model only, with no CPU failover | work that must run on the GPU and accepts an error while the model is evicted for a render |
+| `local-chat-gpu` | the GPU chat model only, with no CPU failover; while the model is evicted for a render or down it answers 503 at once with the reason in `error.message`, so a client with its own fallback chain (Hermes) moves on | work that must run on the GPU and accepts an error while the model is evicted for a render |
 | `local-chat-cpu` | the always-on CPU fallback | work deliberately routed off the GPU (batch jobs, overnight crons); it holds no VRAM, so it runs in parallel with GPU work |
 
 ## Local Model Cost
