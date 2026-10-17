@@ -46,6 +46,9 @@ def test_granting_an_unknown_server_fails_the_render():
 def test_model_names_come_from_the_litellm_config_model_list():
     names = litellm_model_names()
     assert "local-chat" in names and "local-embed" in names
+    # The stable pins are grantable; they survive model swaps because their names do not derive
+    # from the deployed GGUF filenames.
+    assert "local-chat-gpu" in names and "local-chat-cpu" in names
     # __GPU_MODEL_NAME__ / __CPU_MODEL_NAME__ are entrypoint placeholders resolved from the deployed
     # GGUF filenames, so they are not render-known and must not be grantable.
     assert not any(n.startswith("__") for n in names)
@@ -78,11 +81,12 @@ def test_full_render_declares_hermes_and_open_webui_keys(tmp_path):
     assert by_env["LITELLM_KEY_HERMES"]["mcp_servers"] == litellm_names
     assert not any("-" in s for s in by_env["LITELLM_KEY_HERMES"]["mcp_servers"])
     assert "memory_vault" in litellm_names
-    # local-chat-cpu is granted so Hermes can be PINNED to the CPU deployment per invocation
-    # rather than only reaching it through an involuntary failover. That deployment holds no
-    # VRAM, so a CPU-pinned run executes in parallel with a GPU-pinned one instead of queueing
-    # on the single llama.cpp slot. Operator decision 2026-09-22: use both as workers.
-    assert by_env["LITELLM_KEY_HERMES"]["models"] == ["local-chat", "local-embed", "local-chat-cpu"]
+    # local-chat-gpu and local-chat-cpu are granted so Hermes can be PINNED to a specific engine
+    # per invocation rather than only reaching one through an involuntary failover: the GPU pin
+    # errors while the model is evicted for a render, the CPU pin holds no VRAM and runs in
+    # parallel with GPU work. Operator decision 2026-10-16: Hermes runs the GPU pin as its
+    # primary with the CPU pin as its announced first fallback (brain config).
+    assert by_env["LITELLM_KEY_HERMES"]["models"] == ["local-chat", "local-chat-gpu", "local-embed", "local-chat-cpu"]
     assert by_env["LITELLM_KEY_OPEN_WEBUI"]["mcp_servers"] == []
     for env in by_env:
         assert env in rc.required_secrets

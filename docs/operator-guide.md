@@ -275,6 +275,18 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
 - Recreate a single service with `ordo recreate <svc>` (per-service, no cascade). The dashboard's
   per-service recreate button does exactly this against the existing `out/` compose (no re-render).
 
+**Which engine answered?** While a render holds the GPU lease, the GPU chat model is evicted and
+`local-chat` traffic is served by the always-on CPU fallback inside the gateway; the response
+still says `local-chat`, so the switch is easy to miss. Four surfaces show which engine actually
+answered: Hermes announces a switch in the conversation, with a recovery notice when the primary is
+back, when its own fallback chain does the routing (primary `local-chat-gpu`, first fallback
+`local-chat-cpu` in the brain's `config.yaml`; with `local-chat` as primary the gateway reroutes
+silently and Hermes has nothing to announce), the `ChatServedByCpuFallback` alert fires to Discord about two minutes after
+the eviction and sends a resolved notification when the GPU model is restored, the dashboard's
+Overview page shows a "Chat is on the CPU fallback" chip with both engines' median speeds, and
+every gateway response carries the `x-litellm-model-name` header naming the deployment that
+served it.
+
 **Backups:** `ordo backup` saves `out/ordo.yaml`, `out/secrets.env`, `out/images.json` and every stateful
 volume (databases dumped, or copied with their writers stopped) to one owner-only archive outside the
 checkout; `ordo restore <archive>` puts it back. See [data.md](data.md#backup-and-recovery).

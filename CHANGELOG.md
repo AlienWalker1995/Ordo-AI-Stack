@@ -38,6 +38,14 @@ All notable changes to this project are documented here. The format is loosely b
   deploys hold while it is open, and once it is merged or closed the checkout is reset to
   `origin/main` and deploying resumes. A local commit a pull request already holds follows that pull
   request. Nothing is discarded that is not already on GitHub.
+- **`local-chat-gpu`: a stable GPU-only chat alias, plus a CPU-fallback alert.** The gateway now
+  serves `local-chat-gpu`, the GPU chat model pinned with no CPU failover (it errors while the
+  model is evicted for a render instead of silently moving to the CPU), beside the existing
+  `local-chat` auto-routing alias and the `local-chat-cpu` stable CPU pin. Hermes's key grants both
+  pins so the agent can run the GPU pin as its primary with the CPU pin as its announced first
+  fallback. A new `ChatServedByCpuFallback` warning alerts to Discord when chat is served by the
+  CPU fallback (the GPU model evicted for a GPU lease, usually a render) and sends a resolved
+  notification when the GPU model is back.
 
 ### Fixed
 - **Streamed speech starts with the first sentence again.** Hermes asks the TTS endpoint for raw

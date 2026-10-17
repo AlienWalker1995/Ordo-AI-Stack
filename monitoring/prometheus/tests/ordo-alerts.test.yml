@@ -31,6 +31,9 @@ tests:
       - eval_time: 30m
         alertname: GpuResidentEvictedWithoutLease
         exp_alerts: []
+      - eval_time: 30m
+        alertname: ChatServedByCpuFallback
+        exp_alerts: []
 
   # Disk: the live Docker VM disk at 87% warns (not critical); a disk at 96% is critical too.
   - interval: 1m
@@ -142,6 +145,35 @@ tests:
               description: >-
                 llamacpp was stopped for a GPU lease that is gone, and has not been restored. Chat is
                 on the CPU fallback. Check ops-controller's /status and logs.
+
+  # Chat on the CPU fallback: the GPU model evicted for a render lease, local-chat served by the
+  # always-on CPU server inside the gateway. Warns after 2 minutes of eviction; the lease here
+  # completes at 5 minutes, so the alert resolves once the GPU model is restored.
+  - interval: 1m
+    input_series:
+      - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
+        values: '1x5 0x30'
+      - series: 'ordo_gpu_leases_running'
+        values: '1x5 0x30'
+      - series: 'ordo_gpu_leases_queued'
+        values: '0x35'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ChatServedByCpuFallback
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: ChatServedByCpuFallback
+        exp_alerts:
+          - exp_labels: {severity: warning, resident: llamacpp}
+            exp_annotations:
+              summary: Chat is on the CPU fallback (GPU chat model evicted)
+              description: >-
+                The GPU chat model is evicted for a GPU lease (usually a media render), so local-chat
+                traffic is served by the always-on CPU fallback. Responses are slower while it lasts.
+                Resolves automatically when the lease completes and the GPU model is restored.
+      - eval_time: 10m
+        alertname: ChatServedByCpuFallback
+        exp_alerts: []
 
   # Evicted for a legitimate long job: a warning at 2 hours (the longest observed render: 54 min).
   - interval: 5m
