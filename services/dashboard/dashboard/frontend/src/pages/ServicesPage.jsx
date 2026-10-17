@@ -250,7 +250,7 @@ export default function ServicesPage() {
         <label htmlFor="service-filter" className="sr-only">Filter services</label>
         <input id="service-filter" className={INPUT + ' w-full lg:w-72'} placeholder="Filter by name"
                value={filter} onChange={(e) => setFilter(e.target.value)} />
-        {!table.data.control_plane && <Unavailable>The control plane is not answering; states may be stale.</Unavailable>}
+        {table.data.control_plane === 'down' && <Unavailable>The control plane is not answering; states may be stale.</Unavailable>}
         {pressure.error && <span className="text-caption text-muted">CPU and memory are unavailable right now.</span>}
       </div>
       {table.data.groups.map((g) => (

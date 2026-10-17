@@ -200,6 +200,106 @@ def test_a_model_evicted_for_a_render_cannot_be_started_from_the_table(live):
     assert rows["llamacpp-cpu"]["lent"] is False
 
 
+
+def test_with_the_control_plane_down_every_container_row_is_unknown_with_no_actions(live):
+    # No container list is not "everything stopped": a Start offered on that guess is wrong.
+    async def ops_down(path, timeout=None):
+        return None
+
+    with patch.object(routes_console, "_ops_json", side_effect=ops_down):
+        table = live.get("/api/services/table").json()
+    assert table["control_plane"] == "down"
+    rows = [r for g in table["groups"] for r in g["services"] if r["compose"]]
+    assert rows
+    assert all(r["verdict"] == "unknown" and r["actions"] == [] for r in rows)
+
+
+def test_with_the_control_plane_up_the_table_says_so(live):
+    assert live.get("/api/services/table").json()["control_plane"] == "up"
+
+
+class _OpsResponse:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+class _OpsClient:
+    """ops-controller answering every call with one response, or raising one exception."""
+
+    def __init__(self, response=None, raises=None):
+        self.response, self.raises, self.timeouts = response, raises, []
+
+    async def request(self, method, url, headers=None, timeout=None, **_kwargs):
+        self.timeouts.append(timeout)
+        if self.raises:
+            raise self.raises
+        return self.response
+
+
+OPS_LIFECYCLE_CALLS = [("post", "/api/ops/services/open-webui/start"),
+                       ("post", "/api/ops/services/open-webui/stop"),
+                       ("post", "/api/ops/services/open-webui/restart"),
+                       ("get", "/api/ops/services/open-webui/logs")]
+
+
+@pytest.mark.parametrize("method, url", OPS_LIFECYCLE_CALLS)
+def test_an_ops_refusal_reaches_the_page_with_its_reason(method, url, monkeypatch, dashboard_operator_headers):
+    # ops-controller answers {"error": ...}; the page shows `detail`, so the reason must land there.
+    from dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "t")
+    ops = _OpsClient(_OpsResponse(409, {"error": "another operation is in progress"}))
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        r = getattr(TestClient(app, headers=dashboard_operator_headers), method)(url)
+    assert r.status_code == 409
+    assert r.json()["detail"] == "another operation is in progress"
+
+
+def test_an_ops_answer_without_a_reason_is_passed_on_not_dropped(monkeypatch, dashboard_operator_headers):
+    from dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "t")
+    ops = _OpsClient(_OpsResponse(500, {"unexpected": 1}))
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        r = TestClient(app, headers=dashboard_operator_headers).post("/api/ops/services/open-webui/restart")
+    assert r.status_code == 500
+    assert r.json()["detail"] == 'ops-controller answered HTTP 500: {"unexpected": 1}'
+
+
+@pytest.mark.parametrize("verb", ["start", "stop", "restart"])
+def test_a_lifecycle_timeout_names_the_service_and_says_it_may_still_be_running(
+        verb, monkeypatch, dashboard_operator_headers):
+    import httpx
+
+    from dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "t")
+    ops = _OpsClient(raises=httpx.ReadTimeout(""))
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        r = TestClient(app, headers=dashboard_operator_headers).post(f"/api/ops/services/open-webui/{verb}")
+    assert r.status_code == 503
+    detail = r.json()["detail"]
+    assert f"/services/open-webui/{verb}" in detail
+    assert "may still be running" in detail
+    # A real restart takes 40-90 s; ops-controller's own budget is 60 s per docker verb.
+    assert ops.timeouts == [dashboard_app._LIFECYCLE_TIMEOUT] and dashboard_app._LIFECYCLE_TIMEOUT >= 90
+
+
+def test_logs_use_a_short_timeout(monkeypatch, dashboard_operator_headers):
+    from dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "t")
+    ops = _OpsClient(_OpsResponse(200, {"logs": "ready"}))
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        r = TestClient(app, headers=dashboard_operator_headers).get("/api/ops/services/open-webui/logs")
+    assert r.json() == {"logs": "ready"}
+    assert ops.timeouts == [15.0]
+
+
 # --- models ---
 
 def test_models_page_lists_slots_catalog_and_files(live):

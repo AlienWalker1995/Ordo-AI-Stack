@@ -48,6 +48,14 @@ All notable changes to this project are documented here. The format is loosely b
   notification when the GPU model is back.
 
 ### Fixed
+- **The Services page reports what it knows, not a guess.** A refused start, stop, restart or
+  logs call shows the control plane's reason instead of "HTTP 409" (ops-controller answers
+  `{"error": ...}`, which the proxy dropped); lifecycle calls wait 180 s instead of 30 s, so a 40 s
+  restart no longer reads as a failure, and a timeout names the call and says it may still be
+  running. Per-service CPU and memory that nobody measured are null with a `reason` (not measured,
+  container not running, source unavailable) instead of 0.0, and VRAM is null until ops-controller
+  measures it. With the control plane down, container rows are `unknown` with no actions instead of
+  Stopped with a Start button, and the table says `control_plane: "down"`.
 - **Streamed speech starts with the first sentence again.** Hermes asks the TTS endpoint for raw
   `pcm` one sentence at a time (desktop speak-stream and Discord voice), but Chatterbox-TTS-Server
   accepts only wav, opus and mp3: every streamed reply was refused (422) and spoken only after the

@@ -15,10 +15,11 @@
       "cpu_pct": 12.4,
       "mem_gb": 3.2,
       "mem_pct": 2.9,
-      "vram_gb": 24.6,
-      "vram_pct": 71.9,
+      "vram_gb": null,
+      "vram_pct": null,
       "has_gpu": true,
-      "running": true
+      "running": true,
+      "reason": null
     },
     {
       "id": "comfyui",
@@ -26,10 +27,11 @@
       "cpu_pct": 3.1,
       "mem_gb": 6.8,
       "mem_pct": 6.2,
-      "vram_gb": 3.3,
-      "vram_pct": 9.6,
+      "vram_gb": null,
+      "vram_pct": null,
       "has_gpu": true,
-      "running": true
+      "running": true,
+      "reason": null
     },
     {
       "id": "llamacpp-cpu",
@@ -37,10 +39,11 @@
       "cpu_pct": 0.4,
       "mem_gb": 21.7,
       "mem_pct": 19.8,
-      "vram_gb": 0.0,
-      "vram_pct": 0.0,
+      "vram_gb": null,
+      "vram_pct": null,
       "has_gpu": false,
-      "running": true
+      "running": true,
+      "reason": null
     },
     {
       "id": "webui",
@@ -48,10 +51,11 @@
       "cpu_pct": 1.5,
       "mem_gb": 0.6,
       "mem_pct": 0.5,
-      "vram_gb": 0.0,
-      "vram_pct": 0.0,
+      "vram_gb": null,
+      "vram_pct": null,
       "has_gpu": false,
-      "running": true
+      "running": true,
+      "reason": null
     },
     {
       "id": "n8n",
@@ -59,10 +63,11 @@
       "cpu_pct": 0.8,
       "mem_gb": 0.4,
       "mem_pct": 0.4,
-      "vram_gb": 0.0,
-      "vram_pct": 0.0,
+      "vram_gb": null,
+      "vram_pct": null,
       "has_gpu": false,
-      "running": true
+      "running": true,
+      "reason": null
     },
     {
       "id": "qdrant",
@@ -70,11 +75,14 @@
       "cpu_pct": 0.6,
       "mem_gb": 1.2,
       "mem_pct": 1.1,
-      "vram_gb": 0.0,
-      "vram_pct": 0.0,
+      "vram_gb": null,
+      "vram_pct": null,
       "has_gpu": false,
-      "running": true
+      "running": true,
+      "reason": null
     }
   ],
-  "vram_aggregate_unavailable": false
+  "vram_aggregate_unavailable": false,
+  "unavailable": false,
+  "reason": null
 }

@@ -44,7 +44,7 @@ describe('a page whose backend is down says so', () => {
   })
 
   it('Services warns that states may be stale when the control plane is not answering', async () => {
-    mockApi({ 'GET /api/services/table': () => ({ groups: [], control_plane: false }) })
+    mockApi({ 'GET /api/services/table': () => ({ groups: [], control_plane: 'down' }) })
     renderInShell(<ServicesPage />)
     await screen.findByText('The control plane is not answering; states may be stale.')
   })
