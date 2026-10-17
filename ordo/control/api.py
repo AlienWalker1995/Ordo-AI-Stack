@@ -59,6 +59,7 @@ from ..render import substrate
 from ..render.catalog import Catalog
 from ..render.config import Source
 from ..render.plugins import PluginRegistry
+from ..secret_env import read_secret
 from . import diagnostics, gpus, routes
 from . import metrics as prom
 from . import principals as auth
@@ -153,7 +154,9 @@ class ControlPlane:
                                              netns_repair_stats=self.netns_repair.stats if self.netns_repair else None)
         # ComfyUI's files. Their locations are read from this module's settings when used, so a test
         # can repoint them after construction.
-        self.downloads = ModelDownloads(lambda: COMFYUI_MODELS_DIR)
+        # HF_TOKEN is the file secret the render delivers to ops-controller (compose.py
+        # `_ops_controller`); without it every gated Hugging Face repo answers 401.
+        self.downloads = ModelDownloads(lambda: COMFYUI_MODELS_DIR, lambda: read_secret("HF_TOKEN"))
         self.node_requirements = NodeRequirements(broker, lambda: COMFYUI_CUSTOM_NODES_DIR,
                                                   lambda: COMFYUI_CONTAINER_NAME)
 

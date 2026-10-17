@@ -84,6 +84,17 @@ def test_ops_controller_has_scoped_socket():
     assert "--project" in ops["command"] and "ordo" in ops["command"]
 
 
+def test_ops_controller_gets_the_hugging_face_token_as_a_file():
+    """/models/download runs in ops-controller (the RW mount of the ComfyUI model store), so the
+    gated-repo token is delivered to it the way its bearer tokens are: a read-only file, never a
+    value in the container environment."""
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
+    ops = c["services"]["ops-controller"]
+    assert ops["environment"]["HF_TOKEN_FILE"] == "/run/secrets/hf_token"
+    assert "HF_TOKEN" not in ops["environment"]
+    assert any(v.endswith(":/run/secrets/hf_token:ro") for v in ops["volumes"])
+
+
 def test_ops_controller_has_utility_gpu_visibility():
     # The scheduler REPLACES V1's reactive guardian; its whole job is VRAM-fit co-run admission.
     # It detects VRAM by shelling to nvidia-smi INSIDE its container — which the NVIDIA toolkit
