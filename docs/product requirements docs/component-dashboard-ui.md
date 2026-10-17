@@ -38,8 +38,53 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/orchestration/workflows*`, `/validate`, `/outputs` | GET/POST | Y | Workflow store used by the orchestration MCP server (`services/orchestration/server.py`) |
 | `/api/orchestration/comfyui/restart`, `/comfyui/status` | POST/GET | Y | Restart ComfyUI / its status (called by the orchestration MCP server; the Services card restarts ComfyUI through the generic service action) |
 | `/api/orchestration/registry/models`, `/registry/gpus` | GET | Y | Served models and GPU pins derived from the render, proxied from ops-controller |
+| `/api/diagnostics` | GET | None | Dependency health and recent failures: per-dependency status, the failure ring newest first, and the `DEP-<DEP>-<KIND>` code table (see [Diagnostics](#diagnostics)) |
 
 To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url + category); pull a GGUF with `ordo fetch <catalog-id>` (downloaded and checksum-verified into the `models-gguf` volume).
+
+## Diagnostics
+
+A dependency failure never 500s a page: the data degrades to "unavailable", and the failure is
+logged at `WARNING` as one line carrying a stable code and the request's trace id:
+
+```
+DEP_FAIL code=DEP-OPS-TIMEOUT trace=9f2c1ab4e6d70831 target=/model-config elapsed_ms=3000 detail=ops-controller did not answer GET /model-config within 3 s
+```
+
+Every response carries `X-Trace-Id` (the global 500 body includes it as `trace_id`), and calls to
+ops-controller send the same id as `X-Request-ID` so the two audit logs correlate. Failures are
+kept in an in-memory ring (cap 200, single-process) plus per-dependency last-ok / last-failure /
+consecutive-failure state; `GET /api/diagnostics` serves it. Details are short by contract: no
+tokens, headers or bodies, truncated to 200 characters.
+
+Codes are `DEP-<DEP>-<KIND>`. The DEP part names the dependency:
+
+| DEP | Dependency |
+|-----|------------|
+| `OPS` | ops-controller (control plane) |
+| `GATEWAY` | model-gateway (LiteLLM) |
+| `PROMETHEUS` | Prometheus |
+| `GRAFANA` | Grafana |
+| `COMFYUI` | ComfyUI (through the GPU admission gate) |
+| `LLAMACPP` | the llama.cpp chat/embedding servers |
+| `QDRANT` | Qdrant |
+| `EDGE` | the Caddy SSO edge |
+| `PROBE` | a service liveness probe |
+| `FS` | the filesystem (state files, model dir) |
+
+The KIND part names how it failed:
+
+| KIND | Meaning |
+|------|---------|
+| `UNREACHABLE` | the connection failed before a response (refused, DNS, protocol error) |
+| `TIMEOUT` | the dependency did not answer within the client's timeout |
+| `HTTP5XX` | the dependency answered with a 5xx status |
+| `HTTP4XX` | the dependency answered with a 4xx status |
+| `BADPAYLOAD` | the response body could not be parsed as JSON |
+| `AUTH` | the dependency rejected the credentials (HTTP 401/403) |
+| `NOTCONFIGURED` | the dependency's URL or token is not set |
+
+`GET /api/diagnostics` answers `{"generated_at", "dependencies": [{dep, status: ok|failing|unknown, last_ok, last_failure: {code, at, detail}, consecutive_failures}], "recent": [...newest first...], "codes": [{code, meaning}]}`.
 
 ## Core Responsibilities
 

@@ -12,7 +12,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -82,21 +82,41 @@ async def _ops_call(method: str, path: str, json: dict | None = None) -> tuple[i
     return await _ops_request(method, path, timeout=_RECREATE_TIMEOUT, **kwargs)
 
 
-async def _get_json(url: str, timeout: float = 10.0) -> dict | None:
+async def _get_json(url: str, timeout: float = 10.0, dep: str = "PROBE") -> dict | None:
+    """GET a dependency's JSON endpoint. A dependency being down is data, not an error page:
+    transport failures, non-200 answers and unparseable bodies degrade to None, each recorded
+    with a DEP-<dep>-* code (dashboard/diagnostics.py)."""
+    from dashboard import diagnostics
     from dashboard.app import _get_http_client
 
+    target = urlsplit(url).path or url
+    started = time.perf_counter()
     try:
         r = await _get_http_client().get(url, timeout=timeout)
-        return r.json() if r.status_code == 200 else None
-    except Exception as exc:  # a dependency being down is data, not an error page
-        logger.debug("GET %s failed: %s", url, exc)
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        diagnostics.record_failure(dep, diagnostics.classify_failure(exc), str(exc) or type(exc).__name__,
+                                   target=target, elapsed_ms=elapsed_ms)
         return None
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    if r.status_code != 200:
+        diagnostics.record_failure(dep, diagnostics.classify_failure(status=r.status_code),
+                                   f"HTTP {r.status_code} from {target}", target=target, elapsed_ms=elapsed_ms)
+        return None
+    try:
+        data = r.json()
+    except (ValueError, UnicodeDecodeError):
+        diagnostics.record_failure(dep, "BADPAYLOAD", f"unparseable JSON body from {target}",
+                                   target=target, elapsed_ms=elapsed_ms)
+        return None
+    diagnostics.mark_ok(dep)
+    return data
 
 
 async def _comfy_json(path: str) -> dict | None:
     if not COMFYUI_URL:
         return None
-    return await _get_json(f"{COMFYUI_URL}{path}", timeout=10.0)
+    return await _get_json(f"{COMFYUI_URL}{path}", timeout=10.0, dep="COMFYUI")
 
 
 async def _hardware() -> dict:
@@ -132,9 +152,9 @@ async def _disk_files() -> list[dict]:
 async def _served() -> dict:
     """What each llama.cpp server actually loaded, from its own /v1/models."""
     gpu, cpu, embed = await asyncio.gather(
-        _get_json(f"{LLAMACPP_URL}/v1/models", 5.0),
-        _get_json(f"{LLAMACPP_CPU_URL}/v1/models", 5.0),
-        _get_json(f"{LLAMACPP_EMBED_URL}/v1/models", 5.0),
+        _get_json(f"{LLAMACPP_URL}/v1/models", 5.0, dep="LLAMACPP"),
+        _get_json(f"{LLAMACPP_CPU_URL}/v1/models", 5.0, dep="LLAMACPP"),
+        _get_json(f"{LLAMACPP_EMBED_URL}/v1/models", 5.0, dep="LLAMACPP"),
     )
     return {"gpu": console.served_file(gpu), "cpu": console.served_file(cpu),
             "embed": console.served_file(embed)}
@@ -355,7 +375,7 @@ async def perf_series(hours: int = Query(24, ge=1, le=168)) -> dict:
     start = end - hours * 3600
     step = max(60, hours * 3600 // 288)
     query = urlencode({"query": _TOKEN_RATE_QUERY, "start": start, "end": end, "step": step})
-    data = await _get_json(f"{PROMETHEUS_URL}/api/v1/query_range?{query}", timeout=15.0)
+    data = await _get_json(f"{PROMETHEUS_URL}/api/v1/query_range?{query}", timeout=15.0, dep="PROMETHEUS")
     if not data or data.get("status") != "success":
         return {"available": False, "gpu": [], "cpu": []}
     series: dict[str, list[list[Any]]] = {"gpu": [], "cpu": []}
@@ -368,5 +388,5 @@ async def perf_series(hours: int = Query(24, ge=1, le=168)) -> dict:
 
 @router.get("/perf/grafana")
 async def perf_grafana() -> dict:
-    health = await _get_json(f"{GRAFANA_URL}/api/health", timeout=5.0)
+    health = await _get_json(f"{GRAFANA_URL}/api/health", timeout=5.0, dep="GRAFANA")
     return {"available": bool(health and health.get("database") == "ok"), "path": GRAFANA_EMBED_PATH}
