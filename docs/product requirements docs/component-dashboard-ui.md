@@ -17,7 +17,7 @@ A web-based control plane that provides a single pane of glass for:
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/api/health` | GET | None | Dashboard + upstream service health (container healthcheck) |
-| `/api/hardware/service-pressure` | GET | None | Per-container CPU/RAM/VRAM (Services page) |
+| `/api/hardware/service-pressure` | GET | None | Per-container CPU/RAM; VRAM null until ops-controller measures it; unmeasured values are null with a `reason` |
 | `/api/overview` | GET | None | Status line, GPUs and who holds them, chat engine, attention items, host (Overview page) |
 | `/api/activity` | GET | None | Renders, GPU leases and operator actions, newest first |
 | `/api/services/table` | GET | None | Grouped service rows with a verdict and allowed actions (Services page) |
