@@ -172,9 +172,23 @@ def test_ops_request_connection_error_records_unreachable(monkeypatch):
     monkeypatch.setattr(app, "OPS_CONTROLLER_TOKEN", "t")
     with patch("dashboard.app._get_http_client", return_value=_ops_client(raises=httpx.ConnectError("refused"))):
         code, data = asyncio.run(app._ops_request("GET", "/status", timeout=15.0))
-    assert code == 503 and data["detail"] == "refused"
+    assert code == 503 and data["detail"] == "ConnectError: refused"
     from dashboard import diagnostics
     assert diagnostics._failures[-1]["code"] == "DEP-OPS-UNREACHABLE"
+
+
+def test_ops_request_sanitizes_the_exception_detail_in_the_503_body(monkeypatch):
+    # The 503 body reuses the sanitized detail (URLs stripped), not the raw exception text that
+    # embeds internal hostnames and ports.
+    import dashboard.app as app
+
+    monkeypatch.setattr(app, "OPS_CONTROLLER_TOKEN", "t")
+    with patch("dashboard.app._get_http_client",
+               return_value=_ops_client(raises=httpx.ConnectError("connect to http://ops-controller:9000 refused"))):
+        code, data = asyncio.run(app._ops_request("GET", "/status", timeout=15.0))
+    assert code == 503
+    assert data["detail"] == "ConnectError: connect to <url> refused"
+    assert "ops-controller:9000" not in data["detail"]
 
 
 def test_ops_request_missing_token_records_not_configured(monkeypatch):
@@ -252,6 +266,40 @@ def test_ops_request_records_badpayload_on_an_unparseable_body(monkeypatch):
     assert diagnostics._failures[-1]["code"] == "DEP-OPS-BADPAYLOAD"
 
 
+def test_ops_request_marks_ok_on_a_non_auth_4xx_with_an_unparseable_body(monkeypatch):
+    # A plain-text 404 (a removed route, a reverse-proxy error page) still means the controller
+    # answered: mark ok instead of recording DEP-OPS-BADPAYLOAD, matching the parseable path.
+    import dashboard.app as app
+
+    monkeypatch.setattr(app, "OPS_CONTROLLER_TOKEN", "t")
+    r = MagicMock(status_code=404)
+    r.json.side_effect = ValueError("not json")
+    r.text = "Not Found"
+    with patch("dashboard.app._get_http_client", return_value=_ops_client(response=r)):
+        code, data = asyncio.run(app._ops_request("GET", "/gone-route", timeout=15.0))
+    assert code == 404 and data == {"detail": "Not Found"}
+    from dashboard import diagnostics
+    assert all(f["dep"] != "OPS" for f in diagnostics._failures)
+    st = diagnostics._dep_status["OPS"]
+    assert st["last_ok"] is not None and st["consecutive_failures"] == 0
+
+
+def test_ops_request_still_records_the_status_kind_on_an_unparseable_5xx(monkeypatch):
+    # The non-AUTH-4xx early return must not swallow real failures: an unparseable 5xx keeps its
+    # status kind.
+    import dashboard.app as app
+
+    monkeypatch.setattr(app, "OPS_CONTROLLER_TOKEN", "t")
+    r = MagicMock(status_code=500)
+    r.json.side_effect = ValueError("not json")
+    r.text = "Internal Server Error"
+    with patch("dashboard.app._get_http_client", return_value=_ops_client(response=r)):
+        code, data = asyncio.run(app._ops_request("GET", "/status", timeout=15.0))
+    assert code == 500 and data == {"detail": "Internal Server Error"}
+    from dashboard import diagnostics
+    assert diagnostics._failures[-1]["code"] == "DEP-OPS-HTTP5XX"
+
+
 def test_ops_request_caller_supplied_x_request_id_wins_over_the_trace_id(monkeypatch):
     import dashboard.app as app
 
@@ -321,10 +369,10 @@ def test_get_json_records_auth_on_401_and_403():
 
 
 def test_get_json_records_unreachable_on_a_connection_error():
-    assert _get_json("LLAMACPP", "http://llamacpp:8080/v1/models", raises=httpx.ConnectError("refused")) is None
+    assert _get_json("LLAMACPP-GPU", "http://llamacpp:8080/v1/models", raises=httpx.ConnectError("refused")) is None
     from dashboard import diagnostics
     entry = diagnostics._failures[-1]
-    assert (entry["code"], entry["target"]) == ("DEP-LLAMACPP-UNREACHABLE", "/v1/models")
+    assert (entry["code"], entry["target"]) == ("DEP-LLAMACPP-GPU-UNREACHABLE", "/v1/models")
 
 
 def test_get_json_records_badpayload_on_an_unparseable_body():
@@ -341,6 +389,34 @@ def test_get_json_returns_the_payload_on_success():
     assert _get_json("GRAFANA", "http://grafana:3000/api/health", response=r) == {"database": "ok"}
     from dashboard import diagnostics
     assert diagnostics._dep_status["GRAFANA"]["last_ok"] is not None
+
+
+def test_served_records_each_server_under_its_own_dep():
+    # One llama.cpp server down must not flip the healthy siblings: each probe records under its
+    # own dep, so the down one reads failing while the others stay ok across polls.
+    import dashboard.routes_console as rc
+
+    def fake_get(url, timeout=None):
+        if url.startswith(rc.LLAMACPP_CPU_URL):
+            raise httpx.ConnectError("refused")
+        r = MagicMock(status_code=200)
+        r.json.return_value = {"data": [{"id": "/models/model.gguf"}]}
+        return r
+
+    client = MagicMock()
+    client.get = AsyncMock(side_effect=fake_get)
+    for _ in range(2):  # two polls: the statuses must be stable, not flipping
+        with patch("dashboard.app._get_http_client", return_value=client):
+            served = asyncio.run(rc._served())
+        assert served == {"gpu": "model.gguf", "cpu": None, "embed": "model.gguf"}
+        from dashboard import diagnostics
+        st = diagnostics._dep_status
+        assert st["LLAMACPP-GPU"]["last_ok"] is not None and st["LLAMACPP-GPU"]["consecutive_failures"] == 0
+        assert st["LLAMACPP-EMBED"]["last_ok"] is not None and st["LLAMACPP-EMBED"]["consecutive_failures"] == 0
+        assert st["LLAMACPP-CPU"]["last_ok"] is None and st["LLAMACPP-CPU"]["consecutive_failures"] >= 1
+        statuses = {d["dep"]: d["status"] for d in diagnostics.snapshot()["dependencies"]}
+        assert statuses["LLAMACPP-GPU"] == "ok" and statuses["LLAMACPP-EMBED"] == "ok"
+        assert statuses["LLAMACPP-CPU"] == "failing"
 
 
 # --- X-Trace-Id on 200, 401 and 500 responses -------------------------------------
@@ -420,7 +496,7 @@ def test_diagnostics_endpoint_shape(monkeypatch):
     assert ops_dep["last_failure"]["code"] == "DEP-OPS-TIMEOUT"
     assert body["recent"][0]["code"] == "DEP-OPS-TIMEOUT"     # newest first
     codes = {c["code"] for c in body["codes"]}
-    assert {"DEP-OPS-TIMEOUT", "DEP-LLAMACPP-UNREACHABLE", "DEP-QDRANT-AUTH"} <= codes
+    assert {"DEP-OPS-TIMEOUT", "DEP-LLAMACPP-GPU-UNREACHABLE", "DEP-QDRANT-AUTH"} <= codes
     assert all(set(c) == {"code", "meaning"} for c in body["codes"])
 
 

@@ -158,11 +158,13 @@ async def _disk_files() -> list[dict]:
 
 
 async def _served() -> dict:
-    """What each llama.cpp server actually loaded, from its own /v1/models."""
+    """What each llama.cpp server actually loaded, from its own /v1/models. Each server records
+    under its own dep (LLAMACPP-GPU/-CPU/-EMBED): the probes run concurrently, so a shared dep
+    would let one blip flip the healthy siblings' status in GET /api/diagnostics."""
     gpu, cpu, embed = await asyncio.gather(
-        _get_json(f"{LLAMACPP_URL}/v1/models", 5.0, dep="LLAMACPP"),
-        _get_json(f"{LLAMACPP_CPU_URL}/v1/models", 5.0, dep="LLAMACPP"),
-        _get_json(f"{LLAMACPP_EMBED_URL}/v1/models", 5.0, dep="LLAMACPP"),
+        _get_json(f"{LLAMACPP_URL}/v1/models", 5.0, dep="LLAMACPP-GPU"),
+        _get_json(f"{LLAMACPP_CPU_URL}/v1/models", 5.0, dep="LLAMACPP-CPU"),
+        _get_json(f"{LLAMACPP_EMBED_URL}/v1/models", 5.0, dep="LLAMACPP-EMBED"),
     )
     return {"gpu": console.served_file(gpu), "cpu": console.served_file(cpu),
             "embed": console.served_file(embed)}

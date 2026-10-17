@@ -70,16 +70,18 @@ Codes are `DEP-<DEP>-<KIND>`. The DEP part names the dependency:
 | `PROMETHEUS` | Prometheus |
 | `GRAFANA` | Grafana |
 | `COMFYUI` | ComfyUI (through the GPU admission gate) |
-| `LLAMACPP` | the llama.cpp chat/embedding servers |
+| `LLAMACPP-GPU` | the GPU llama.cpp chat server |
+| `LLAMACPP-CPU` | the CPU fallback llama.cpp server |
+| `LLAMACPP-EMBED` | the embedding llama.cpp server |
 | `QDRANT` | Qdrant — planned |
 | `EDGE` | the Caddy SSO edge — planned |
 | `PROBE` | a service liveness probe — planned |
 | `FS` | the filesystem (state files, model dir) — planned |
 
 `— planned` marks dependencies no current code path instruments yet: today only `OPS` (via
-`_ops_request`) and `PROMETHEUS`, `GRAFANA`, `COMFYUI`, `LLAMACPP` (via `_get_json`) record
-failures. The rest read `unknown` in `GET /api/diagnostics` until the remaining outbound helpers
-(slice 2) record them.
+`_ops_request`) and `PROMETHEUS`, `GRAFANA`, `COMFYUI`, `LLAMACPP-GPU`, `LLAMACPP-CPU`,
+`LLAMACPP-EMBED` (via `_get_json`) record failures. The rest read `unknown` in
+`GET /api/diagnostics` until the remaining outbound helpers (slice 2) record them.
 
 The KIND part names how it failed:
 

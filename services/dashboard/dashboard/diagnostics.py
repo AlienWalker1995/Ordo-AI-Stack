@@ -24,9 +24,12 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # The DEP part of a code: which dependency failed. Instrumented today: OPS (_ops_request) and
-# PROMETHEUS, GRAFANA, COMFYUI, LLAMACPP (_get_json). The rest are reserved for the remaining
-# outbound helpers (slice 2) and read `unknown` in snapshot() until something records them.
-DEPENDENCIES = ("OPS", "GATEWAY", "PROMETHEUS", "GRAFANA", "COMFYUI", "LLAMACPP", "QDRANT", "EDGE", "PROBE", "FS")
+# PROMETHEUS, GRAFANA, COMFYUI, LLAMACPP-GPU, LLAMACPP-CPU, LLAMACPP-EMBED (_get_json). Each
+# llama.cpp server has its own dep so one blip cannot flip the healthy siblings' status. The rest
+# are reserved for the remaining outbound helpers (slice 2) and read `unknown` in snapshot()
+# until something records them.
+DEPENDENCIES = ("OPS", "GATEWAY", "PROMETHEUS", "GRAFANA", "COMFYUI",
+                "LLAMACPP-GPU", "LLAMACPP-CPU", "LLAMACPP-EMBED", "QDRANT", "EDGE", "PROBE", "FS")
 
 # The KIND part of a code, and what each means. TIMEOUT, UNREACHABLE, HTTP5XX and AUTH come from
 # classify_failure; BADPAYLOAD and NOTCONFIGURED are declared by the caller (an unparseable body,

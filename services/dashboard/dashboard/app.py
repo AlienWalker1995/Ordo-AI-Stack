@@ -731,12 +731,19 @@ async def _ops_request(
         detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
         diagnostics.record_failure("OPS", diagnostics.classify_failure(e), detail,
                                    target=path, elapsed_ms=elapsed_ms)
-        return 503, {"detail": str(e) or type(e).__name__}
+        # Reuse the sanitized detail in the body too: the raw exception text is exactly what
+        # embeds internal hostnames and ports.
+        return 503, {"detail": diagnostics.sanitize_detail(detail)}
     elapsed_ms = (time.perf_counter() - started) * 1000
     try:
         data = r.json()
     except (ValueError, UnicodeDecodeError):
         data = {"detail": r.text or "Unknown error"}
+        if 400 <= r.status_code < 500 and r.status_code not in (401, 403):
+            # A non-AUTH 4xx means ops-controller answered — it is up, so mark ok and pass the
+            # body through, matching the parseable path below.
+            diagnostics.mark_ok("OPS")
+            return r.status_code, data
         # An unparseable body is a BADPAYLOAD failure on its own; only an unparseable 5xx/AUTH
         # keeps the status kind.
         kind = "BADPAYLOAD" if r.status_code < 500 and r.status_code not in (401, 403) \
