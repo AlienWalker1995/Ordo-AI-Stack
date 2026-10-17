@@ -4,9 +4,30 @@
     "text": "1 thing needs you"
   },
   "services": {
-    "up": 14,
-    "total": 16
+    "up": 4,
+    "total": 5,
+    "by_project": {
+      "ordo": {
+        "total": 3,
+        "up": 2,
+        "failed": 0,
+        "unhealthy": 0
+      },
+      "media-stack": {
+        "total": 1,
+        "up": 1,
+        "failed": 0,
+        "unhealthy": 0
+      },
+      "web-site": {
+        "total": 1,
+        "up": 1,
+        "failed": 0,
+        "unhealthy": 0
+      }
+    }
   },
+  "host_containers": "up",
   "gpus": [
     {
       "uuid": "GPU-5a1f0c2e-8b7d-4e21-9f3a-2c6d1e0b7a44",
