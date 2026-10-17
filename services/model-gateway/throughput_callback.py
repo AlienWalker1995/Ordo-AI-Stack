@@ -245,10 +245,12 @@ def _generation_tokens_per_sec(response_obj, kwargs, completion_tokens: int, end
     response, then on the stream's final chunk, then tokens over first-token-bearing-chunk to end.
     None of those: no sample, rather than one that mostly measures waiting.
     """
+    # Take the observation out before any early return: whichever timing source wins, the
+    # stream's entry leaves the bounded map exactly once.
+    observation = _STREAM_OBSERVATIONS.pop(str(kwargs.get("litellm_call_id") or ""), None) or {}
     predicted = _predicted_per_second(_engine_timings(response_obj))
     if predicted:
         return predicted
-    observation = _STREAM_OBSERVATIONS.pop(str(kwargs.get("litellm_call_id") or ""), None) or {}
     predicted = _predicted_per_second(observation.get("timings") or {})
     if predicted:
         return predicted

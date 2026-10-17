@@ -186,3 +186,107 @@ def test_no_sample_when_generation_time_is_unknown():
     end = start + timedelta(seconds=239)
     kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "completion_start_time": start}
     assert tc._build_payload(kw, _response(completion_tokens=30), start, end) is None
+
+
+def test_a_streamed_reply_with_response_timings_does_not_leak_its_observation():
+    """The response's own timings win, but the stream's observation must still be taken out:
+    otherwise every such reply lingers in the bounded map until evicted, shrinking the budget
+    for the untimed streams this exists to measure."""
+    t0 = datetime(2026, 10, 12, 19, 0, 0)
+    chunks = [(t0, _chunk(content="1")),
+              (t0 + timedelta(seconds=2), _chunk(timings={"predicted_per_second": 217.15}))]
+    _stream_through_hook("call-leak", chunks)
+    assert "call-leak" in tc._STREAM_OBSERVATIONS
+    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "litellm_call_id": "call-leak",
+          "completion_start_time": t0}
+    payload = tc._build_payload(kw, _response(completion_tokens=60, predicted_per_second=180.0),
+                                t0, t0 + timedelta(seconds=2))
+    assert payload["output_tokens_per_sec"] == 180.0      # the response's timings win
+    assert "call-leak" not in tc._STREAM_OBSERVATIONS     # ...and the observation is gone
+
+
+def test_a_tool_call_only_chunk_starts_the_stream_clock():
+    """A reply made entirely of tool calls carries no content or reasoning; its first
+    tool-call chunk is still generated output and must start the clock."""
+    from types import SimpleNamespace
+    tool_chunk = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+        role="assistant", content=None, reasoning_content=None,
+        tool_calls=[{"id": "c1", "type": "function",
+                     "function": {"name": "search", "arguments": ""}}]))])
+    assert tc._chunk_carries_tokens(tool_chunk)
+    t0 = datetime(2026, 10, 12, 19, 0, 0)
+    chunks = [(t0, _chunk(content="")), (t0 + timedelta(seconds=400), tool_chunk)]
+    _stream_through_hook("call-tool", chunks)
+    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "litellm_call_id": "call-tool",
+          "completion_start_time": t0}
+    end = t0 + timedelta(seconds=410)
+    payload = tc._build_payload(kw, _response(completion_tokens=40), t0, end)
+    assert payload["output_tokens_per_sec"] == 4.0        # 40 tokens over 10 s, not 410
+    tc._STREAM_OBSERVATIONS.clear()
+
+
+def test_an_error_in_the_stream_passes_through_to_the_caller():
+    """The hook wraps the source iterator: an exception raised mid-stream must reach the caller
+    unchanged (telemetry must never swallow a failed completion), and the chunks before it were
+    observed."""
+    import asyncio
+
+    async def source():
+        yield _chunk(content="x")
+        raise RuntimeError("boom")
+
+    async def drain():
+        hook = tc.ThroughputRecorder().async_post_call_streaming_iterator_hook(
+            None, source(), {"litellm_call_id": "call-err"})
+        try:
+            [chunk async for chunk in hook]
+        except RuntimeError as exc:
+            return exc
+        return None
+
+    exc = asyncio.run(drain())
+    assert isinstance(exc, RuntimeError) and str(exc) == "boom"
+    assert "first_token" in tc._STREAM_OBSERVATIONS.get("call-err", {})
+    tc._STREAM_OBSERVATIONS.clear()
+
+
+def test_stopping_early_closes_the_source_without_error():
+    """A consumer that breaks out of the stream closes the wrapper; the close must propagate to
+    the source (its cleanup runs) without raising."""
+    import asyncio
+
+    closed = []
+
+    async def source():
+        try:
+            yield _chunk(content="x")
+            yield _chunk(content="y")
+        finally:
+            closed.append(True)
+
+    async def drain():
+        hook = tc.ThroughputRecorder().async_post_call_streaming_iterator_hook(
+            None, source(), {"litellm_call_id": "call-close"})
+        first = None
+        async for chunk in hook:
+            first = chunk
+            break
+        await hook.aclose()
+        return first
+
+    first = asyncio.run(drain())
+    assert first is not None and closed == [True]
+    tc._STREAM_OBSERVATIONS.clear()
+
+
+def test_a_stream_without_a_call_id_passes_through_unobserved():
+    """No litellm_call_id (a gateway old enough not to send one): every chunk still passes
+    through, nothing is recorded, and the success logger finds nothing to take out — no sample
+    rather than a wrong one."""
+    t0 = datetime(2026, 10, 12, 19, 0, 0)
+    chunks = [(t0, _chunk(content="a")), (t0 + timedelta(seconds=1), _chunk(content="b"))]
+    passed = _stream_through_hook("", chunks)
+    assert passed == [c for _, c in chunks]
+    assert "" not in tc._STREAM_OBSERVATIONS
+    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "completion_start_time": t0}
+    assert tc._build_payload(kw, _response(completion_tokens=30), t0, t0 + timedelta(seconds=2)) is None
