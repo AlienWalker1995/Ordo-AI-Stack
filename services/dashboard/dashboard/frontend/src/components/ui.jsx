@@ -1,6 +1,7 @@
 // Shared building blocks for every page: panels, status marks, meters, buttons, the side
 // drawer and the sparkline. All colour comes from the Tailwind tokens (tailwind.config.js).
 import { useEffect, useRef } from 'react'
+import { formatRate, PROVISIONAL_SAMPLE_THRESHOLD } from '../lib/format.js'
 
 export const BTN =
   'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-border bg-surface px-3 text-label text-fg transition-colors hover:border-accent/40 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40'
@@ -109,6 +110,25 @@ export function Banner({ id, tone = 'accent', title, action, children }) {
 
 export function Skeleton({ className = 'h-4 w-full' }) {
   return <span className={'skeleton block ' + className} aria-hidden="true" />
+}
+
+// A median with its evidence. Fewer than PROVISIONAL_SAMPLE_THRESHOLD samples renders the
+// count and a provisional mark, never a bare number: one slow turn must not read as the
+// model's speed. `title` carries the full evidence (count and span) as a tooltip.
+export function Median({ value, n = 0, unit = 'tok/s', title }) {
+  if (value == null) {
+    return <span className="text-title tabular-nums text-fg">—</span>
+  }
+  const provisional = n > 0 && n < PROVISIONAL_SAMPLE_THRESHOLD
+  return (
+    <span className={'flex flex-wrap items-baseline gap-x-1.5 ' + (provisional ? 'text-fg-muted' : 'text-fg')} title={title}>
+      <span className="text-title tabular-nums">{formatRate(value)}{' '}
+        <span className="text-caption font-normal text-muted">{unit}</span></span>
+      {provisional && (
+        <span className="text-caption text-warning">{n} sample{n !== 1 ? 's' : ''} · provisional</span>
+      )}
+    </span>
+  )
 }
 
 // Sparkline of [[epochSeconds, value], ...]: area fill, emphasised endpoint, scaled to its own max.

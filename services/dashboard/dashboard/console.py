@@ -69,6 +69,10 @@ _DISK_WARN_PCT = 80
 _DISK_CRITICAL_PCT = 90
 _RAM_WARN_PCT = 90
 
+# A median of fewer than this many samples is provisional: the page shows the count and marks
+# it, never a bare number (one slow turn must not read as the model's speed).
+PROVISIONAL_SAMPLE_THRESHOLD = 10
+
 
 # ---------------------------------------------------------------------------------------------
 # small helpers
@@ -196,6 +200,27 @@ def chat_engine(status_gpu: dict | None, containers_by_id: dict) -> dict:
     if _verdict(containers_by_id.get("llamacpp-cpu")) in ("up", "starting"):
         return {"engine": "cpu", "reason": reason}
     return {"engine": "none", "reason": reason}
+
+
+def chat_medians(throughput: dict, served: dict, registry: dict) -> dict:
+    """The Overview's GPU and CPU median speeds, from the ROLE series: a model swap changes the
+    file name, not the role, so the median survives it instead of restarting from zero samples.
+    Each carries its sample count and span, and the file the server loads now (the sparkline's
+    label); the frontend marks a median of fewer than PROVISIONAL_SAMPLE_THRESHOLD samples
+    provisional."""
+    roles = (throughput or {}).get("roles") or {}
+    resident = resident_gpu_file(registry)
+    out = {}
+    for key, role in (("gpu", "gpu-chat"), ("cpu", "cpu-fallback")):
+        r = roles.get(role) or {}
+        out[key] = {
+            "p50": r.get("p50"),
+            "n": r.get("n") or 0,
+            "first_ts": r.get("first_ts"),
+            "last_ts": r.get("last_ts"),
+            "model": served.get(key) or (resident if key == "gpu" else None),
+        }
+    return out
 
 
 # ---------------------------------------------------------------------------------------------
@@ -370,8 +395,12 @@ def in_use_files(served: dict, model_config: dict) -> set[str]:
 def model_slots(model_config: dict, served: dict, disk_files: list[dict], throughput: dict) -> dict:
     stats = (throughput or {}).get("models") or {}
 
-    def p50(file: str | None):
-        return (stats.get(file) or {}).get("p50") if file else None
+    def slot_speed(file: str | None) -> dict:
+        """A slot's median speed with its evidence: the count and span the page needs to mark a
+        thin median provisional."""
+        s = stats.get(file) or {} if file else {}
+        return {"p50": s.get("p50"), "n": s.get("sample_count") or 0,
+                "first_ts": s.get("first_ts"), "last_ts": s.get("last_ts")}
 
     on_disk = {f.get("name") for f in disk_files or []}
     used = in_use_files(served, model_config)
@@ -379,8 +408,8 @@ def model_slots(model_config: dict, served: dict, disk_files: list[dict], throug
     gpu_file = served.get("gpu") or (model_config or {}).get("active_file")
     return {
         "gpu": {"catalog_id": active_id, "file": gpu_file, "loaded": served.get("gpu") is not None,
-                "ctx": (model_config or {}).get("ctx_size"), "p50": p50(gpu_file)},
-        "cpu": {"file": served.get("cpu"), "p50": p50(served.get("cpu"))},
+                "ctx": (model_config or {}).get("ctx_size"), **slot_speed(gpu_file)},
+        "cpu": {"file": served.get("cpu"), **slot_speed(served.get("cpu"))},
         "embed": {"file": served.get("embed")},
         "catalog": [
             {"id": m.get("id"), "tier": m.get("tier"), "vram_gb": m.get("vram_gb"),

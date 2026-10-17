@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Fixed
+- Keep dashboard throughput medians across model swaps by tracking GPU chat, CPU fallback, and embedding samples by role, migrating v3 history, and marking thin medians provisional.
+
 ### Changed
 - **The CPU fallback decodes speculatively with its MTP head** (`--spec-type draft-mtp
   --spec-draft-n-max 2`). The distill GGUF ships the head; llama.cpp ignored it without the flag.

@@ -72,7 +72,14 @@ CARDS = [
 ]
 SERVED = {"gpu": GPU_FILE, "cpu": CPU_FILE, "embed": EMBED_FILE}
 DISK = [{"name": GPU_FILE, "size": 22_400_000_000}, {"name": "spare.gguf", "size": 5_000_000_000}]
-THROUGHPUT = {"models": {GPU_FILE: {"p50": 22.2}, CPU_FILE: {"p50": 2.7}}}
+THROUGHPUT = {"models": {GPU_FILE: {"p50": 22.2, "sample_count": 512,
+                                      "first_ts": 1760000000, "last_ts": 1760086400},
+                           CPU_FILE: {"p50": 2.7, "sample_count": 3,
+                                      "first_ts": 1760050000, "last_ts": 1760086000}},
+              "roles": {"gpu-chat": {"p50": 48.6, "n": 512, "first_ts": 1760000000,
+                                     "last_ts": 1760086400, "model": GPU_FILE},
+                        "cpu-fallback": {"p50": 9.2, "n": 3, "first_ts": 1760050000,
+                                         "last_ts": 1760086000, "model": CPU_FILE}}}
 COMFY_HISTORY = {"r1": {"status": {"status_str": "success", "messages": [["execution_success", {"timestamp": 400000}]]},
                         "outputs": {"9": {"images": [{"filename": "ordo_00001_.png", "subfolder": "",
                                                       "type": "output"}]}}}}

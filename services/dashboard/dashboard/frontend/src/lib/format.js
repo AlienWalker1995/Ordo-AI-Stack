@@ -22,6 +22,9 @@ export function formatRate(value) {
   return value >= 10 ? value.toFixed(0) : value.toFixed(1)
 }
 
+// A median of fewer than this many samples is provisional: shown with its count, never bare.
+export const PROVISIONAL_SAMPLE_THRESHOLD = 10
+
 // "3 min ago" from an epoch in SECONDS.
 export function timeAgo(epochSeconds, now = Date.now()) {
   if (!epochSeconds) return ''

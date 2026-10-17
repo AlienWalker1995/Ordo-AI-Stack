@@ -159,8 +159,16 @@ def _scan_gguf_models() -> list[dict]:
 
 # --- Token Throughput ---
 
-_throughput_samples: dict[str, list[dict]] = {}   # {"tps": float, "ts": epoch}
-_ttft_samples: dict[str, list[dict]] = {}         # {"ms": float, "ts": epoch}
+_throughput_samples: dict[str, list[dict]] = {}   # {model file: [{"tps", "ts"}]}
+_ttft_samples: dict[str, list[dict]] = {}         # {model file: [{"ms", "ts"}]}
+# The same samples grouped by ROLE: which server answered, independent of the file name. A model
+# swap changes the file, not the role, so the Overview medians (computed from these series)
+# survive it instead of restarting from zero samples under the new name.
+_role_samples: dict[str, list[dict]] = {}         # {role: [{"tps", "ts", "model"}]}
+_ROLES = ("gpu-chat", "cpu-fallback", "embed")
+# The api_base host that served a completion names its service (the gateway sends it per sample);
+# the render's /model-config maps each loaded file to the same service ids.
+_ROLE_BY_SERVICE = {"llamacpp": "gpu-chat", "llamacpp-cpu": "cpu-fallback", "llamacpp-embed": "embed"}
 _MAX_SAMPLES_PER_MODEL = 500
 _MAX_TRACKED_MODELS = 50
 # v2: samples are timestamped dicts. v1 stored bare floats keyed largely by routing
@@ -168,18 +176,28 @@ _MAX_TRACKED_MODELS = 50
 # failover included) — unattributable, so version bumps trigger a clean reset.
 # v3: tok/s is the engine's generation speed. v2 divided by the whole request, queue and prompt
 # reading included, so a 206 tok/s GPU read as 17 tok/s while requests queued.
-_THROUGHPUT_STORE_VERSION = 3
+# v4: samples are also stored per role (above), so a model swap does not reset the medians.
+# v3 files migrate on first use: their per-file series are assigned to the role the render served
+# them under, then the store is rewritten as v4.
+_THROUGHPUT_STORE_VERSION = 4
+_migration_pending = False
 _SAMPLE_MAX_AGE_SEC = 7 * 86400  # models with no sample in 7 days leave the store
 
 
 def _evict_stale_models(now: float) -> None:
-    """Drop models whose newest sample is older than _SAMPLE_MAX_AGE_SEC.
-    Call while holding _state_lock."""
+    """Drop models whose newest sample is older than _SAMPLE_MAX_AGE_SEC, and prune the role
+    series to the same window. Call while holding _state_lock."""
     cutoff = now - _SAMPLE_MAX_AGE_SEC
     for store in (_throughput_samples, _ttft_samples):
         stale = [m for m, s in store.items() if not s or s[-1]["ts"] < cutoff]
         for m in stale:
             del store[m]
+    for role, series in list(_role_samples.items()):
+        fresh = [s for s in series if s["ts"] >= cutoff]
+        if fresh:
+            _role_samples[role] = fresh
+        else:
+            del _role_samples[role]
 
 # Last benchmark result (persists across page refresh until dashboard restart)
 _last_benchmark: dict | None = None
@@ -192,17 +210,32 @@ _THROUGHPUT_FILE = DASHBOARD_DATA_PATH / "throughput.json"
 def _load_throughput_state() -> None:
     """Load throughput samples and last benchmark from disk (R4). v1 files (no
     version field) get a clean reset — their samples are un-timestamped and
-    alias-conflated; only last_benchmark carries over."""
-    global _throughput_samples, _ttft_samples, _last_benchmark
+    alias-conflated; only last_benchmark carries over. A v3 file loads its per-file
+    series as-is and stays marked for migration: _migrate_throughput_store assigns
+    them to roles once the render's /model-config can be read, then rewrites it as v4."""
+    global _throughput_samples, _ttft_samples, _last_benchmark, _migration_pending
     if not _THROUGHPUT_FILE.exists():
         return
     try:
         data = json.loads(_THROUGHPUT_FILE.read_text(encoding="utf-8"))
         _last_benchmark = data.get("last_benchmark") if isinstance(data.get("last_benchmark"), dict) else None
-        if data.get("version") != _THROUGHPUT_STORE_VERSION:
+        version = data.get("version")
+        if version == _THROUGHPUT_STORE_VERSION - 1:
+            _throughput_samples = {
+                k: [s for s in v if isinstance(s, dict) and "tps" in s and "ts" in s]
+                for k, v in (data.get("samples") or {}).items() if isinstance(v, list)
+            }
+            _ttft_samples = {
+                k: [s for s in v if isinstance(s, dict) and "ms" in s and "ts" in s]
+                for k, v in (data.get("ttft_samples") or {}).items() if isinstance(v, list)
+            }
+            _migration_pending = True
+            logger.info("Throughput store is v3: migrating its per-file series to roles on first use")
+            return
+        if version != _THROUGHPUT_STORE_VERSION:
             logger.warning(
                 "Throughput store is v%s (want v%s) — resetting samples, keeping last_benchmark",
-                data.get("version", 1), _THROUGHPUT_STORE_VERSION,
+                version if version is not None else 1, _THROUGHPUT_STORE_VERSION,
             )
             _save_throughput_state()
             return
@@ -213,6 +246,10 @@ def _load_throughput_state() -> None:
         _ttft_samples = {
             k: [s for s in v if isinstance(s, dict) and "ms" in s and "ts" in s]
             for k, v in (data.get("ttft_samples") or {}).items() if isinstance(v, list)
+        }
+        _role_samples = {
+            r: [s for s in v if isinstance(s, dict) and "tps" in s and "ts" in s]
+            for r, v in (data.get("role_samples") or {}).items() if isinstance(v, list)
         }
     except Exception as e:
         logger.warning("Throughput state load failed: %s", e)
@@ -226,6 +263,7 @@ def _save_throughput_state() -> None:
         tmp.write_text(json.dumps({
             "version": _THROUGHPUT_STORE_VERSION,
             "samples": _throughput_samples,
+            "role_samples": _role_samples,
             "ttft_samples": _ttft_samples,
             "last_benchmark": _last_benchmark,
         }), encoding="utf-8")
@@ -248,6 +286,76 @@ def _maybe_save_throughput() -> None:
 
 
 _load_throughput_state()
+
+_migration_lock = asyncio.Lock()
+
+
+def _classify_file(file: str, model_config: dict | None) -> str:
+    """The role one model file served in: the render's own mapping first (which service loads
+    it now, plus the catalog the GPU chat server may serve), then the file name. A GGUF the
+    GPU chat server never loads (it serves catalog models and .ninfer artifacts only) was
+    the CPU fallback's."""
+    if model_config:
+        for entry in model_config.get("model_files") or []:
+            if isinstance(entry, dict) and entry.get("file") == file:
+                return _ROLE_BY_SERVICE.get(str(entry.get("service")), "gpu-chat")
+        if file == model_config.get("active_file"):
+            return "gpu-chat"
+        for m in model_config.get("available") or []:
+            if isinstance(m, dict) and m.get("file") == file:
+                return "gpu-chat"
+    if (file or "").lower().endswith(".ninfer"):
+        return "gpu-chat"
+    if _is_embedding_model(file):
+        return "embed"
+    return "cpu-fallback"
+
+
+def _merge_into_roles(roles: dict[str, list[dict]], samples: dict[str, list[dict]],
+                      model_config: dict | None) -> None:
+    """Assign every per-file series to a role and merge it into the role series, sorted by time."""
+    for file, series in samples.items():
+        bucket = roles.setdefault(_classify_file(file, model_config), [])
+        for s in series:
+            bucket.append({"tps": s["tps"], "ts": s["ts"], "model": file})
+    for bucket in roles.values():
+        bucket.sort(key=lambda s: s["ts"])
+
+
+async def _migrate_throughput_store() -> None:
+    """One-shot v3 -> v4: assign the per-file series to the roles the render served them under,
+    then persist. The render's /model-config names the service that loads each file; while it
+    cannot be read the store stays v3-shaped in memory and the medians fall back to the
+    file-name guess, so a misclassification is never persisted."""
+    global _migration_pending
+    if not _migration_pending:
+        return
+    async with _migration_lock:
+        if not _migration_pending:
+            return
+        code, data = await _ops_request("GET", "/model-config", timeout=5.0)
+        config = data if code == 200 and isinstance(data, dict) else None
+        if config is None:
+            return
+        with _state_lock:
+            _merge_into_roles(_role_samples, _throughput_samples, config)
+            _migration_pending = False
+            _save_throughput_state()
+
+
+def _role_for(model: str, alias: str, backend: str) -> str:
+    """The role of one incoming sample: which server answered, from the payload the gateway
+    already sends (backend is the api_base host that served it). A gateway old enough to send
+    neither falls back to the alias, then the file name."""
+    role = _ROLE_BY_SERVICE.get((backend or "").strip().lower())
+    if role:
+        return role
+    alias = (alias or "").strip().lower()
+    if alias == "local-embed" or _is_embedding_model(model):
+        return "embed"
+    if alias == "local-chat-cpu":
+        return "cpu-fallback"
+    return "gpu-chat"
 
 
 def _percentile(sorted_arr: list[float], p: float) -> float:
@@ -279,7 +387,9 @@ async def throughput_record(req: ThroughputRecordRequest):
     model = req.model.strip()
     if not model or req.output_tokens_per_sec <= 0:
         return {"ok": True}
+    await _migrate_throughput_store()
     now = time.time()
+    role = _role_for(model, req.alias, req.backend)
     with _state_lock:
         _evict_stale_models(now)
         if model not in _throughput_samples:
@@ -289,6 +399,10 @@ async def throughput_record(req: ThroughputRecordRequest):
         _throughput_samples[model].append({"tps": req.output_tokens_per_sec, "ts": now})
         if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:
             _throughput_samples[model] = _throughput_samples[model][-_MAX_SAMPLES_PER_MODEL:]
+        bucket = _role_samples.setdefault(role, [])
+        bucket.append({"tps": req.output_tokens_per_sec, "ts": now, "model": model})
+        if len(bucket) > _MAX_SAMPLES_PER_MODEL:
+            _role_samples[role] = bucket[-_MAX_SAMPLES_PER_MODEL:]
         if req.ttft_ms > 0 and (model in _ttft_samples or len(_ttft_samples) < _MAX_TRACKED_MODELS):
             if model not in _ttft_samples:
                 _ttft_samples[model] = []
@@ -346,15 +460,22 @@ async def _throughput_active_model() -> dict:
 
 
 async def throughput_stats():
-    """Per-model throughput stats over timestamped samples: peak, p50/p95/p99, latest,
-    sample_count, first_ts/last_ts. Includes last_benchmark if available."""
+    """Per-model AND per-role throughput stats over timestamped samples: peak, p50/p95/p99,
+    latest, sample_count, first_ts/last_ts. Includes last_benchmark if available."""
+    await _migrate_throughput_store()
     result: dict[str, dict] = {}
     now = time.time()
     with _state_lock:
         _evict_stale_models(now)
         snapshot = {m: list(s) for m, s in _throughput_samples.items()}
         ttft_snapshot = {m: list(s) for m, s in _ttft_samples.items()}
+        role_snapshot = {r: list(s) for r, s in _role_samples.items()}
+        pending = _migration_pending
         benchmark = dict(_last_benchmark) if _last_benchmark else None
+    # While the v3 migration waits for /model-config, the role series is computed on the fly
+    # from the per-file series with the file-name guess, so the Overview still answers.
+    if pending:
+        _merge_into_roles(role_snapshot, snapshot, None)
     for model, samples in snapshot.items():
         if not samples:
             continue
@@ -374,9 +495,21 @@ async def throughput_stats():
             "first_ts": samples[0]["ts"],
             "last_ts": samples[-1]["ts"],
         }
+    roles_out = {}
+    for role in _ROLES:
+        series = role_snapshot.get(role) or []
+        tps_vals = [s["tps"] for s in series]
+        roles_out[role] = {
+            "p50": round(_percentile(sorted(tps_vals), 50), 1) if tps_vals else None,
+            "n": len(series),
+            "first_ts": series[0]["ts"] if series else None,
+            "last_ts": series[-1]["ts"] if series else None,
+            "model": series[-1]["model"] if series else None,
+        }
     active = await _throughput_active_model()
     out: dict = {
         "models": result,
+        "roles": roles_out,
         "ok": True,
         "active_model": active["file"],
         "active_model_alias": _gateway_pin_alias(active["file"]),

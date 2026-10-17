@@ -169,8 +169,7 @@ async def overview() -> dict:
     containers = _containers(services)
     attention = console.build_attention(cards, containers, hardware, status_gpu)
     engine = console.chat_engine(status_gpu, containers)
-    stats = (throughput or {}).get("models") or {}
-    gpu_file = served.get("gpu") or console.resident_gpu_file(_registry(registry))
+    medians = console.chat_medians(throughput, served, _registry(registry))
     verdicts = [console.classify_container(c.get("state"), c.get("health"), c.get("status"))
                 for c in containers.values()]
     return {
@@ -178,9 +177,7 @@ async def overview() -> dict:
         # A one-shot job that finished ("done", exit 0) is not a service that should be up.
         "services": {"up": sum(v == "up" for v in verdicts), "total": sum(v != "done" for v in verdicts)},
         "gpus": console.gpu_cards((hardware or {}).get("gpus") or [], _registry(registry), status_gpu),
-        "chat": {**engine,
-                 "gpu_p50": (stats.get(gpu_file) or {}).get("p50") if gpu_file else None,
-                 "cpu_p50": (stats.get(served.get("cpu")) or {}).get("p50") if served.get("cpu") else None},
+        "chat": {**engine, **medians},
         "attention": attention,
         "host": {k: (hardware or {}).get(k) for k in
                  ("cpu_pct", "ram_used_gb", "ram_total_gb", "ram_pct",

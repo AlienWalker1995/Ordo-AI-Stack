@@ -9,7 +9,7 @@ import { api, usePolling } from '../api.js'
 import { BTN, BTN_DANGER, BTN_PRIMARY, Chip, INPUT, Panel, Skeleton, Unavailable } from '../components/ui.jsx'
 import { useHostSteps } from '../components/HostSteps.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { formatBytes, formatRate } from '../lib/format.js'
+import { formatBytes, formatRate, PROVISIONAL_SAMPLE_THRESHOLD } from '../lib/format.js'
 
 function Slot({ title, file, children }) {
   return (
@@ -21,10 +21,12 @@ function Slot({ title, file, children }) {
   )
 }
 
-function Speed({ p50 }) {
+function Speed({ p50, n = 0 }) {
+  const provisional = n > 0 && n < PROVISIONAL_SAMPLE_THRESHOLD
   return (
     <span className="text-caption text-muted">
       Median speed <span className="font-mono tabular-nums text-fg">{formatRate(p50)}</span> tok/s
+      {provisional && <span className="text-warning"> · {n} sample{n !== 1 ? 's' : ''}, provisional</span>}
     </span>
   )
 }
@@ -206,12 +208,12 @@ export default function ModelsPage() {
               {d.gpu.catalog_id && <Chip>{d.gpu.catalog_id}</Chip>}
               {!d.gpu.loaded && <Chip tone="warning" title="A render has the GPU, or the server is restarting">Not loaded now</Chip>}
             </div>
-            <Speed p50={d.gpu.p50} />
+            <Speed p50={d.gpu.p50} n={d.gpu.n} />
             {d.gpu.ctx && <span className="text-caption text-muted">Context <span className="font-mono tabular-nums text-fg">{d.gpu.ctx.toLocaleString()}</span> tokens</span>}
           </Slot>
           <Slot title="CPU fallback" file={d.cpu.file}>
             <span className="text-caption text-muted">Answers chat while a render has the GPU.</span>
-            <Speed p50={d.cpu.p50} />
+            <Speed p50={d.cpu.p50} n={d.cpu.n} />
           </Slot>
           <Slot title="Embeddings" file={d.embed.file}>
             <span className="text-caption text-muted">Indexes documents for search.</span>

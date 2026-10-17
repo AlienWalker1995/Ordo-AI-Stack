@@ -4,11 +4,17 @@
     "file": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf",
     "loaded": true,
     "ctx": 106496,
-    "p50": 48.6
+    "p50": 48.6,
+    "n": 512,
+    "first_ts": 1760000000,
+    "last_ts": 1760086400
   },
   "cpu": {
     "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
-    "p50": 9.2
+    "p50": 9.2,
+    "n": 3,
+    "first_ts": 1760050000,
+    "last_ts": 1760086000
   },
   "embed": {
     "file": "embeddinggemma-2-Q8_0.gguf"

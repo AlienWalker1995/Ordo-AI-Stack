@@ -5,8 +5,8 @@
 //   GET /api/perf/series     tokens generated per second by each chat server, last 24 h
 import { usePolling } from '../api.js'
 import { api } from '../api.js'
-import { Banner, Chip, Dot, Meter, Panel, Skeleton, Sparkline, Unavailable } from '../components/ui.jsx'
-import { clock, formatGb, formatRate, pct, timeAgo } from '../lib/format.js'
+import { Banner, Chip, Dot, Median, Meter, Panel, Skeleton, Sparkline, Unavailable } from '../components/ui.jsx'
+import { clock, formatGb, pct, timeAgo } from '../lib/format.js'
 
 const LEVEL_TONE = { ok: 'ok', warning: 'warning', critical: 'critical', unknown: 'unknown' }
 
@@ -96,6 +96,13 @@ function seriesDomain(series) {
   return stamps.length ? [Math.min(...stamps), Math.max(...stamps)] : undefined
 }
 
+// The median's evidence as a tooltip: how many samples, over what span.
+function medianTitle(m) {
+  if (!m.n) return 'No samples yet'
+  const span = m.first_ts && m.last_ts ? `, ${clock(m.first_ts)} to ${clock(m.last_ts)}` : ''
+  return `${m.n} sample${m.n !== 1 ? 's' : ''}${span}`
+}
+
 function ChatEngine({ chat, series }) {
   const onCpu = chat.engine === 'cpu'
   const domain = seriesDomain(series)
@@ -114,20 +121,27 @@ function ChatEngine({ chat, series }) {
       </div>
       <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
         {[
-          { key: 'gpu', label: 'GPU', p50: chat.gpu_p50, tone: 'accent', points: series?.gpu },
-          { key: 'cpu', label: 'CPU fallback', p50: chat.cpu_p50, tone: 'warning', points: series?.cpu },
-        ].map((s) => (
-          <div key={s.key} className="grid gap-1">
-            <span className="text-caption text-muted">{s.label} · median speed</span>
-            <span className="text-title tabular-nums text-fg">
-              {formatRate(s.p50)} <span className="text-caption font-normal text-muted">tok/s</span>
-            </span>
-            {series?.available === false
-              ? <span className="text-caption text-muted">History needs the monitoring profile</span>
-              : <Sparkline points={s.points} tone={s.tone} domain={domain} label={`${s.label} tokens generated, last 24 hours`} />}
-            <span className="text-micro text-muted">Output over the last 24 h</span>
-          </div>
-        ))}
+          { key: 'gpu', label: 'GPU', tone: 'accent', points: series?.gpu },
+          { key: 'cpu', label: 'CPU fallback', tone: 'warning', points: series?.cpu },
+        ].map((s) => {
+          // The median comes from the ROLE series (a model swap does not reset it); the label
+          // names the file the server loads now.
+          const m = chat[s.key] || {}
+          return (
+            <div key={s.key} className="grid gap-1">
+              <span className="text-caption text-muted">{s.label} · median speed</span>
+              <Median value={m.p50} n={m.n} title={medianTitle(m)} />
+              {series?.available === false
+                ? <span className="text-caption text-muted">History needs the monitoring profile</span>
+                : <Sparkline points={s.points} tone={s.tone} domain={domain}
+                             label={`${s.label} tokens generated, last 24 hours${m.model ? `, ${m.model}` : ''}`} />}
+              <span className="truncate text-micro text-muted"
+                    title={m.model ? `${m.model}, output over the last 24 h` : undefined}>
+                {m.model || 'Output over the last 24 h'}
+              </span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

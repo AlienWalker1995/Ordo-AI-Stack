@@ -301,6 +301,23 @@ SERVED = {"gpu": GPU_FILE, "cpu": CPU_FILE, "embed": EMBED_FILE}
 THROUGHPUT = {"models": {GPU_FILE: {"p50": 22.2, "sample_count": 500}, CPU_FILE: {"p50": 2.7, "sample_count": 217}}}
 
 
+def test_chat_medians_come_from_the_role_series_not_the_file_names():
+    """A model swap changes the file name, not the role: the median survives it, and the label
+    names the file the server loads now."""
+    tp = {"roles": {"gpu-chat": {"p50": 48.6, "n": 512, "first_ts": 1, "last_ts": 2,
+                                 "model": "old-file.gguf"},
+                    "cpu-fallback": {"p50": 9.2, "n": 3, "first_ts": 1, "last_ts": 2,
+                                     "model": "cpu.gguf"}}}
+    m = console.chat_medians(tp, {"gpu": "new-file.gguf", "cpu": "cpu.gguf"}, {})
+    assert m["gpu"]["p50"] == 48.6 and m["gpu"]["n"] == 512
+    assert m["gpu"]["model"] == "new-file.gguf"
+    assert m["cpu"]["p50"] == 9.2 and m["cpu"]["n"] == 3
+    # A role with no series yet reads as unknown, never as zero.
+    empty = console.chat_medians({}, {"gpu": "f.gguf", "cpu": None}, {})
+    assert empty["gpu"]["p50"] is None and empty["gpu"]["n"] == 0
+    assert empty["cpu"]["model"] is None
+
+
 def test_model_slots_come_from_what_each_server_loaded():
     m = console.model_slots(MODEL_CONFIG, SERVED, DISK, THROUGHPUT)
     assert m["gpu"]["file"] == GPU_FILE and m["gpu"]["catalog_id"] == "qwen3.8-27b-turbo-fable-q6"
