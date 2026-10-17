@@ -502,56 +502,73 @@ async def _ops_request(
         except (ValueError, UnicodeDecodeError):
             data = {"detail": r.text or "Unknown error"}
         return r.status_code, data
+    except _httpx.TimeoutException:
+        detail = f"ops-controller did not answer {method} {path} within {timeout:g} s"
+        if method != "GET":
+            detail += "; the action may still be running, so check the service before retrying"
+        return 503, {"detail": detail}
     except Exception as e:
-        return 503, {"detail": str(e)}
+        return 503, {"detail": str(e) or type(e).__name__}
+
+
+# One docker start/stop/restart is 60 s at most in ops-controller (DockerBackend), and an owner
+# with netns members runs one more per member, so a lifecycle call outlasts several of them.
+_LIFECYCLE_TIMEOUT = 180.0
+_LOGS_TIMEOUT = 15.0
+
+
+def _ops_error_detail(code: int, data: dict) -> str:
+    """The reason a failed ops-controller call gives. ops-controller answers `{"error": ...}`
+    (ordo/control/responses.py) and `_ops_request` its own failures as `{"detail": ...}`; a body
+    with neither is passed on as its JSON text and logged, never dropped."""
+    for key in ("detail", "error"):
+        value = data.get(key) if isinstance(data, dict) else None
+        if isinstance(value, str) and value:
+            return value
+    logger.warning("ops-controller answered %s without a reason: %r", code, data)
+    return f"ops-controller answered HTTP {code}: {json.dumps(data)}"
+
+
+async def _ops_proxy(method: str, path: str, request: Request, *, timeout: float, **kwargs) -> dict:
+    """An ops-controller call whose failure reaches the page as an HTTPException with its reason."""
+    code, data = await _ops_request(method, path, request=request, timeout=timeout, **kwargs)
+    if code >= 400:
+        raise HTTPException(status_code=code, detail=_ops_error_detail(code, data))
+    return data
 
 
 @app.post("/api/ops/services/{service_id}/start")
 async def ops_start(service_id: str, request: Request):
     """Start a service via ops controller."""
     ops_id = OPS_SERVICE_MAP.get(service_id, service_id)
-    code, data = await _ops_request(
-        "POST", f"/services/{ops_id}/start", request=request, json={"confirm": True}
+    return await _ops_proxy(
+        "POST", f"/services/{ops_id}/start", request, timeout=_LIFECYCLE_TIMEOUT, json={"confirm": True}
     )
-    if code >= 400:
-        raise HTTPException(status_code=code, detail=data.get("detail", data))
-    return data
 
 
 @app.post("/api/ops/services/{service_id}/stop")
 async def ops_stop(service_id: str, request: Request):
     """Stop a service via ops controller."""
     ops_id = OPS_SERVICE_MAP.get(service_id, service_id)
-    code, data = await _ops_request(
-        "POST", f"/services/{ops_id}/stop", request=request, json={"confirm": True}
+    return await _ops_proxy(
+        "POST", f"/services/{ops_id}/stop", request, timeout=_LIFECYCLE_TIMEOUT, json={"confirm": True}
     )
-    if code >= 400:
-        raise HTTPException(status_code=code, detail=data.get("detail", data))
-    return data
 
 
 @app.post("/api/ops/services/{service_id}/restart")
 async def ops_restart(service_id: str, request: Request):
     """Restart a service via ops controller."""
     ops_id = OPS_SERVICE_MAP.get(service_id, service_id)
-    code, data = await _ops_request(
-        "POST", f"/services/{ops_id}/restart", request=request, json={"confirm": True}
+    return await _ops_proxy(
+        "POST", f"/services/{ops_id}/restart", request, timeout=_LIFECYCLE_TIMEOUT, json={"confirm": True}
     )
-    if code >= 400:
-        raise HTTPException(status_code=code, detail=data.get("detail", data))
-    return data
 
 
 @app.get("/api/ops/services/{service_id}/logs")
 async def ops_logs(service_id: str, request: Request, tail: int = 100):
     """Get service logs via ops controller."""
     ops_id = OPS_SERVICE_MAP.get(service_id, service_id)
-    code, data = await _ops_request(
-        "GET", f"/services/{ops_id}/logs?tail={tail}", request=request
-    )
-    if code >= 400:
-        raise HTTPException(status_code=code, detail=data.get("detail", data))
-    return data
+    return await _ops_proxy("GET", f"/services/{ops_id}/logs?tail={tail}", request, timeout=_LOGS_TIMEOUT)
 
 
 # --- RAG ---
@@ -670,7 +687,8 @@ async def hardware_stats():
 
 @app.get("/api/hardware/service-pressure")
 async def service_pressure():
-    """Per-service compute pressure (CPU/RAM/VRAM)."""
+    """Per-service compute pressure (CPU/RAM). A value nobody measured is null with a `reason`,
+    never 0: a zero reads as "idle", which is a claim this endpoint cannot make for it."""
     from dashboard.services_catalog import OPS_SERVICE_MAP, SERVICES
 
     ops_url = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
@@ -682,25 +700,34 @@ async def service_pressure():
         "ram_total_gb": round(psutil.virtual_memory().total / 1e9, 1),
     }
 
-    def _unavailable_payload():
-        services_out = [{
-            "id": s["id"], "name": s["name"],
-            "cpu_pct": None, "mem_gb": None, "mem_pct": None,
+    def _row(service_id: str, cat: dict | None, name: str, *, running: bool | None, reason: str | None,
+             cpu_pct: float | None = None, mem_gb: float | None = None, mem_pct: float | None = None) -> dict:
+        # vram_gb/vram_pct stay null: ops-controller does not measure per-container VRAM yet.
+        return {
+            "id": service_id, "name": (cat or {}).get("name") or name,
+            "cpu_pct": cpu_pct, "mem_gb": mem_gb, "mem_pct": mem_pct,
             "vram_gb": None, "vram_pct": None,
-            "has_gpu": bool(s.get("has_gpu", False)),
-            "running": None,
-        } for s in SERVICES]
-        return {"gpu": None, "host": host_info, "services": services_out, "vram_aggregate_unavailable": True, "unavailable": True}
+            "has_gpu": bool((cat or {}).get("has_gpu", False)),
+            "running": running, "reason": reason,
+        }
+
+    def _unavailable_payload(reason: str):
+        services_out = [_row(s["id"], s, s["id"], running=None, reason="source unavailable") for s in SERVICES]
+        return {"gpu": None, "host": host_info, "services": services_out, "vram_aggregate_unavailable": True,
+                "unavailable": True, "reason": reason}
 
     try:
         async with _httpx.AsyncClient(timeout=8.0) as client:
             r = await client.get(f"{ops_url}/stats/services", headers=headers)
             if r.status_code != 200:
-                return _unavailable_payload()
+                return _unavailable_payload(f"ops-controller answered HTTP {r.status_code}")
             raw = r.json()
     except (_httpx.RequestError, OSError) as e:
         logger.debug("service-pressure: ops-controller unreachable: %s", e)
-        return _unavailable_payload()
+        return _unavailable_payload("ops-controller is not answering")
+
+    def _measured(value) -> float | None:
+        return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
     raw_services: dict = raw.get("services") or {}
     catalog = {s["id"]: s for s in SERVICES}
@@ -710,36 +737,29 @@ async def service_pressure():
     for compose_id, row in raw_services.items():
         display_id = compose_to_display.get(compose_id, compose_id)
         cat = catalog.get(display_id)
-        services_out.append({
-            "id": display_id,
-            "name": (cat or {}).get("name") or compose_id,
-            "cpu_pct": float(row.get("cpu_pct") or 0.0),
-            "mem_gb": float(row.get("mem_gb") or 0.0),
-            "mem_pct": float(row.get("mem_pct") or 0.0),
-            "vram_gb": float(row.get("vram_gb") or 0.0),
-            "vram_pct": float(row.get("vram_pct") or 0.0),
-            "has_gpu": bool((cat or {}).get("has_gpu", False)),
-            "running": bool(row.get("running", False)),
-        })
+        if row.get("running") is True:
+            services_out.append(_row(display_id, cat, compose_id, running=True, reason=None,
+                                     cpu_pct=_measured(row.get("cpu_pct")), mem_gb=_measured(row.get("mem_gb")),
+                                     mem_pct=_measured(row.get("mem_pct"))))
+        else:
+            services_out.append(_row(display_id, cat, compose_id, running=False, reason="container not running"))
     seen = {s["id"] for s in services_out}
     for cid, cat in catalog.items():
         if cid not in seen:
-            services_out.append({
-                "id": cid, "name": cat["name"],
-                "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
-                "vram_gb": 0.0, "vram_pct": 0.0,
-                "has_gpu": bool(cat.get("has_gpu", False)),
-                "running": False,
-            })
-    services_out.sort(
-        key=lambda s: max(s["cpu_pct"], s["mem_pct"], s["vram_pct"]),
-        reverse=True,
-    )
+            services_out.append(_row(cid, cat, cid, running=None, reason="not measured"))
+
+    def _pressure(service: dict) -> float:
+        measured = [v for v in (service["cpu_pct"], service["mem_pct"]) if v is not None]
+        return max(measured, default=-1.0)
+
+    services_out.sort(key=_pressure, reverse=True)
     return {
         "gpu": raw.get("gpu"),
         "host": host_info,
         "services": services_out,
         "vram_aggregate_unavailable": bool(raw.get("vram_aggregate_unavailable", False)),
+        "unavailable": False,
+        "reason": None,
     }
 
 

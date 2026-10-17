@@ -218,8 +218,10 @@ async def activity(limit: int = Query(25, ge=1, le=100)) -> dict:
 @router.get("/services/table")
 async def services_table() -> dict:
     cards, services, status = await asyncio.gather(_service_cards(), _ops_json("/services"), _ops_json("/status"))
-    return {"groups": console.build_service_table(cards, _containers(services), (status or {}).get("gpu")),
-            "control_plane": services is not None}
+    control_plane_up = services is not None
+    groups = console.build_service_table(cards, _containers(services), (status or {}).get("gpu"),
+                                         control_plane_up=control_plane_up)
+    return {"groups": groups, "control_plane": "up" if control_plane_up else "down"}
 
 
 # ---------------------------------------------------------------------------------------------

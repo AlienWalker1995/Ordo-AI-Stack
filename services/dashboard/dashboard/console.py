@@ -422,12 +422,17 @@ def _group_for_container(sid: str, verdict: str) -> str:
 
 def _row(compose: str | None, name: str, group: str, container: dict | None, open_url=None,
          error=None, card_id: str | None = None, probe_ok: bool | None = None,
-         lent: bool = False) -> dict:
+         lent: bool = False, control_plane_up: bool = True) -> dict:
     if compose is None:
         # A probe-only card: a link and a health check, not one container, so its state is the
         # probe's and it offers no lifecycle controls.
         verdict = {True: "up", False: "unhealthy"}.get(probe_ok, "unknown")
         controllable = False
+    elif not control_plane_up:
+        # No container list to read: its state is unknown, not stopped, and a Start offered on a
+        # guess could put a second copy of a running service on the stack.
+        verdict = "unknown"
+        controllable = compose not in NOT_CONTROLLABLE
     else:
         verdict = _verdict(container)
         if verdict == "up" and error:
@@ -435,7 +440,7 @@ def _row(compose: str | None, name: str, group: str, container: dict | None, ope
         controllable = compose not in NOT_CONTROLLABLE
     # A resident evicted so a render can borrow its GPU must not be started from here: that
     # would put a second tenant on the leased card. It comes back when the lease is released.
-    actions = actions_for(verdict) if controllable and not lent else []
+    actions = actions_for(verdict) if controllable and not lent and verdict != "unknown" else []
     return {
         "compose": compose, "card_id": card_id, "name": name, "group": group, "verdict": verdict,
         "uptime": uptime_from_status((container or {}).get("status")),
@@ -455,8 +460,9 @@ def _card_container(card: dict, containers_by_id: dict) -> str | None:
 
 
 def build_service_table(cards: list[dict], containers_by_id: dict,
-                        status_gpu: dict | None = None) -> list[dict]:
-    """Every container, grouped; catalog services keep their friendly names and Open links."""
+                        status_gpu: dict | None = None, control_plane_up: bool = True) -> list[dict]:
+    """Every container, grouped; catalog services keep their friendly names and Open links. With the
+    control plane down, a row bound to a container is `unknown` and offers no actions."""
     evicted = set((status_gpu or {}).get("evicted_residents") or {})
     rows: list[dict] = []
     claimed: set[str] = set()
@@ -467,7 +473,8 @@ def build_service_table(cards: list[dict], containers_by_id: dict,
         rows.append(_row(compose, card.get("name") or card.get("id"), _group_for_card(card),
                          (containers_by_id or {}).get(compose) if compose else None, card.get("open_url"),
                          card.get("error") if card.get("ok") is False else None,
-                         card_id=card.get("id"), probe_ok=card.get("ok"), lent=compose in evicted))
+                         card_id=card.get("id"), probe_ok=card.get("ok"), lent=compose in evicted,
+                         control_plane_up=control_plane_up))
     for sid, container in sorted((containers_by_id or {}).items()):
         if sid in claimed:
             continue

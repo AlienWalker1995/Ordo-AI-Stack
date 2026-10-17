@@ -233,5 +233,5 @@
       ]
     }
   ],
-  "control_plane": true
+  "control_plane": "up"
 }
