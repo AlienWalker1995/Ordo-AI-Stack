@@ -67,7 +67,8 @@ All notable changes to this project are documented here. The format is loosely b
   then is "started", "stopped" or "restarted" reported. A timeout or a 503 from the proxy is
   checked against the table instead of reported as a failure; a refusal shows its reason (from
   `detail`, `detail.error` or `error`) on the row and in the toast; after 180 s without the result
-  the row says what it last saw. Stop and restart ask in an in-app dialog instead of the browser's
+  the row says what it last saw, and that note clears (with the action reported done) if a later
+  read shows the result. Stop and restart ask in an in-app dialog instead of the browser's
   `confirm()`.
 - **The GPU pin fails fast while the GPU chat model is away.** A request for `local-chat-gpu` (or the
   deployment-named GPU alias) while a render holds the lease or the GPU engine is down answered a

@@ -250,10 +250,11 @@ function isBusy(action) {
   return action?.phase === 'requesting' || action?.phase === 'confirming'
 }
 
-// Each row's action state, by row id: { phase, action, before, since, seen, note }. A row with no
-// entry is idle. `before` is the row as it was when asked, `since` when confirming began, `seen`
-// the row as the last table read showed it, `note` a failed row's reason. The transitions are
-// drawn in serviceActions.js.
+// Each row's action state, by row id: { phase, action, before, since, seen, note, gaveUp }. A row
+// with no entry is idle. `before` is the row as it was when asked, `since` when confirming began,
+// `seen` the row as the last table read showed it, `note` a failed row's reason, `gaveUp` marks a
+// failure that came from giving up at GIVE_UP_MS (a later read may still confirm it). The
+// transitions are drawn in serviceActions.js.
 function useRowActions(refreshTable, toast) {
   const [states, setStates] = useState({})
   // The async steps below read and write through this, so a poll never acts on a stale render.
@@ -284,27 +285,37 @@ function useRowActions(refreshTable, toast) {
     setRow(row.id, { ...requesting, phase: 'confirming', since: Date.now() })
   }, [setRow, fail])
 
-  // One table read, checked against every confirming row.
+  // One table read, checked against every confirming row — and against a row that gave up at
+  // GIVE_UP_MS but whose target state shows up in a later read: its stale note clears then.
   const settle = useCallback((data) => {
     const now = Date.now()
     for (const [id, state] of Object.entries(statesRef.current)) {
-      if (state.phase !== 'confirming') continue
-      const row = data ? data.rows.find((r) => r.id === id) : undefined
-      if (row && isConfirmed(state.action, state.before, row)) {
-        setRow(id, null)
-        toast(`${rowLabel(row)}: ${DONE_TEXT[state.action]}`, 'success')
-      } else if (now - state.since >= GIVE_UP_MS) {
-        const message = `No change confirmed after ${GIVE_UP_MS / 1000} s; last seen: ${describeRow(row || state.seen || state.before)}`
-        toast(`${rowLabel(state.before)}: ${message}`, 'error')
-        setRow(id, { ...state, phase: 'failed', note: `${VERB[state.action]}: ${message}` })
-      } else if (row) {
-        setRow(id, { ...state, seen: row })
+      if (state.phase === 'confirming') {
+        const row = data ? data.rows.find((r) => r.id === id) : undefined
+        if (row && isConfirmed(state.action, state.before, row)) {
+          setRow(id, null)
+          toast(`${rowLabel(row)}: ${DONE_TEXT[state.action]}`, 'success')
+        } else if (now - state.since >= GIVE_UP_MS) {
+          const message = `No change confirmed after ${GIVE_UP_MS / 1000} s; last seen: ${describeRow(row || state.seen || state.before)}`
+          toast(`${rowLabel(state.before)}: ${message}`, 'error')
+          setRow(id, { ...state, phase: 'failed', gaveUp: true, note: `${VERB[state.action]}: ${message}` })
+        } else if (row) {
+          setRow(id, { ...state, seen: row })
+        }
+      } else if (state.phase === 'failed' && state.gaveUp) {
+        const row = data ? data.rows.find((r) => r.id === id) : undefined
+        if (row && isConfirmed(state.action, state.before, row)) {
+          setRow(id, null)
+          toast(`${rowLabel(row)}: ${DONE_TEXT[state.action]}`, 'success')
+        }
       }
     }
   }, [setRow, toast])
 
   // While any row is confirming, read the table every CONFIRM_FAST_MS, after CONFIRM_FAST_FOR_MS
   // every CONFIRM_SLOW_MS, and not at all while the tab is hidden (back in view, read at once).
+  // Once this loop stops, the page's own poll keeps calling settle, so a gave-up row still
+  // clears when a later read shows the target state.
   const confirming = Object.values(states).some((state) => state.phase === 'confirming')
   useEffect(() => {
     if (!confirming) return undefined
@@ -347,7 +358,7 @@ function useRowActions(refreshTable, toast) {
     }
   }, [confirming, refreshTable, settle])
 
-  return { states, run }
+  return { states, run, settle }
 }
 
 export default function ServicesPage() {
@@ -358,7 +369,14 @@ export default function ServicesPage() {
   const [logsFor, setLogsFor] = useState(null)
   // The stop or restart waiting on the confirmation dialog: { row, action }.
   const [asking, setAsking] = useState(null)
-  const { states: actionStates, run } = useRowActions(table.refresh, toast)
+  const { states: actionStates, run, settle } = useRowActions(table.refresh, toast)
+
+  // The fast confirming loop stops once no row is confirming. Keep settling on the page's own
+  // 10 s poll (reads that already happen) so a row that gave up at 180 s still clears its stale
+  // note when a later read shows the target state.
+  useEffect(() => {
+    if (table.data) settle(table.data)
+  }, [table.data, settle])
 
   const usageById = useMemo(() => {
     const out = {}

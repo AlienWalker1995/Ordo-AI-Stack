@@ -5,7 +5,9 @@
 //                        until the row shows the action's target state
 //        -> idle         confirmed: only now is it reported as done
 //   requesting -> failed the POST was refused: its reason is shown, the row can act again
-//   confirming -> failed no target state within GIVE_UP_MS
+//   confirming -> failed no target state within GIVE_UP_MS; a later read that shows the target
+//                state still clears it (the note was stale, not a verdict)
+//   failed -> idle       that later read, for a give-up
 //
 // The page (ServicesPage.jsx) holds the states; the rules for "confirmed" live here.
 
@@ -53,5 +55,12 @@ export function isConfirmed(action, before, row) {
   const was = uptimeSeconds(before.uptime)
   const now = uptimeSeconds(row.uptime)
   if (was == null || now == null) return row.status !== before.status
-  return now < was
+  // A smaller value proves the restart. While both texts are per-second ("Less than a second",
+  // "N seconds"), the reset may already have grown past the old value by the first confirming
+  // read: `before` is up to a poll stale, and the first read that shows the post-restart state
+  // lands at most CONFIRM_FAST_MS after it appeared, so allow that lag. Coarser texts plateau
+  // ("2 days" stays "2 days" for hours), so there only a decrease proves it. A no-op restart on
+  // a sub-minute container can look the same (its uptime grows ~2 s per read too); that reads as
+  // done rather than stuck — the started_at path above removes the ambiguity.
+  return now < was || (was < 60 && now < 60 && now - was <= CONFIRM_FAST_MS / 1000)
 }

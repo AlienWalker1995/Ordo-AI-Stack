@@ -177,6 +177,30 @@ describe('Services: an action is pending until the table confirms it', () => {
     expect(button('evals', 'Start evals').hasAttribute('aria-disabled')).toBe(false)
   })
 
+  it('clears the give-up note once a later read shows the target state', async () => {
+    const { state } = backend({ 'POST /api/ops/services/evals/start': { ok: true } })
+    renderInShell(<ServicesPage />)
+    await advance()
+
+    fireEvent.click(button('evals', 'Start evals'))
+    await advance()
+    await advance(175000)
+    expect(within(tableRow('evals')).getByText('Starting…')).toBeTruthy()
+
+    // Reads run every 5 s after the first minute, so one lands on 180 s.
+    await advance(5000)
+    const message = 'No change confirmed after 180 s; last seen: Finished (Exited (0) 3 hours ago)'
+    expect(toastTexts()).toEqual([`evals: ${message}`])
+    expect(within(tableRow('evals')).getByText(`Start: ${message}`)).toBeTruthy()
+
+    // It comes up at 200 s: the page's own 10 s poll settles it and the stale note goes.
+    state.table = tableWith({ 'ordo:evals': RUNNING_EVALS })
+    await advance(10000)
+    expect(toastTexts()).toContain('evals: started')
+    expect(within(tableRow('evals')).queryByText(`Start: ${message}`)).toBeNull()
+    expect(within(tableRow('evals')).getByText('Running')).toBeTruthy()
+  })
+
   it('reads the table every 2 s for the first minute, then every 5 s', async () => {
     const { tableReads } = backend({ 'POST /api/ops/services/evals/start': { ok: true } })
     renderInShell(<ServicesPage />)
@@ -328,6 +352,13 @@ describe('Services: what confirms an action', () => {
     ['restart', up, { verdict: 'failed', uptime: null, status: 'Restarting (1) 2 seconds ago' }, false],
     ['restart', { ...up, started_at: 'a' }, { ...up, started_at: 'b' }, true],
     ['restart', { ...up, started_at: 'a' }, { verdict: 'up', uptime: '1 second', started_at: 'a' }, false],
+    // Per-second texts: `before` is up to a poll stale, so by the first confirming read the
+    // restarted container's new uptime may have grown to or past the old value.
+    ['restart', { verdict: 'up', uptime: '3 seconds', status: 'Up 3 seconds' }, { verdict: 'up', uptime: '3 seconds', status: 'Up 3 seconds' }, true],
+    ['restart', { verdict: 'up', uptime: 'Less than a second', status: 'Up Less than a second' }, { verdict: 'starting', uptime: '2 seconds', status: 'Up 2 seconds (health: starting)' }, true],
+    ['restart', { verdict: 'up', uptime: '1 second', status: 'Up 1 second' }, { verdict: 'up', uptime: '2 seconds', status: 'Up 2 seconds' }, true],
+    // Coarser texts plateau: the same "About an hour" twice is not proof of a restart.
+    ['restart', { verdict: 'up', uptime: 'About an hour', status: 'Up About an hour' }, { verdict: 'up', uptime: 'About an hour', status: 'Up About an hour' }, false],
   ])('%s from %j to %j: %s', (action, before, row, confirmed) => {
     expect(isConfirmed(action, before, row)).toBe(confirmed)
   })

@@ -22,17 +22,18 @@ export class ApiError extends Error {
 
 // The reason a failed response gives, wherever the backend put it: FastAPI's `detail` (a string,
 // or an object carrying `error`), else ops-controller's own `error`. "HTTP <code>" only when the
-// body says nothing.
+// body says nothing. The browser's statusText ("Conflict") is not part of the message: it is
+// protocol-dependent (present on HTTP/1.1, empty over h2/h3), so relying on it would make the same
+// failure read differently behind the edge than on the local http:// dashboard.
 /**
  * @param {unknown} payload
  * @param {number} status
- * @param {string} statusText
  */
-function errorMessage(payload, status, statusText) {
+function errorMessage(payload, status) {
   const body = payload && typeof payload === 'object' ? /** @type {Record<string, any>} */ (payload) : {}
   const candidates = [body.detail, body.detail?.error, body.error]
   const message = candidates.find((value) => typeof value === 'string' && value.trim())
-  return message || statusText || `HTTP ${status}`
+  return message || `HTTP ${status}`
 }
 
 /**
@@ -66,7 +67,7 @@ async function request(path, { method = 'GET', body, headers, signal } = {}) {
 
   if (!res.ok) {
     if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
-    throw new ApiError(errorMessage(payload, res.status, res.statusText), res.status, payload)
+    throw new ApiError(errorMessage(payload, res.status), res.status, payload)
   }
   return payload
 }
