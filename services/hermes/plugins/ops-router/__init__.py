@@ -341,14 +341,14 @@ PROJECT_LOGS_SCHEMA = {
     "name": "project_logs",
     "description": (
         "Tail the logs of a container in a managed project (ordo.yaml `managed_projects:`). "
-        "At most 2000 lines. Read-only."
+        "At most 1000 lines. Read-only."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "project": {"type": "string", "description": "Compose project name, e.g. 'nas-stack'."},
             "name": {"type": "string", "description": "Container name, e.g. 'janitorr'."},
-            "tail": {"type": "integer", "description": "Trailing lines to return. Default 100, max 2000."},
+            "tail": {"type": "integer", "description": "Trailing lines to return. Default 100, max 1000."},
         },
         "required": ["project", "name"],
     },

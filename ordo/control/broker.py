@@ -32,6 +32,7 @@ from typing import Protocol
 
 from ..render.changed_set import DockerState, RenderedService, RunningContainer, StackState, Staged
 from ..render.stack import compose_argv, lifecycle_group, load_compose, plan_named, profiles_in
+from .logs import TAIL_DEFAULT, LogLine, instant, merge_streams
 from .scheduler import Job, Scheduler
 from .scheduler_state import RECOVERY_JOB_ID, SchedulerStateStore, StateUnreadable
 
@@ -132,10 +133,14 @@ class ContainerBackend(Protocol):
     # handled. `name` is a RAW CONTAINER name (`ordo-llamacpp-1`). Mixing them up is the defect
     # that made `docker stop ordo-llamacpp` fail against a container actually called
     # `ordo-llamacpp-1`, so the parameter names say which one a method takes.
+    project: str   # this backend's compose project
     def start(self, service: str) -> None: ...
     def stop(self, service: str) -> None: ...
     def restart(self, service: str) -> None: ...
-    def logs(self, service: str, tail: int = 100) -> str: ...
+    # Both streams of the service's container in time order, as (timestamp, text) lines
+    # (ordo/control/logs.py). `since` is RFC 3339 or a docker duration, inclusive as docker reads
+    # it. NoContainer when the service has none.
+    def logs(self, service: str, tail: int = TAIL_DEFAULT, since: str | None = None) -> list[LogLine]: ...
     def recreate_service(self, service: str) -> None: ...
     # Recreate the named services and their netns members in ONE compose call (`stack.plan_named`,
     # `--no-deps --force-recreate`): the post-render step's changed set.
@@ -153,7 +158,7 @@ class ContainerBackend(Protocol):
     # may be asked about; each method acts only on a container that carries that project's label,
     # and raises ValueError for any other name.
     def foreign_containers(self, project: str) -> list[dict]: ...
-    def foreign_logs(self, project: str, name: str, tail: int) -> str: ...
+    def foreign_logs(self, project: str, name: str, tail: int, since: str | None = None) -> list[LogLine]: ...
     def foreign_inspect(self, project: str, name: str) -> dict: ...   # raw; never returned to a caller
     def foreign_restart(self, project: str, name: str) -> None: ...
 
@@ -213,11 +218,20 @@ def compose_service_name(project: str, service: str) -> str:
     return service
 
 
+class SelfReferentialService(ValueError):
+    """A lifecycle verb named a SELF_REFERENTIAL_SERVICES service: a refusal (403), not a bad name.
+    A ValueError still, so every caller that refuses a bad name refuses this too."""
+
+
+class NoContainer(LookupError):
+    """The service is a valid name with no container in this project (a 404 for its logs)."""
+
+
 def lifecycle_service_name(project: str, service: str) -> str:
     """`compose_service_name`, plus the refusal to act on whatever is serving this request."""
     service = compose_service_name(project, service)
     if service in SELF_REFERENTIAL_SERVICES:
-        raise ValueError(
+        raise SelfReferentialService(
             f"{service!r} runs the control plane itself and cannot be cycled through it; "
             "use docker/compose from the host"
         )
@@ -250,6 +264,7 @@ class _FakeContainer:
     joined_netns: int = 0         # a member's: the owner namespace it joined when it last started
     error: str = ""               # State.Error: why the last start failed ("" once one succeeds)
     output: list[str] = dataclasses.field(default_factory=list)
+    stamps: list[str] = dataclasses.field(default_factory=list)   # the timestamp of each `output` line
 
 
 class MockBackend:
@@ -283,7 +298,7 @@ class MockBackend:
         self.started: list[str] = []
         self.stopped: list[str] = []
         self.restarted: list[str] = []
-        self.log_requests: list[tuple[str, int]] = []
+        self.log_requests: list[tuple[str, int, str | None]] = []
         self.list_services_calls: list = []
         self.recreate_calls: list[str] = []
         self.recreate_batches: list[list[str]] = []
@@ -295,7 +310,7 @@ class MockBackend:
         self.inspect_result: dict | None = None
         # project -> {container name: (row, raw inspect)}; see ordo/control/managed.py
         self.foreign: dict[str, dict[str, tuple[dict, dict]]] = {}
-        self.foreign_log_requests: list[tuple[str, str, int]] = []
+        self.foreign_log_requests: list[tuple[str, str, int, str | None]] = []
         self.foreign_restarts: list[tuple[str, str]] = []
         self.service_stats_calls: list = []
         self.compose_up_calls: list = []
@@ -309,6 +324,7 @@ class MockBackend:
         self.project_containers: dict[str, _FakeContainer] = {}
         self._container_ids = itertools.count(1)
         self._namespaces = itertools.count(1)
+        self._log_clock = itertools.count(1)   # see _stamped
         for service in self._in_dependency_order(sorted(self._services())):
             self._replace(service)
 
@@ -404,6 +420,14 @@ class MockBackend:
                 return container
         raise ValueError(f"container {name!r} is not in project '{self.project}'")
 
+    def _stamped(self, container: _FakeContainer) -> list[LogLine]:
+        """The container's output as `docker logs --timestamps` lines. A test appends to `output`
+        directly, so each line is stamped the first time it is read, from one clock for the whole
+        backend: stamps only grow, across restarts and recreates, as docker's do."""
+        while len(container.stamps) < len(container.output):
+            container.stamps.append(f"2026-01-01T00:00:00.{next(self._log_clock):09d}Z")
+        return list(zip(container.stamps, container.output, strict=True))
+
     @staticmethod
     def _tail(container: _FakeContainer, tail: int) -> str:
         lines = container.output[-tail:] if tail > 0 else []
@@ -441,12 +465,17 @@ class MockBackend:
         if container is not None:
             self._cycle(container)
 
-    def logs(self, service: str, tail: int = 100) -> str:
-        self.log_requests.append((service, tail))
+    def logs(self, service: str, tail: int = TAIL_DEFAULT, since: str | None = None) -> list[LogLine]:
+        self.log_requests.append((service, tail, since))
         container = self.project_containers.get(compose_service_name(self.project, service))
         if container is None:
-            return f"[no container found for service {service}]"
-        return self._tail(container, tail)
+            raise NoContainer(f"service {service!r} has no container in project '{self.project}'")
+        lines = self._stamped(container)
+        if since is not None and instant(since) is not None:
+            # Inclusive, as docker's `--since` is. A duration is relative to the real clock, which
+            # the fake's timestamps are not on, so it filters nothing here.
+            lines = [line for line in lines if instant(line[0]) >= instant(since)]
+        return lines[-tail:] if tail > 0 else []
 
     def list_services(self) -> dict:
         self.list_services_calls.append(None)
@@ -551,10 +580,10 @@ class MockBackend:
     def foreign_containers(self, project: str) -> list[dict]:
         return [row for row, _raw in self.foreign.get(project, {}).values()]
 
-    def foreign_logs(self, project: str, name: str, tail: int) -> str:
+    def foreign_logs(self, project: str, name: str, tail: int, since: str | None = None) -> list[LogLine]:
         self._foreign(project, name)
-        self.foreign_log_requests.append((project, name, tail))
-        return f"[mock logs for {project}/{name}, tail={tail}]"
+        self.foreign_log_requests.append((project, name, tail, since))
+        return [("2026-01-01T00:00:00.000000001Z", f"[mock logs for {project}/{name}, tail={tail}]")]
 
     def foreign_inspect(self, project: str, name: str) -> dict:
         return self._foreign(project, name)[1]
@@ -714,15 +743,25 @@ class DockerBackend:
             return  # abstract lease job — no container to restart
         subprocess.run(["docker", "restart", container], check=True, timeout=60)
 
-    def logs(self, service: str, tail: int = 100) -> str:  # pragma: no cover - needs real docker
+    def logs(self, service: str, tail: int = TAIL_DEFAULT, since: str | None = None) -> list[LogLine]:
         container = self._resolve(service)
         if container is None:
-            return f"[no container found for service {service}]"
-        proc = subprocess.run(
-            ["docker", "logs", "--tail", str(tail), container],
-            capture_output=True, text=True, timeout=30,
-        )
-        return proc.stdout
+            raise NoContainer(f"service {service!r} has no container in project '{self.project}'")
+        return self._read_logs(container, tail, since)
+
+    @staticmethod
+    def _read_logs(container: str, tail: int, since: str | None) -> list[LogLine]:
+        """`docker logs --timestamps` of one container (a name or an id, last on the argv), both
+        streams merged in time order (ordo/control/logs.py). The CLI writes the container's stderr
+        to its own stderr, so stdout alone is empty for a service that logs there. A non-zero exit
+        (the container went away) is an error, not log text: its message is on stderr too."""
+        argv = ["docker", "logs", "--timestamps", "--tail", str(tail)]
+        if since is not None:
+            argv += ["--since", since]
+        proc = subprocess.run([*argv, container], capture_output=True, text=True, errors="replace", timeout=30)
+        if proc.returncode != 0:
+            raise RuntimeError(f"docker logs {container} failed: {proc.stderr.strip()}")
+        return merge_streams(proc.stdout, proc.stderr)
 
     # --- compose-project queries and lifecycle (ported from ops-api, slice 1) ---
     #
@@ -795,10 +834,8 @@ class DockerBackend:
                  "health": self._health_from_status(r["status"]), "status": r["status"], "image": r["image"]}
                 for r in self._project_ps(project)]
 
-    def foreign_logs(self, project: str, name: str, tail: int) -> str:  # pragma: no cover - needs real docker
-        proc = subprocess.run(["docker", "logs", "--tail", str(tail), self._foreign_guard(project, name)],
-                              capture_output=True, text=True, timeout=30)
-        return proc.stdout + proc.stderr
+    def foreign_logs(self, project: str, name: str, tail: int, since: str | None = None) -> list[LogLine]:
+        return self._read_logs(self._foreign_guard(project, name), tail, since)
 
     def foreign_inspect(self, project: str, name: str) -> dict:  # pragma: no cover - needs real docker
         proc = subprocess.run(["docker", "inspect", "--type", "container", self._foreign_guard(project, name)],

@@ -153,7 +153,7 @@ ROUTES: tuple[Route, ...] = (
           lambda cp, r: cp.service_stop(r.params["id"], r.body), exclusive=True),
     Route("POST", Span("/services/", "id", "/restart"),
           lambda cp, r: cp.service_restart(r.params["id"], r.body), exclusive=True),
-    Route("GET", Span("/services/", "id", "/logs"), lambda cp, r: cp.service_logs(r.params["id"])),
+    Route("GET", Span("/services/", "id", "/logs"), lambda cp, r: cp.service_logs(r.params["id"], r.query)),
     Route("GET", Template("/services"), lambda cp, r: cp.list_services()),
     Route("POST", Span("/services/", "id", "/recreate"),
           lambda cp, r: cp.service_recreate(r.params["id"], r.body), exclusive=True),

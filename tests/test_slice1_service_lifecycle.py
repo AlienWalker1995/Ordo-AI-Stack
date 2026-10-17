@@ -137,7 +137,7 @@ class TestServiceLogs:
         assert status == 200
         assert body["service"] == "test-svc"
         assert "logs" in body
-        assert ("test-svc", 100) in mock_backend.log_requests
+        assert ("test-svc", 200, None) in mock_backend.log_requests
 
     def test_error_on_logs_failure(self, control_plane, mock_backend):
         mock_backend.logs = MagicMock(side_effect=Exception("docker failed"))
@@ -177,11 +177,11 @@ class TestRouteParityWithOpsApi:
         assert body["action"] == "restarted"
 
     def test_logs_response_shape_matches_ops_api(self, control_plane):
-        """ops-api returns {"logs": "...", "service": id}."""
-        status, body = control_plane.route("GET", "/services/my-svc/logs")
+        """ops-api returned {"logs": "...", "service": id}; both stay, beside the cursor fields."""
+        status, body = control_plane.route("GET", "/services/test-svc/logs")
         assert status == 200
-        assert set(body.keys()) == {"logs", "service"}
-        assert body["service"] == "my-svc"
+        assert set(body.keys()) == {"logs", "service", "tail", "since", "last_ts", "truncated"}
+        assert body["service"] == "test-svc" and isinstance(body["logs"], str)
 
     def test_dry_run_response_shape_matches_ops_api(self, control_plane):
         """ops-api returns {"would": action, "service": id}."""
