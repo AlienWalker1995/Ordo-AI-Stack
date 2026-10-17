@@ -84,7 +84,11 @@ CARDS = [
 SERVED = {"gpu": None, "cpu": CPU_FILE, "embed": EMBED_FILE}
 DISK = [{"name": GPU_FILE, "size": 1}, {"name": CPU_FILE, "size": 2}, {"name": EMBED_FILE, "size": 3},
         {"name": "vision.gguf", "size": 4}, {"name": "spare.gguf", "size": 5}]
-THROUGHPUT = {"models": {GPU_FILE: {"p50": 22.2}, CPU_FILE: {"p50": 2.7}}}
+THROUGHPUT = {"models": {GPU_FILE: {"p50": 22.2}, CPU_FILE: {"p50": 2.7}},
+              "roles": {"gpu-chat": {"p50": 48.6, "n": 512, "first_ts": 1760000000,
+                                     "last_ts": 1760086400, "model": GPU_FILE},
+                        "cpu-fallback": {"p50": 2.7, "n": 3, "first_ts": 1760050000,
+                                         "last_ts": 1760086000, "model": CPU_FILE}}}
 HISTORY = {"r1": {"status": {"status_str": "success", "messages": [["execution_success", {"timestamp": 400000}]]},
                   "outputs": {"9": {"audio": [{"filename": "song.mp3", "subfolder": "audio", "type": "output"}]}}}}
 
@@ -125,9 +129,13 @@ def test_overview_says_chat_is_on_the_cpu_fallback_while_a_render_holds_the_gpu(
     body = live.get("/api/overview").json()
     assert body["chat"]["engine"] == "cpu"
     assert "ComfyUI" in body["chat"]["reason"]
-    assert body["chat"]["cpu_p50"] == 2.7
+    # The medians come from the ROLE series: a model swap does not reset them, and each carries
+    # its sample count (the page marks a thin one provisional).
+    assert body["chat"]["cpu"]["p50"] == 2.7 and body["chat"]["cpu"]["n"] == 3
+    assert body["chat"]["cpu"]["model"] == CPU_FILE
     # the GPU model is evicted, so nothing reports it as loaded, but its speed is still known
-    assert body["chat"]["gpu_p50"] == 22.2
+    assert body["chat"]["gpu"]["p50"] == 48.6 and body["chat"]["gpu"]["n"] == 512
+    assert body["chat"]["gpu"]["model"] == GPU_FILE
     big = body["gpus"][0]
     assert big["name"] == "RTX 5090" and big["borrowed_by"] == ["ComfyUI"]
 

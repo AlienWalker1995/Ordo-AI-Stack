@@ -38,8 +38,22 @@
   "chat": {
     "engine": "gpu",
     "reason": "",
-    "gpu_p50": 48.6,
-    "cpu_p50": 9.2
+    "gpu": {
+      "p50": 48.6,
+      "n": 512,
+      "provisional": false,
+      "first_ts": 1760000000,
+      "last_ts": 1760086400,
+      "model": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf"
+    },
+    "cpu": {
+      "p50": 9.2,
+      "n": 3,
+      "provisional": true,
+      "first_ts": 1760050000,
+      "last_ts": 1760086000,
+      "model": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+    }
   },
   "attention": [
     {
