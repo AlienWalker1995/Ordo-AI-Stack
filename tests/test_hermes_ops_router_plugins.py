@@ -294,6 +294,16 @@ def test_project_logs_forwards_the_tail(router, monkeypatch):
     assert client.calls == [("logs", "nas-stack", "janitorr", 50)]
 
 
+def test_project_logs_clamps_the_tail_to_the_route_cap(router, monkeypatch):
+    # ops-controller answers 400 outside 1..1000, so the tool asks for the most it can have
+    # instead of handing the model an error for "2000".
+    client = ProjectClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    router._project_logs({"project": "nas-stack", "name": "janitorr", "tail": 2000})
+    router._project_logs({"project": "nas-stack", "name": "janitorr", "tail": 0})
+    assert [c[3] for c in client.calls if c[0] == "logs"] == [1000, 1]
+
+
 @pytest.mark.parametrize("confirm", NOT_JSON_TRUE)
 def test_restart_project_container_refuses_without_json_true(router, monkeypatch, confirm):
     client = ProjectClient()
