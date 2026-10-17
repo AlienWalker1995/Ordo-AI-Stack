@@ -67,7 +67,8 @@ All notable changes to this project are documented here. The format is loosely b
   deliberately dismissed), each tab adopts foreign writes through the `storage` event, and the
   stored shape is versioned and validated on read. The storage key moved to `ordo.hostSteps.v1`;
   on first load a pending step left under the old `ordo.hostSteps` key is adopted once and the
-  old key removed, so an upgrade does not clear the queue.
+  old key removed, so an upgrade does not clear the queue. Clearing site data while a tab is open
+  is not read as a dismissal: the tab keeps its steps and writes them back.
 - **Streamed speech starts with the first sentence again.** Hermes asks the TTS endpoint for raw
   `pcm` one sentence at a time (desktop speak-stream and Discord voice), but Chatterbox-TTS-Server
   accepts only wav, opus and mp3: every streamed reply was refused (422) and spoken only after the

@@ -224,23 +224,53 @@ describe('host-step banner', () => {
     expect(within(first.container).getByText('cmd-b')).toBeTruthy()
     expect(within(second.container).getByText('cmd-b')).toBeTruthy()
   })
+  it('keeps a pending step when site data is cleared while the tab is open', () => {
+    // Clearing site data removes the key; the open tab still shows the banner. The removal is no
+    // information, so the tab keeps its step and its next write puts it back in storage.
+    render(
+      <HostStepsProvider>
+        <HostStepBanners idPrefix="page-host-step" />
+        <AddStepButton step={{ reason: 'a', command: 'cmd-a' }} />
+        <AddStepButton step={{ reason: 'b', command: 'cmd-b' }} />
+      </HostStepsProvider>,
+    )
+    const [addA, addB] = screen.getAllByRole('button', { name: 'Add step' })
+    fireEvent.click(addA)
+    localStorage.removeItem(STORAGE_KEY)
+    act(() => { window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY })) })
+    expect(banners()).toHaveLength(1)
+
+    fireEvent.click(addB)
+    expect(banners()).toHaveLength(2)
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    expect(stored.steps.map((s) => s.command)).toEqual(['cmd-a', 'cmd-b'])
+  })
 })
 
 describe('mergeThreeWay', () => {
-  it('treats an emptied store as a wipe, not a dismissal, when nothing changed since the last sync', () => {
-    // Site data cleared while the tab is open: the .v1 key is gone, but the tab still shows the
-    // banner and changed nothing since its last sync. The next write must not resolve the
-    // ambiguity ("gone from storage" vs "dismissed") against the operator's pending step.
-    const x = { id: '1760000000000-x', command: 'cmd-x' }
-    expect(mergeThreeWay([x], [x], []).map((s) => s.command)).toEqual(['cmd-x'])
-  })
-
-  it('still lets a dismissal win when this tab changed since its last sync', () => {
-    // The same shape with a step added since the last sync: the empty store is a dismissal of
-    // the only step, so the untouched step drops while the new one lands.
+  it('keeps every step this tab holds when the store is missing (site data cleared)', () => {
+    // The .v1 key is gone: storage says nothing about what was dismissed, so nothing is. This
+    // holds whether or not the tab changed since its last sync.
     const x = { id: '1760000000000-x', command: 'cmd-x' }
     const y = { id: '1760000000001-y', command: 'cmd-y' }
+    expect(mergeThreeWay([x], [x], null).map((s) => s.command)).toEqual(['cmd-x'])
+    expect(mergeThreeWay([x], [x, y], null).map((s) => s.command)).toEqual(['cmd-x', 'cmd-y'])
+  })
+
+  it('reads an empty stored queue as a dismissal of the last step', () => {
+    // Another tab dismissed the only step: the key holds an empty queue. An untouched copy this
+    // tab still holds drops, with or without a step added here since the last sync.
+    const x = { id: '1760000000000-x', command: 'cmd-x' }
+    const y = { id: '1760000000001-y', command: 'cmd-y' }
+    expect(mergeThreeWay([x], [x], [])).toEqual([])
     expect(mergeThreeWay([x], [x, y], []).map((s) => s.command)).toEqual(['cmd-y'])
+  })
+
+  it('keeps the newer copy when both tabs added the same command', () => {
+    const older = { id: '1760000000000-c', command: 'cmd-c' }
+    const newer = { id: '1760000000001-c', command: 'cmd-c' }
+    expect(mergeThreeWay([], [older], [newer]).map((s) => s.id)).toEqual([newer.id])
+    expect(mergeThreeWay([], [newer], [older]).map((s) => s.id)).toEqual([newer.id])
   })
 
   it('keeps a re-added step even though this tab dismissed the older copy', () => {

@@ -10,10 +10,12 @@
 // hold in memory while waiting for the other tab's `storage` event. A write also converges this
 // tab's view onto the merged result, so a step the other tab added lands and one it dismissed
 // stops being replayed without waiting for the event. Every tab adopts foreign writes through
-// the `storage` event. The stored shape is versioned ({ v: 1, steps: [...] }) and validated on
-// read, so hand-edited JSON degrades to its valid entries instead of crashing the banners; a
-// pending step left under the pre-versioning key is adopted on first load and the old key
-// retired on the first write.
+// the `storage` event. A missing store (site data cleared) carries no information, so it never
+// dismisses anything: the next write restores this tab's steps. A dismissal always leaves the
+// key in place, holding the rest of the queue (possibly none). The stored shape is versioned
+// ({ v: 1, steps: [...] }) and validated on read, so hand-edited JSON degrades to its valid
+// entries instead of crashing the banners; a pending step left under the pre-versioning key is
+// adopted on first load and the old key retired on the first write.
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { Banner, BTN } from './ui.jsx'
 
@@ -57,10 +59,12 @@ function readRaw() {
   return localStorage.getItem(LEGACY_STORAGE_KEY)
 }
 
+// The stored steps, or null when nothing is stored under either key (a fresh browser or cleared
+// site data): "no information", which is not the same as an empty queue.
 function readStoredSteps() {
   try {
     const raw = readRaw()
-    return raw ? parseStored(raw) : []
+    return raw ? parseStored(raw) : null
   } catch {
     return []
   }
@@ -75,17 +79,16 @@ function stepTime(step) {
 
 /**
  * Three-way merge by command. base is the storage snapshot this tab last wrote or adopted, mine
- * is this tab's current list, theirs is what storage holds now. A command both sides carry
- * resolves to the newer copy. A command only storage carries is kept unless it is the exact copy
- * (same id) this tab had in base and dropped since - a deliberate dismiss; a different id is a
- * fresh request for the same command from the other tab and wins over the stale dismiss. A
- * command only we carry is kept unless we have not touched it since base and storage no longer
- * has it: another tab dismissed it while this tab still held it in memory, and the dismissal
- * wins - except when storage is entirely empty, which reads as a wipe (site data cleared) rather
- * than a dismissal: a dismissal leaves the rest of the queue in place, so an untouched step
- * survives a wiped store. The one case the merge cannot tell apart - a site-data wipe and
- * another tab dismissing the only step both leave an empty store: when this tab changed since
- * its last sync, the dismissal reading wins and the untouched step drops.
+ * is this tab's current list, theirs is what storage holds now, or null when storage holds
+ * nothing at all (the key is missing: site data was cleared). A missing store says nothing about
+ * what was dismissed, so mine is kept as is. A command both sides carry resolves to the newer
+ * copy. A command only storage carries is kept unless it is the exact copy (same id) this tab
+ * had in base and dropped since - a deliberate dismiss; a different id is a fresh request for
+ * the same command from the other tab and wins over the stale dismiss. A command only we carry
+ * is kept unless we have not touched it since base and storage no longer has it: another tab
+ * dismissed it while this tab still held it in memory, and the dismissal wins. That holds for an
+ * empty stored queue too: dismissing the last step writes an empty queue under the key, which is
+ * a dismissal, unlike a missing key.
  */
 export function mergeThreeWay(base, mine, theirs) {
   const index = (list) => {
@@ -93,13 +96,10 @@ export function mergeThreeWay(base, mine, theirs) {
     for (const s of list) map.set(s.command, s)
     return map
   }
+  if (theirs === null) return mine
   const baseMap = index(base)
   const mineMap = index(mine)
   const theirsMap = index(theirs)
-  // An entirely empty store is a wipe, not a dismissal, when this tab changed nothing since its
-  // last sync: resolve that ambiguity in favour of the step we still show.
-  const cleared = theirs.length === 0 && mine.length === base.length &&
-    mine.every((s) => { const b = baseMap.get(s.command); return b && b.id === s.id })
   const out = []
   for (const command of new Set([...baseMap.keys(), ...mineMap.keys(), ...theirsMap.keys()])) {
     const b = baseMap.get(command)
@@ -108,7 +108,7 @@ export function mergeThreeWay(base, mine, theirs) {
     if (m && t) {
       out.push(stepTime(t) > stepTime(m) ? t : m)
     } else if (m) {
-      if (b && m.id === b.id && !cleared) continue
+      if (b && m.id === b.id) continue
       out.push(m)
     } else if (t) {
       if (b && t.id === b.id) continue
@@ -121,7 +121,7 @@ export function mergeThreeWay(base, mine, theirs) {
 function writeStoredSteps(base, steps) {
   try {
     const raw = readRaw()
-    const merged = mergeThreeWay(base, steps, raw ? parseStored(raw) : [])
+    const merged = mergeThreeWay(base, steps, raw ? parseStored(raw) : null)
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ v: STORE_VERSION, steps: merged }))
     // The pending step migrated from the pre-versioning key on the first read; retire the old key
     // here, after the new key holds the merged list, so a failed write drops nothing.
@@ -138,7 +138,7 @@ export function useHostSteps() {
 }
 
 export function HostStepsProvider({ children }) {
-  const [steps, setSteps] = useState(readStoredSteps)
+  const [steps, setSteps] = useState(() => readStoredSteps() ?? [])
   // The storage snapshot this tab last wrote or adopted: the base for the three-way merge, so a
   // write applies only what changed here since then and cannot resurrect a step another tab
   // dismissed in the meantime. Initialized from the state above rather than a second storage
@@ -163,6 +163,9 @@ export function HostStepsProvider({ children }) {
       // including the retired legacy key - are skipped.
       if (e.key !== null && e.key !== STORAGE_KEY) return
       const next = readStoredSteps()
+      // The key was removed (site data cleared): no information, so keep this tab's steps; the
+      // next write restores them.
+      if (next === null) return
       base.current = next
       setSteps((current) => (JSON.stringify(next) === JSON.stringify(current) ? current : next))
     }
