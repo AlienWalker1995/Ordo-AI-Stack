@@ -37,10 +37,14 @@ OPS = {
     "/status": {"gpu": {"state": "idle", "running": [], "queued": [], "evicted_residents": {},
                         "rejected": [{"id": "train-lora", "reason": "needs 30 GB, 4 GB free"}]}},
     "/services": {"services": [
-        {"id": "llamacpp", "state": "exited", "health": None, "status": "Exited (137) 1 minute ago"},
-        {"id": "llamacpp-cpu", "state": "running", "health": "healthy", "status": "Up 3 hours (healthy)"},
-        {"id": "open-webui", "state": "running", "health": "healthy", "status": "Up 1 hour (healthy)"},
-        {"id": "evals", "state": "exited", "health": None, "status": "Exited (0) 3 hours ago"},
+        {"id": "llamacpp", "name": "ordo-llamacpp-1", "state": "exited", "health": None,
+         "status": "Exited (137) 1 minute ago"},
+        {"id": "llamacpp-cpu", "name": "ordo-llamacpp-cpu-1", "state": "running", "health": "healthy",
+         "status": "Up 3 hours (healthy)"},
+        {"id": "open-webui", "name": "ordo-open-webui-1", "state": "running", "health": "healthy",
+         "status": "Up 1 hour (healthy)"},
+        {"id": "evals", "name": "ordo-evals-1", "state": "exited", "health": None,
+         "status": "Exited (0) 3 hours ago"},
     ]},
     "/registry/models": {"models": {
         "local-chat": {"service": "llamacpp", "gpu_uuid": BIG, "source": {"file": GPU_FILE}},

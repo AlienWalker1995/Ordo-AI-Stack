@@ -29,10 +29,14 @@ OPS = {
     "/status": {"gpu": {"state": "busy", "running": [{"id": "gate-comfyui", "kind": "media"}],
                         "queued": [], "evicted_residents": {"llamacpp": 27.5}, "rejected": []}},
     "/services": {"services": [
-        {"id": "llamacpp", "state": "exited", "health": None, "status": "Exited (137) 1 minute ago"},
-        {"id": "llamacpp-cpu", "state": "running", "health": "healthy", "status": "Up 3 hours (healthy)"},
-        {"id": "open-webui", "state": "running", "health": "healthy", "status": "Up 1 hour (healthy)"},
-        {"id": "evals", "state": "exited", "health": None, "status": "Exited (0) 3 hours ago"},
+        {"id": "llamacpp", "name": "ordo-llamacpp-1", "state": "exited", "health": None,
+         "status": "Exited (137) 1 minute ago"},
+        {"id": "llamacpp-cpu", "name": "ordo-llamacpp-cpu-1", "state": "running", "health": "healthy",
+         "status": "Up 3 hours (healthy)"},
+        {"id": "open-webui", "name": "ordo-open-webui-1", "state": "running", "health": "healthy",
+         "status": "Up 1 hour (healthy)"},
+        {"id": "evals", "name": "ordo-evals-1", "state": "exited", "health": None,
+         "status": "Exited (0) 3 hours ago"},
     ]},
     "/registry/models": {"models": {
         "local-chat": {"service": "llamacpp", "gpu_uuid": BIG, "source": {"file": GPU_FILE},
@@ -150,11 +154,17 @@ def test_overview_status_counts_what_needs_attention(live):
     assert body["status"]["text"] == "2 things need you"
 
 
-def test_overview_service_count_leaves_out_finished_one_shot_jobs(live):
+def test_overview_service_count_covers_every_project_and_leaves_out_finished_jobs(live):
     """evals exited 0 (a finished job) and must not read as a service that is down; llamacpp,
-    stopped by a GPU eviction, still counts against the total."""
+    stopped by a GPU eviction, still counts against the total; the other projects' containers
+    count too, per project."""
     body = live.get("/api/overview").json()
-    assert body["services"] == {"up": 2, "total": 3}
+    assert body["services"]["up"] == 4 and body["services"]["total"] == 5
+    assert body["services"]["by_project"] == {
+        "ordo": {"total": 3, "up": 2, "failed": 0, "unhealthy": 0},
+        "media-stack": {"total": 1, "up": 1, "failed": 0, "unhealthy": 0},
+        "web-site": {"total": 1, "up": 1, "failed": 0, "unhealthy": 0},
+    }
 
 
 def test_overview_carries_host_knowledge_and_links_from_the_catalog(live):
@@ -169,6 +179,84 @@ def test_overview_with_the_control_plane_down_is_unknown_not_healthy(live):
     assert body["chat"]["engine"] == "unknown"
     assert body["status"]["level"] == "unknown"
     assert body["status"]["text"] == "The control plane is not answering"
+
+
+def test_a_failed_host_container_makes_the_overview_not_ok_and_names_its_project(live):
+    broken = HOST_CONTAINERS + [
+        {"name": "web-site-worker-1", "status": "exited", "image": "worker", "project": "web-site",
+         "service": "worker", "health": None, "status_text": "Exited (255) 2 days ago"},
+    ]
+    with patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=broken)):
+        body = TestClient(app).get("/api/overview").json()
+    item = next(a for a in body["attention"] if a["title"].startswith("web-site-worker-1"))
+    assert item["severity"] == "critical" and "web-site" in item["detail"]
+    assert body["status"]["level"] == "critical"
+    assert body["services"]["by_project"]["web-site"] == {"total": 2, "up": 1, "failed": 1, "unhealthy": 0}
+
+
+def test_an_unhealthy_host_container_is_a_warning_that_names_its_project(live):
+    sick = HOST_CONTAINERS + [
+        {"name": "media-transcode", "status": "running", "image": "ffmpeg", "project": "media-stack",
+         "service": "transcode", "health": "unhealthy", "status_text": "Up 3 hours (unhealthy)"},
+    ]
+    with patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=sick)):
+        body = TestClient(app).get("/api/overview").json()
+    item = next(a for a in body["attention"] if a["title"].startswith("media-transcode"))
+    assert item["severity"] == "warning" and "media-stack" in item["detail"]
+    assert body["services"]["by_project"]["media-stack"] == {"total": 2, "up": 1, "failed": 0, "unhealthy": 1}
+
+
+def test_stopped_and_finished_host_containers_are_not_problems(live):
+    # Stopping is a choice and exit 0 is a finished job: neither needs attention, but both are
+    # containers that count (the finished one leaves the total, as ordo's own jobs do).
+    quiet = HOST_CONTAINERS + [
+        {"name": "web-site-stopped-1", "status": "exited", "image": "nginx", "project": "web-site",
+         "service": "stopped", "health": None, "status_text": "Exited (137) 1 day ago"},
+        {"name": "web-site-done-1", "status": "exited", "image": "busybox", "project": "web-site",
+         "service": "job", "health": None, "status_text": "Exited (0) 1 day ago"},
+    ]
+    with patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=quiet)):
+        body = TestClient(app).get("/api/overview").json()
+    titles = [a["title"] for a in body["attention"]]
+    assert not any("web-site-stopped-1" in t or "web-site-done-1" in t for t in titles)
+    assert body["services"]["by_project"]["web-site"] == {"total": 2, "up": 1, "failed": 0, "unhealthy": 0}
+
+
+def test_overview_without_the_host_list_says_so_instead_of_all_normal():
+    # No /containers answer: the counts keep what was still read (the ordo project plus the
+    # managed projects' own rows, as the Services table does), and the status line reports the
+    # gap instead of claiming all normal about unread containers.
+    calm_cards = [c for c in CARDS if c["id"] != "codebase-memory"]
+    calm_hardware = {**HARDWARE, "disk_pct": 50.0}
+
+    async def ops_json(path, timeout=None):
+        return OPS.get(path)
+
+    with patch.object(routes_console, "_ops_json", side_effect=ops_json), \
+         patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=None)), \
+         patch.object(routes_console, "_hardware", new=AsyncMock(return_value=calm_hardware)), \
+         patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=calm_cards)), \
+         patch.object(routes_console, "_rag", new=AsyncMock(return_value={"ok": True, "points_count": 1})), \
+         patch.object(routes_console, "_throughput", new=AsyncMock(return_value={})), \
+         patch.object(routes_console, "_served", new=AsyncMock(return_value={})), \
+         patch.object(routes_console, "_disk_files", new=AsyncMock(return_value=[])):
+        body = TestClient(app).get("/api/overview").json()
+    assert body["host_containers"] == "down"
+    assert body["status"]["level"] == "warning"
+    assert body["status"]["text"] == "Host containers could not be read"
+    assert body["services"] == {"up": 3, "total": 4,
+                                "by_project": {"ordo": {"total": 3, "up": 2, "failed": 0, "unhealthy": 0},
+                                               "media-stack": {"total": 1, "up": 1, "failed": 0, "unhealthy": 0}}}
+
+
+def test_the_status_line_reports_the_host_gap_even_when_attention_is_non_empty(live):
+    # /containers unread while something else needs attention: the gap must not be silently
+    # dropped behind the "N things need you" count — that is the under-counting this PR removes.
+    with patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=None)):
+        body = TestClient(app).get("/api/overview").json()
+    assert body["host_containers"] == "down"
+    assert body["status"]["level"] == "critical"
+    assert body["status"]["text"] == "2 things need you · host containers unread"
 
 
 # --- drift (hostile audit OPS-3) ---

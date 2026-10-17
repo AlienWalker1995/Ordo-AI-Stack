@@ -12,19 +12,23 @@ const LEVEL_TONE = { ok: 'ok', warning: 'warning', critical: 'critical', unknown
 
 // The backend's summary counts what needs attention (routes_console._status_line); drift comes
 // from its own slower endpoint, so it is counted here. Drift alone is a warning; a control plane
-// that is not answering stays "unknown" (its drift cannot be read then anyway).
-function withDrift(status, attentionCount, driftCount) {
+// that is not answering stays "unknown" (its drift cannot be read then anyway). When the host-wide
+// container list could not be read, the rebuilt count keeps the gap note, or it would quietly
+// cover only what was still read.
+function withDrift(status, attentionCount, driftCount, hostContainersDown) {
   if (!driftCount || status.level === 'unknown') return status
   const n = attentionCount + driftCount
+  const gap = hostContainersDown ? ' · host containers unread' : ''
   return {
     level: status.level === 'critical' ? 'critical' : 'warning',
-    text: `${n} thing${n !== 1 ? 's' : ''} need${n === 1 ? 's' : ''} you`,
+    text: `${n} thing${n !== 1 ? 's' : ''} need${n === 1 ? 's' : ''} you${gap}`,
   }
 }
 
 function StatusLine({ overview, driftCount, lastUpdated }) {
   const { services } = overview
-  const status = withDrift(overview.status, overview.attention.length, driftCount)
+  const status = withDrift(overview.status, overview.attention.length, driftCount,
+                           overview.host_containers === 'down')
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <span className="flex items-center gap-2.5 text-title text-fg">
@@ -32,7 +36,7 @@ function StatusLine({ overview, driftCount, lastUpdated }) {
         {status.text}
       </span>
       <span className="text-caption text-muted">
-        {services.up} of {services.total} services up
+        {services.up} of {services.total} containers up
         {lastUpdated ? ` · refreshed ${Math.max(0, Math.round((Date.now() - lastUpdated) / 1000))} s ago` : ''}
       </span>
     </div>
