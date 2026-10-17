@@ -341,8 +341,9 @@ def _merge_into_roles(roles: dict[str, list[dict]], samples: dict[str, list[dict
 async def _migrate_throughput_store() -> None:
     """One-shot v3 -> v4: assign the per-file series to the roles the render served them under,
     then persist. The render's /model-config names the service that loads each file; while it
-    cannot be read the store stays v3-shaped in memory and the medians fall back to the
-    file-name guess, so a misclassification is never persisted. The role series is REBUILT from
+    cannot be read the store stays v3-shaped in memory AND on disk (saves keep writing version 3)
+    and only .ninfer and embedding files classify by name, so a misclassification is never
+    persisted. The role series is REBUILT from
     the per-file series rather than merged into the live one: every sample already sits in the
     per-file series (records made while the migration waited included), so merging into the live
     buckets would count the pending ones twice; rebuilding also trims each bucket to the cap."""
@@ -514,8 +515,8 @@ async def throughput_stats():
         pending = _migration_pending
         benchmark = dict(_last_benchmark) if _last_benchmark else None
     # While the v3 migration waits for /model-config, the role series is computed on the fly from
-    # the per-file series: .ninfer and embedding files classify by name, chat files wait for the
-    # config, so the Overview's chat medians show nothing until it answers.
+    # the per-file series: .ninfer and embedding files classify by name, plain chat GGUFs wait
+    # for the config, so the Overview's chat medians stay empty unless a .ninfer file is present.
     if pending:
         _merge_into_roles(role_snapshot, snapshot, None)
     for model, samples in snapshot.items():
