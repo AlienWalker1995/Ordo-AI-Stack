@@ -121,7 +121,18 @@ export function mergeThreeWay(base, mine, theirs) {
 function writeStoredSteps(base, steps) {
   try {
     const raw = readRaw()
-    const merged = mergeThreeWay(base, steps, raw ? parseStored(raw) : null)
+    // An unreadable value (a torn write, a hand edit) carries no information, like a missing key:
+    // keep this tab's list and let the setItem below overwrite it. Letting the parse error reach
+    // the catch would skip the setItem and leave the corrupt value to fail every later write.
+    let theirs = null
+    if (raw) {
+      try {
+        theirs = parseStored(raw)
+      } catch {
+        theirs = null
+      }
+    }
+    const merged = mergeThreeWay(base, steps, theirs)
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ v: STORE_VERSION, steps: merged }))
     // The pending step migrated from the pre-versioning key on the first read; retire the old key
     // here, after the new key holds the merged list, so a failed write drops nothing.

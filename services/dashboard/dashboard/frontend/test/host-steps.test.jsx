@@ -169,6 +169,29 @@ describe('host-step banner', () => {
     expect(stored.steps.map((s) => s.command)).toEqual([STEP.command])
   })
 
+  it('repairs a corrupt stored value on the next write instead of losing every later step', () => {
+    // A torn write or a devtools edit leaves malformed JSON under the key. It carries no
+    // information, so the write keeps this tab's list and overwrites it; it must not be treated
+    // as blocked storage, which would skip the write and leave the key corrupt for good.
+    localStorage.setItem(STORAGE_KEY, '{"v":1,')
+    loadPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Add step' }))
+    expect(banners()).toHaveLength(1)
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    expect(stored.v).toBe(1)
+    expect(stored.steps.map((s) => s.command)).toEqual([STEP.command])
+  })
+
+  it('repairs a corrupt legacy key and retires it on the first write', () => {
+    localStorage.setItem('ordo.hostSteps', '[{"id":')
+    loadPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Add step' }))
+    expect(localStorage.getItem('ordo.hostSteps')).toBeNull()
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    expect(stored.v).toBe(1)
+    expect(stored.steps.map((s) => s.command)).toEqual([STEP.command])
+  })
+
   it('keeps a pending legacy step when React double-invokes the initializers (StrictMode)', () => {
     // StrictMode calls the state initializer twice; the legacy-key migration used to retire the
     // old key on the first call, so the second call saw an empty store and the step vanished.
