@@ -307,12 +307,17 @@ def test_an_unlisted_project_is_404(client, path):
     assert client.get(path, headers=HERMES).status_code == 404
 
 
-def test_logs_are_tailed_and_capped(plane, client):
+def test_logs_take_the_same_tail_and_since_as_service_logs(plane, client):
+    """ordo/control/logs.py: one rule for every logs route, refused (400) before docker is asked."""
     cp, _ = plane
-    assert client.get("/projects/nas-stack/containers/janitorr/logs?tail=50", headers=HERMES).status_code == 200
-    assert client.get("/projects/nas-stack/containers/janitorr/logs?tail=999999", headers=HERMES).status_code == 200
-    assert cp.broker.backend.foreign_log_requests == [("nas-stack", "janitorr", 50), ("nas-stack", "janitorr", 2000)]
-    assert client.get("/projects/nas-stack/containers/janitorr/logs?tail=abc", headers=HERMES).status_code == 422
+    r = client.get("/projects/nas-stack/containers/janitorr/logs?tail=50&since=10m", headers=HERMES)
+    assert r.status_code == 200
+    assert r.json()["tail"] == 50 and r.json()["since"] == "10m" and r.json()["truncated"] is False
+    assert client.get("/projects/nas-stack/containers/janitorr/logs", headers=HERMES).json()["tail"] == 200
+    for bad in ("tail=999999", "tail=0", "tail=abc", "since=1700000000"):
+        assert client.get(f"/projects/nas-stack/containers/janitorr/logs?{bad}", headers=HERMES).status_code == 400
+    assert cp.broker.backend.foreign_log_requests == [("nas-stack", "janitorr", 50, "10m"),
+                                                      ("nas-stack", "janitorr", 200, None)]
 
 
 def test_a_container_of_another_project_is_404_even_under_a_listed_one(plane, client):
