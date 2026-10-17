@@ -94,6 +94,21 @@ def test_record_failure_truncates_the_detail_to_200_chars():
     assert len(entry["detail"]) == 200 and entry["detail"] == "x" * 200
 
 
+def test_record_failure_strips_urls_from_the_detail_before_it_enters_the_ring():
+    # str(exc) of an httpx error embeds the full request URL; the ring is open-read, so no
+    # internal hostname, port or path may survive into it.
+    from dashboard import diagnostics
+
+    diagnostics.record_failure(
+        "OPS", "UNREACHABLE",
+        "ConnectError: Connection refused (GET http://ops-controller:9000/stats/services)",
+        target="/stats/services", elapsed_ms=1.0,
+    )
+    entry = diagnostics._failures[-1]
+    assert "://" not in entry["detail"]
+    assert entry["detail"] == "ConnectError: Connection refused (GET <url>)"
+
+
 def test_ring_caps_at_200_newest_first_in_the_snapshot():
     from dashboard import diagnostics
 
@@ -193,6 +208,63 @@ def test_ops_request_non_200_records_the_status_kind_and_success_marks_ok(monkey
     assert st["consecutive_failures"] == 0 and st["last_ok"] is not None
 
 
+def test_ops_request_marks_ok_on_a_non_auth_4xx(monkeypatch):
+    # A model switch ops-controller rejects with 409 (substrate digest mismatch) or a 404: the
+    # controller answered, so OPS stays ok instead of climbing consecutive_failures.
+    import dashboard.app as app
+
+    monkeypatch.setattr(app, "OPS_CONTROLLER_TOKEN", "t")
+    conflict = MagicMock(status_code=409)
+    conflict.json.return_value = {"error": "substrate digest mismatch"}
+    with patch("dashboard.app._get_http_client", return_value=_ops_client(response=conflict)):
+        code, data = asyncio.run(app._ops_request("POST", "/model-config", timeout=5.0))
+    assert code == 409 and data == {"error": "substrate digest mismatch"}
+    from dashboard import diagnostics
+    assert all(f["dep"] != "OPS" for f in diagnostics._failures)
+    st = diagnostics._dep_status["OPS"]
+    assert st["last_ok"] is not None and st["consecutive_failures"] == 0
+
+
+def test_ops_request_records_auth_on_401(monkeypatch):
+    import dashboard.app as app
+
+    monkeypatch.setattr(app, "OPS_CONTROLLER_TOKEN", "t")
+    unauthorized = MagicMock(status_code=401)
+    unauthorized.json.return_value = {"error": "bad token"}
+    with patch("dashboard.app._get_http_client", return_value=_ops_client(response=unauthorized)):
+        code, _ = asyncio.run(app._ops_request("GET", "/status", timeout=15.0))
+    assert code == 401
+    from dashboard import diagnostics
+    assert diagnostics._failures[-1]["code"] == "DEP-OPS-AUTH"
+
+
+def test_ops_request_records_badpayload_on_an_unparseable_body(monkeypatch):
+    import dashboard.app as app
+
+    monkeypatch.setattr(app, "OPS_CONTROLLER_TOKEN", "t")
+    r = MagicMock(status_code=200)
+    r.json.side_effect = ValueError("not json")
+    r.text = "<html>bad gateway</html>"
+    with patch("dashboard.app._get_http_client", return_value=_ops_client(response=r)):
+        code, data = asyncio.run(app._ops_request("GET", "/status", timeout=15.0))
+    assert code == 200 and data == {"detail": "<html>bad gateway</html>"}
+    from dashboard import diagnostics
+    assert diagnostics._failures[-1]["code"] == "DEP-OPS-BADPAYLOAD"
+
+
+def test_ops_request_caller_supplied_x_request_id_wins_over_the_trace_id(monkeypatch):
+    import dashboard.app as app
+
+    monkeypatch.setattr(app, "OPS_CONTROLLER_TOKEN", "t")
+    good = MagicMock(status_code=200)
+    good.json.return_value = {"ok": True}
+    ops = _ops_client(response=good)
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        asyncio.run(app._ops_request("GET", "/status", timeout=15.0,
+                                     headers={"X-Request-ID": "caller-override"}))
+    assert ops.request.call_args.kwargs["headers"]["X-Request-ID"] == "caller-override"
+
+
 # --- _get_json: non-200 is no longer silent ---------------------------------------
 
 
@@ -217,12 +289,24 @@ def test_get_json_records_http5xx_on_a_server_error():
     assert (entry["code"], entry["target"]) == ("DEP-PROMETHEUS-HTTP5XX", "/api/v1/query_range")
 
 
-def test_get_json_records_http4xx_on_a_client_error():
+def test_get_json_marks_ok_on_a_non_auth_4xx():
+    # A 4xx other than AUTH means the dependency answered — it is up, so no failure is recorded.
     r = MagicMock(status_code=404)
     r.json.return_value = {}
     assert _get_json("GRAFANA", "http://grafana:3000/api/health", response=r) is None
     from dashboard import diagnostics
-    assert diagnostics._failures[-1]["code"] == "DEP-GRAFANA-HTTP4XX"
+    assert all(f["dep"] != "GRAFANA" for f in diagnostics._failures)
+    st = diagnostics._dep_status["GRAFANA"]
+    assert st["last_ok"] is not None and st["consecutive_failures"] == 0
+
+
+def test_get_json_records_auth_on_401_and_403():
+    for status in (401, 403):
+        r = MagicMock(status_code=status)
+        r.json.return_value = {}
+        assert _get_json("GRAFANA", "http://grafana:3000/api/health", response=r) is None
+        from dashboard import diagnostics
+        assert diagnostics._failures[-1]["code"] == "DEP-GRAFANA-AUTH"
 
 
 def test_get_json_records_unreachable_on_a_connection_error():
@@ -338,3 +422,19 @@ def test_diagnostics_reports_unknown_until_anything_is_observed():
                and d["consecutive_failures"] == 0 for d in body["dependencies"])
     assert body["recent"] == []
     assert deps["GATEWAY"]["dep"] == "GATEWAY"
+
+
+def test_diagnostics_endpoint_details_are_sanitized_for_open_viewers(monkeypatch):
+    # The open view must not leak internal hostnames or ports from raw exception text: the ring
+    # carries the exception class plus a URL-stripped summary.
+    import dashboard.app as app
+
+    monkeypatch.setattr(app, "OPS_CONTROLLER_TOKEN", "t")
+    ops = _ops_client(raises=OSError("connect to http://ops-controller:9000 refused"))
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        asyncio.run(app._ops_request("GET", "/status", timeout=15.0))
+
+    body = TestClient(app.app).get("/api/diagnostics").json()
+    detail = body["recent"][0]["detail"]
+    assert detail.startswith("OSError:")
+    assert "ops-controller:9000" not in detail and "://" not in detail

@@ -115,3 +115,15 @@ def test_service_pressure_ops_controller_error_status(monkeypatch):
     assert d["vram_aggregate_unavailable"] is True
     assert d["unavailable"] is True and d["reason"] == "ops-controller answered HTTP 500"
     assert all(_numbers(s) == _UNMEASURED and s["reason"] == "source unavailable" for s in d["services"])
+
+def test_service_pressure_unparseable_200_body_is_unavailable(monkeypatch):
+    # A 200 whose body does not parse comes back from _ops_request as {"detail": ...}
+    # (DEP-OPS-BADPAYLOAD): it must read as unavailable, not as an empty answer.
+    r = MagicMock()
+    r.status_code = 200
+    r.json.side_effect = ValueError("not json")
+    r.text = "<html>gateway error</html>"
+    d = _pressure(monkeypatch, response=r).json()
+    assert d["vram_aggregate_unavailable"] is True
+    assert d["unavailable"] is True and d["reason"] == "ops-controller returned an unparseable stats payload"
+    assert all(_numbers(s) == _UNMEASURED and s["reason"] == "source unavailable" for s in d["services"])

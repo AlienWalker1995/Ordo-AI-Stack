@@ -84,8 +84,9 @@ async def _ops_call(method: str, path: str, json: dict | None = None) -> tuple[i
 
 async def _get_json(url: str, timeout: float = 10.0, dep: str = "PROBE") -> dict | None:
     """GET a dependency's JSON endpoint. A dependency being down is data, not an error page:
-    transport failures, non-200 answers and unparseable bodies degrade to None, each recorded
-    with a DEP-<dep>-* code (dashboard/diagnostics.py)."""
+    transport failures, 5xx/AUTH answers and unparseable bodies degrade to None, each recorded
+    with a DEP-<dep>-* code (dashboard/diagnostics.py). A 4xx other than AUTH means the
+    dependency answered — it is up, so it marks ok and still returns None."""
     from dashboard import diagnostics
     from dashboard.app import _get_http_client
 
@@ -95,13 +96,20 @@ async def _get_json(url: str, timeout: float = 10.0, dep: str = "PROBE") -> dict
         r = await _get_http_client().get(url, timeout=timeout)
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - started) * 1000
-        diagnostics.record_failure(dep, diagnostics.classify_failure(exc), str(exc) or type(exc).__name__,
+        # The class name plus the message: str(exc) alone embeds internal hostnames and ports.
+        detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+        diagnostics.record_failure(dep, diagnostics.classify_failure(exc), detail,
                                    target=target, elapsed_ms=elapsed_ms)
         return None
     elapsed_ms = (time.perf_counter() - started) * 1000
-    if r.status_code != 200:
-        diagnostics.record_failure(dep, diagnostics.classify_failure(status=r.status_code),
-                                   f"HTTP {r.status_code} from {target}", target=target, elapsed_ms=elapsed_ms)
+    if r.status_code >= 400:
+        kind = diagnostics.classify_failure(status=r.status_code)
+        if kind != "HTTP4XX":
+            diagnostics.record_failure(dep, kind, f"HTTP {r.status_code} from {target}",
+                                       target=target, elapsed_ms=elapsed_ms)
+            return None
+        # A 4xx other than AUTH means the dependency answered — it is up.
+        diagnostics.mark_ok(dep)
         return None
     try:
         data = r.json()

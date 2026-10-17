@@ -45,32 +45,41 @@ To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url +
 ## Diagnostics
 
 A dependency failure never 500s a page: the data degrades to "unavailable", and the failure is
-logged at `WARNING` as one line carrying a stable code and the request's trace id:
+logged at `WARNING` as one line carrying a stable code and the request's trace id (by the
+instrumented helpers — the DEP table below marks which are live):
 
 ```
 DEP_FAIL code=DEP-OPS-TIMEOUT trace=9f2c1ab4e6d70831 target=/model-config elapsed_ms=3000 detail=ops-controller did not answer GET /model-config within 3 s
 ```
 
 Every response carries `X-Trace-Id` (the global 500 body includes it as `trace_id`), and calls to
-ops-controller send the same id as `X-Request-ID` so the two audit logs correlate. Failures are
-kept in an in-memory ring (cap 200, single-process) plus per-dependency last-ok / last-failure /
-consecutive-failure state; `GET /api/diagnostics` serves it. Details are short by contract: no
-tokens, headers or bodies, truncated to 200 characters.
+ops-controller send the same id as `X-Request-ID` so the two audit logs correlate. A sane inbound
+`X-Request-ID` (`[A-Za-z0-9._-]{1,64}`) is reused as the trace id; it is correlation metadata, not
+authentication — any client may set it (spoofable/collidable), and the regex only bounds length and
+charset against log injection. Failures are kept in an in-memory ring (cap 200, single-process) plus
+per-dependency last-ok / last-failure / consecutive-failure state; `GET /api/diagnostics` serves it.
+Details are short by contract: the exception class plus a one-line summary, no tokens, headers or
+bodies, URLs stripped, truncated to 200 characters.
 
 Codes are `DEP-<DEP>-<KIND>`. The DEP part names the dependency:
 
 | DEP | Dependency |
 |-----|------------|
 | `OPS` | ops-controller (control plane) |
-| `GATEWAY` | model-gateway (LiteLLM) |
+| `GATEWAY` | model-gateway (LiteLLM) — planned |
 | `PROMETHEUS` | Prometheus |
 | `GRAFANA` | Grafana |
 | `COMFYUI` | ComfyUI (through the GPU admission gate) |
 | `LLAMACPP` | the llama.cpp chat/embedding servers |
-| `QDRANT` | Qdrant |
-| `EDGE` | the Caddy SSO edge |
-| `PROBE` | a service liveness probe |
-| `FS` | the filesystem (state files, model dir) |
+| `QDRANT` | Qdrant — planned |
+| `EDGE` | the Caddy SSO edge — planned |
+| `PROBE` | a service liveness probe — planned |
+| `FS` | the filesystem (state files, model dir) — planned |
+
+`— planned` marks dependencies no current code path instruments yet: today only `OPS` (via
+`_ops_request`) and `PROMETHEUS`, `GRAFANA`, `COMFYUI`, `LLAMACPP` (via `_get_json`) record
+failures. The rest read `unknown` in `GET /api/diagnostics` until the remaining outbound helpers
+(slice 2) record them.
 
 The KIND part names how it failed:
 

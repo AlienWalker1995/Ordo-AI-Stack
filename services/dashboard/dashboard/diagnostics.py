@@ -13,6 +13,7 @@ record_failure truncates to _DETAIL_MAX characters. The ring and the status map 
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 import uuid
@@ -22,7 +23,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# The DEP part of a code: which dependency failed.
+# The DEP part of a code: which dependency failed. Instrumented today: OPS (_ops_request) and
+# PROMETHEUS, GRAFANA, COMFYUI, LLAMACPP (_get_json). The rest are reserved for the remaining
+# outbound helpers (slice 2) and read `unknown` in snapshot() until something records them.
 DEPENDENCIES = ("OPS", "GATEWAY", "PROMETHEUS", "GRAFANA", "COMFYUI", "LLAMACPP", "QDRANT", "EDGE", "PROBE", "FS")
 
 # The KIND part of a code, and what each means. TIMEOUT, UNREACHABLE, HTTP5XX, HTTP4XX and AUTH
@@ -40,6 +43,18 @@ KIND_MEANINGS = {
 
 _RING_CAP = 200
 _DETAIL_MAX = 200
+
+# str(exc) of an httpx error embeds the full request URL (hostname, port, path, query), usually
+# inside parentheses: "Connection refused (GET http://ops-controller:9000/stats/services)". The
+# ring is served by the open GET /api/diagnostics, so strip URLs before anything enters it; the
+# match stops at whitespace, quotes and closing brackets so surrounding text stays balanced.
+_URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s'\"\)\]\}>]+")
+
+
+def sanitize_detail(detail: str) -> str:
+    """Strip URLs from a failure detail: the ring is open-read, and exception text embeds internal
+    hostnames, ports and paths."""
+    return _URL_RE.sub("<url>", detail)
 
 _trace_id: ContextVar[str] = ContextVar("dashboard_trace_id", default="")
 _ring_lock = threading.Lock()
@@ -101,25 +116,26 @@ def classify_failure(exc: BaseException | None = None, *, status: int | None = N
 def record_failure(dep: str, kind: str, detail: str, *, target: str, elapsed_ms: float) -> str:
     """Log ONE WARNING line for a dependency failure and record it in the ring. Returns the code.
 
-    detail must be a short one-liner without tokens, headers or bodies; it is truncated to
-    _DETAIL_MAX characters.
+    detail must be a short one-liner without tokens, headers or bodies; URLs are stripped
+    (sanitize_detail) and the result truncated to _DETAIL_MAX characters.
     """
     code = f"DEP-{dep}-{kind}"
     trace = current_trace_id()
+    detail = sanitize_detail(detail)[:_DETAIL_MAX]
     logger.warning(
         "DEP_FAIL code=%s trace=%s target=%s elapsed_ms=%.0f detail=%s",
-        code, trace, target, elapsed_ms, detail[:_DETAIL_MAX],
+        code, trace, target, elapsed_ms, detail,
     )
     now = time.time()
     with _ring_lock:
         _failures.append({
             "at": now, "code": code, "dep": dep, "kind": kind, "trace": trace,
-            "target": target, "elapsed_ms": round(elapsed_ms, 1), "detail": detail[:_DETAIL_MAX],
+            "target": target, "elapsed_ms": round(elapsed_ms, 1), "detail": detail,
         })
         if len(_failures) > _RING_CAP:
             del _failures[: len(_failures) - _RING_CAP]
         st = _dep_status.setdefault(dep, {"last_ok": None, "last_failure": None, "consecutive_failures": 0})
-        st["last_failure"] = {"code": code, "at": now, "detail": detail[:_DETAIL_MAX]}
+        st["last_failure"] = {"code": code, "at": now, "detail": detail}
         st["consecutive_failures"] += 1
     return code
 
