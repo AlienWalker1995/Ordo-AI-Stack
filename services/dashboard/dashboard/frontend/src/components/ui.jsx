@@ -10,7 +10,7 @@ export const BTN_DANGER =
 export const BTN_PRIMARY =
   'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border border-accent/50 bg-accent/[0.12] px-3 text-label font-semibold text-accent-soft transition-colors hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40'
 export const INPUT =
-  'h-8 rounded-sm border border-border bg-bg px-3 text-body text-fg outline-none transition-colors focus:border-accent/60 disabled:cursor-not-allowed disabled:opacity-40'
+  'h-8 rounded-sm border border-border bg-bg px-3 text-body text-fg transition-colors focus:border-accent/60 disabled:cursor-not-allowed disabled:opacity-40'
 
 // A titled block. `level` separates page sections (panel) from cards inside them.
 /** @param {{ title?: string, action?: import('react').ReactNode, children?: import('react').ReactNode, className?: string }} props */

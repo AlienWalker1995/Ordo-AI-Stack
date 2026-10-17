@@ -88,8 +88,9 @@ def tailnet_open_url(service_id: str) -> str | None:
 # Caddy port root, used by service_open_url() as the Open link when the sidecar layer is
 # off; `sso_port` is added by `ordo render` from the owner's `edge_site`, never declared in a
 # fragment), plus `order` (curated grid order - aggregation sorts by it so glob order never
-# reshuffles the UI). `notes` is rationale for humans reading the fragment; the
-# API/frontend ignore it.
+# reshuffles the UI). `runs_in` names the compose service whose container serves a card with no
+# `ops_service` (Hermes runs inside `agent`), so the Services table shows the two as one row.
+# `notes` is rationale for humans reading the fragment; the API/frontend ignore it.
 #
 # `port`/`url` are the FRONTEND's last-resort direct-link fallback and only make sense for a
 # service that actually publishes a host port. A service reached solely through the edge

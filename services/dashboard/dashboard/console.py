@@ -521,10 +521,13 @@ def _foreign_row(project: str | None, name: str, host_row: dict | None, managed_
 
 
 def _card_container(card: dict, containers_by_id: dict) -> str | None:
-    """The compose service a card controls: its declared ops_service; else a container with the
-    card's own id, which is unambiguous; else none, and the card is probe-only."""
+    """The compose service a card controls: its declared ops_service; else the container it declares
+    it runs in (`runs_in`); else a container with the card's own id, which is unambiguous; else none,
+    and the card is probe-only."""
     if card.get("ops_service"):
         return card["ops_service"]
+    if card.get("runs_in"):
+        return card["runs_in"]
     if card.get("id") in containers_by_id:
         return card["id"]
     return None

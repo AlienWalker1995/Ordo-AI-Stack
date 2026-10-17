@@ -2,6 +2,7 @@
 // over name and project, and per row exactly the controls its control kind allows.
 import { fireEvent, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { INPUT } from '../src/components/ui.jsx'
 import ServicesPage from '../src/pages/ServicesPage.jsx'
 import { fixture, mockApi } from './mockApi.js'
 import { renderInShell } from './renderInShell.jsx'
@@ -59,6 +60,54 @@ describe('Services: one flat list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     expect(await tableRows()).toHaveLength(ROWS.length)
     expect(screen.getByLabelText('Filter services').value).toBe('')
+    // The button that had focus is gone, so focus goes back to the filter.
+    expect(document.activeElement).toBe(screen.getByLabelText('Filter services'))
+  })
+
+  it('shows Hermes once, as its card with the agent container behind it', async () => {
+    mockApi()
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+
+    expect(rows.filter((row) => within(row).queryByText('Hermes Agent', { exact: true }))).toHaveLength(1)
+    // The compose name shows only under the card's name, not as a row of its own.
+    expect(rows.filter((row) => within(row).queryByText('agent', { exact: true }))).toEqual([rowNamed(rows, 'Hermes Agent')])
+    const hermes = within(rowNamed(rows, 'Hermes Agent'))
+    expect(hermes.getByRole('link', { name: /Hermes Agent/ }).getAttribute('href')).toBe('https://hermes.example.test/')
+    expect(hermes.getByText('Running')).toBeTruthy()
+    expect(hermes.getByText('5 hours')).toBeTruthy()
+    expect(hermes.getByText('Host only')).toBeTruthy()
+    expect(hermes.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Logs for Hermes Agent'])
+  })
+
+  it('names every state in words beside its dot', async () => {
+    const table = fixture('/api/services/table')
+    Object.assign(table.rows.find((r) => r.id === 'ordo:evals'), { verdict: 'unknown', actions: [] })
+    Object.assign(table.rows.find((r) => r.id === 'ordo:llamacpp'), { verdict: 'stopped', lent: true, actions: [] })
+    mockApi({ 'GET /api/services/table': table })
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+
+    expect(within(rowNamed(rows, 'evals')).getByText('Unknown')).toBeTruthy()
+    expect(within(rowNamed(rows, 'llama.cpp (GPU)')).getByText('Lent to a render')).toBeTruthy()
+    for (const row of rows) {
+      expect(row.cells[0].textContent.trim()).not.toBe('')
+    }
+  })
+
+  it('gives the table column headers', async () => {
+    mockApi()
+    renderInShell(<ServicesPage />)
+    await tableRows()
+
+    const headers = screen.getAllByRole('columnheader')
+    expect(headers).toHaveLength(7)
+    for (const header of headers) expect(header.getAttribute('scope')).toBe('col')
+  })
+
+  it('leaves the global focus ring on the filter input', () => {
+    // `outline-none` would override index.css's :focus-visible ring and leave only a border tint.
+    expect(INPUT.split(' ')).not.toContain('outline-none')
   })
 
   it('gives each control kind its own controls', async () => {

@@ -647,6 +647,29 @@ def test_a_card_without_ops_service_uses_a_container_of_the_same_name_when_there
     assert all_rows[0]["compose"] == "couchdb" and all_rows[0]["control"] == "ordo"
 
 
+# The Hermes card as services/hermes-dashboard/catalog.json declares it: no lifecycle target of its
+# own, but it runs inside the agent container.
+HERMES_CARD = {"id": "hermes", "name": "Hermes Agent", "category": "agent", "ops_service": None, "runs_in": "agent",
+               "open_url": "https://hermes.example/", "ok": True, "error": None, "background": False}
+
+
+def test_a_card_that_runs_inside_a_container_is_one_row_with_that_container():
+    rows = console.build_service_table([HERMES_CARD], ORDO_SERVICES)
+    hermes = [r for r in rows if r["card_id"] == "hermes" or r["compose"] == "agent"]
+    assert len(hermes) == 1  # not a link row plus a bare `agent` row
+    assert {k: hermes[0][k] for k in ("id", "name", "compose", "container", "open_url", "verdict", "uptime",
+                                      "control", "actions")} == {
+        "id": "ordo:agent", "name": "Hermes Agent", "compose": "agent", "container": "ordo-agent-1",
+        "open_url": "https://hermes.example/", "verdict": "up", "uptime": "1 hour", "control": "host", "actions": [],
+    }
+
+
+def test_the_hermes_card_names_the_container_it_runs_in():
+    from dashboard.services_catalog import SERVICES
+    card = next(c for c in SERVICES if c["id"] == "hermes")
+    assert card["runs_in"] == "agent" and not card.get("ops_service")
+
+
 # --- drift: ops-controller's GET /doctor, the checks `ordo doctor` would flag (hostile audit OPS-3) ---
 
 def test_drift_keeps_only_the_failed_checks():

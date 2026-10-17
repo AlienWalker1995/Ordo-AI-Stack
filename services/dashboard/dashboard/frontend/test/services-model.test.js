@@ -52,7 +52,7 @@ describe('groupByProject', () => {
   it('counts per section: total, running, problem, warning, job', () => {
     const byName = Object.fromEntries(groupByProject(rows()).map((s) => [s.project, s.counts]))
     expect(byName['media-stack']).toEqual({ total: 2, running: 1, problem: 1, warning: 0, job: 0 })
-    expect(byName.ordo).toEqual({ total: 12, running: 10, problem: 1, warning: 0, job: 1 })
+    expect(byName.ordo).toEqual({ total: 13, running: 11, problem: 1, warning: 0, job: 1 })
     expect(byName['web-site']).toEqual({ total: 1, running: 1, problem: 0, warning: 0, job: 0 })
   })
 
@@ -129,12 +129,12 @@ describe('sortRows', () => {
 
   it('defaults to severity then name, with finished jobs last', () => {
     expect(sortRows(ordo()).map((r) => r.name)).toEqual([
-      'Codebase Memory', 'caddy', 'ComfyUI', 'llama.cpp (CPU fallback)', 'llama.cpp (GPU)',
+      'Codebase Memory', 'caddy', 'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU fallback)', 'llama.cpp (GPU)',
       'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI', 'ops-controller', 'Qdrant', 'evals',
     ])
     // Descending flips the health order but keeps the jobs last.
     expect(sortRows(ordo(), { dir: 'desc' }).map((r) => r.name)).toEqual([
-      'caddy', 'ComfyUI', 'llama.cpp (CPU fallback)', 'llama.cpp (GPU)', 'mcp-searxng',
+      'caddy', 'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU fallback)', 'llama.cpp (GPU)', 'mcp-searxng',
       'model-gateway', 'N8N', 'Open WebUI', 'ops-controller', 'Qdrant', 'Codebase Memory', 'evals',
     ])
   })
@@ -153,12 +153,12 @@ describe('sortRows', () => {
       return r
     })
     expect(sortRows(evicted).map((r) => r.name)).toEqual([
-      'Codebase Memory', 'caddy', 'ops-controller', 'llama.cpp (GPU)', 'ComfyUI',
+      'Codebase Memory', 'caddy', 'ops-controller', 'llama.cpp (GPU)', 'ComfyUI', 'Hermes Agent',
       'llama.cpp (CPU fallback)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI', 'Qdrant', 'evals',
     ])
     // Descending flips the health order but keeps the lent row behind the running ones.
     expect(sortRows(evicted, { dir: 'desc' }).map((r) => r.name)).toEqual([
-      'ComfyUI', 'llama.cpp (CPU fallback)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI',
+      'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU fallback)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI',
       'Qdrant', 'llama.cpp (GPU)', 'caddy', 'ops-controller', 'Codebase Memory', 'evals',
     ])
   })
@@ -243,7 +243,7 @@ describe('projectNote', () => {
 
 describe('statusCounts', () => {
   it('counts the strip numbers from the fixture', () => {
-    expect(statusCounts(rows())).toEqual({ total: 15, running: 12, failed: 1, unhealthy: 1, stopped: 0, jobs: 1 })
+    expect(statusCounts(rows())).toEqual({ total: 16, running: 13, failed: 1, unhealthy: 1, stopped: 0, jobs: 1 })
   })
 
   it('keeps a lent row out of stopped and counts starting as neither running nor stopped', () => {

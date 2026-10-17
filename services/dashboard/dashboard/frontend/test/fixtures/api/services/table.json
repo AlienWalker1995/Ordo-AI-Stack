@@ -77,6 +77,23 @@
       "reason": null
     },
     {
+      "id": "ordo:agent",
+      "name": "Hermes Agent",
+      "project": "ordo",
+      "container": "ordo-agent-1",
+      "compose": "agent",
+      "card_id": "hermes",
+      "verdict": "up",
+      "uptime": "5 hours",
+      "status": "Up 5 hours (healthy)",
+      "open_url": "https://hermes.example.test/",
+      "error": null,
+      "lent": false,
+      "actions": [],
+      "control": "host",
+      "reason": null
+    },
+    {
       "id": "ordo:llamacpp-cpu",
       "name": "llama.cpp (CPU fallback)",
       "project": "ordo",
