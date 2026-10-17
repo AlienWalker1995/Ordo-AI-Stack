@@ -6,6 +6,7 @@
     "ctx": 106496,
     "p50": 48.6,
     "n": 512,
+    "provisional": false,
     "first_ts": 1760000000,
     "last_ts": 1760086400
   },
@@ -13,6 +14,7 @@
     "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
     "p50": 9.2,
     "n": 3,
+    "provisional": true,
     "first_ts": 1760050000,
     "last_ts": 1760086000
   },

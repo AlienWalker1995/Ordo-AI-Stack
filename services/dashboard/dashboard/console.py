@@ -206,16 +206,18 @@ def chat_medians(throughput: dict, served: dict, registry: dict) -> dict:
     """The Overview's GPU and CPU median speeds, from the ROLE series: a model swap changes the
     file name, not the role, so the median survives it instead of restarting from zero samples.
     Each carries its sample count and span, and the file the server loads now (the sparkline's
-    label); the frontend marks a median of fewer than PROVISIONAL_SAMPLE_THRESHOLD samples
-    provisional."""
+    label), and says whether it is provisional (fewer than PROVISIONAL_SAMPLE_THRESHOLD samples),
+    so the page never decides that for itself."""
     roles = (throughput or {}).get("roles") or {}
     resident = resident_gpu_file(registry)
     out = {}
     for key, role in (("gpu", "gpu-chat"), ("cpu", "cpu-fallback")):
         r = roles.get(role) or {}
+        n = r.get("n") or 0
         out[key] = {
             "p50": r.get("p50"),
-            "n": r.get("n") or 0,
+            "n": n,
+            "provisional": 0 < n < PROVISIONAL_SAMPLE_THRESHOLD,
             "first_ts": r.get("first_ts"),
             "last_ts": r.get("last_ts"),
             "model": served.get(key) or (resident if key == "gpu" else None),
@@ -399,7 +401,8 @@ def model_slots(model_config: dict, served: dict, disk_files: list[dict], throug
         """A slot's median speed with its evidence: the count and span the page needs to mark a
         thin median provisional."""
         s = stats.get(file) or {} if file else {}
-        return {"p50": s.get("p50"), "n": s.get("sample_count") or 0,
+        n = s.get("sample_count") or 0
+        return {"p50": s.get("p50"), "n": n, "provisional": 0 < n < PROVISIONAL_SAMPLE_THRESHOLD,
                 "first_ts": s.get("first_ts"), "last_ts": s.get("last_ts")}
 
     on_disk = {f.get("name") for f in disk_files or []}

@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Fixed
-- Keep dashboard throughput medians across model swaps by tracking GPU chat, CPU fallback, and embedding samples by role, migrating v3 history, and marking thin medians provisional.
+- Keep dashboard throughput medians across model swaps by tracking GPU chat, CPU fallback, and embedding samples by role, migrating v3 history, and marking thin medians provisional. A model file the render no longer names keeps its per-file history only (it could have served on either engine), and the migration never holds up a request: one attempt at a time, with a 30 s cooldown after a failed read.
 
 ### Changed
 - **The CPU fallback decodes speculatively with its MTP head** (`--spec-type draft-mtp

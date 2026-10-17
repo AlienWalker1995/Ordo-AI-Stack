@@ -41,6 +41,8 @@ def _reset_store(dashboard_app):
         dashboard_app._role_samples.clear()
         dashboard_app._last_benchmark = None
         dashboard_app._migration_pending = False
+        dashboard_app._migration_in_progress = False
+        dashboard_app._migration_next_try = 0.0
     # Force the next debounced save to fire, so assertions on the persisted file are deterministic.
     dashboard_app._throughput_last_save = 0.0
 
@@ -196,6 +198,7 @@ def test_samples_recorded_while_migration_waits_are_not_double_counted(tmp_path,
         stats = asyncio.run(dashboard_app.throughput_stats())
         assert stats["roles"]["gpu-chat"]["n"] == 21
     ops.return_value = (200, cfg)   # render back: the next record completes the migration
+    dashboard_app._migration_next_try = 0.0   # skip the failure cooldown the waits above armed
     with patch.object(dashboard_app, "_ops_request", new=ops):
         client.post("/api/throughput/record", json={
             "model": "qwen3.8-27b.ninfer", "output_tokens_per_sec": 99.0,
@@ -238,3 +241,58 @@ def test_migration_trims_role_buckets_to_the_sample_cap(tmp_path, monkeypatch):
     assert len(cpu) == dashboard_app._MAX_SAMPLES_PER_MODEL
     assert cpu[-1]["model"] == "model-2.gguf"
     assert cpu[-1]["ts"] == now - 10000 + 2 * 1000 + 299
+
+
+def test_a_migration_attempt_never_queues_callers_behind_it(tmp_path, monkeypatch):
+    """One caller pays for the /model-config read; a concurrent one skips instead of waiting, and
+    after a failed read nobody tries again until the cooldown has passed."""
+    import dashboard.app as dashboard_app
+    f = tmp_path / "throughput.json"
+    f.write_text(json.dumps({"version": 3, "samples": {}, "ttft_samples": {}, "last_benchmark": None}))
+    monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
+    _reset_store(dashboard_app)
+    dashboard_app._load_throughput_state()
+    ops = AsyncMock(return_value=(None, None))
+    with patch.object(dashboard_app, "_ops_request", new=ops):
+        # an attempt is in flight elsewhere: this caller must not touch the render at all
+        dashboard_app._migration_in_progress = True
+        asyncio.run(dashboard_app._maybe_migrate_throughput_store())
+        assert ops.await_count == 0
+        dashboard_app._migration_in_progress = False
+        # the first free caller tries once and fails; the next one is inside the cooldown
+        asyncio.run(dashboard_app._maybe_migrate_throughput_store())
+        asyncio.run(dashboard_app._maybe_migrate_throughput_store())
+        assert ops.await_count == 1
+        assert dashboard_app._migration_pending is True
+        # cooldown over: one more attempt
+        dashboard_app._migration_next_try = 0.0
+        asyncio.run(dashboard_app._maybe_migrate_throughput_store())
+        assert ops.await_count == 2
+
+
+def test_a_file_the_render_no_longer_names_gets_no_guessed_role():
+    """A GGUF absent from /model-config could have served on either chat engine (a GPU model swapped
+    out before the migration looks like a departed CPU model); it keeps its per-file series only,
+    instead of landing GPU-speed samples under the CPU median."""
+    import dashboard.app as dashboard_app
+    cfg = {"model_files": [{"file": "current-cpu.gguf", "service": "llamacpp-cpu"}],
+           "active_file": "active.ninfer", "available": []}
+    assert dashboard_app._classify_file("current-cpu.gguf", cfg) == "cpu-fallback"
+    assert dashboard_app._classify_file("active.ninfer", cfg) == "gpu-chat"
+    assert dashboard_app._classify_file("old-whatever.gguf", cfg) is None
+    roles: dict = {}
+    dashboard_app._merge_into_roles(roles, {"old-whatever.gguf": [{"tps": 100.0, "ts": 1.0}],
+                                            "current-cpu.gguf": [{"tps": 9.0, "ts": 2.0}]}, cfg)
+    assert set(roles) == {"cpu-fallback"}
+    assert [s["tps"] for s in roles["cpu-fallback"]] == [9.0]
+
+
+def test_stats_survive_a_role_sample_without_a_model_name():
+    import dashboard.app as dashboard_app
+    _reset_store(dashboard_app)
+    with dashboard_app._state_lock:
+        dashboard_app._role_samples["gpu-chat"] = [{"tps": 40.0, "ts": time.time()}]
+    with patch.object(dashboard_app, "_throughput_active_model", new=AsyncMock(return_value={"file": None, "ok": True, "reason": None, "last_sample_ts": None})):
+        stats = asyncio.run(dashboard_app.throughput_stats())
+    assert stats["roles"]["gpu-chat"]["n"] == 1
+    assert stats["roles"]["gpu-chat"]["model"] is None

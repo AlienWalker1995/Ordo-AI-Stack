@@ -510,3 +510,16 @@ def test_no_failed_check_is_no_drift():
 @pytest.mark.parametrize("doctor", [None, [], "error"])
 def test_an_unanswered_doctor_is_unavailable_not_clean(doctor):
     assert console.drift(doctor) == {"available": False, "findings": []}
+
+
+def test_medians_say_whether_they_are_provisional():
+    """The threshold lives in one place: the backend decides, the page only renders the flag."""
+    tp = {"roles": {"gpu-chat": {"p50": 48.6, "n": 512, "first_ts": 1, "last_ts": 2, "model": "a"},
+                    "cpu-fallback": {"p50": 9.2, "n": 3, "first_ts": 1, "last_ts": 2, "model": "b"}},
+          "models": {"a.gguf": {"p50": 48.6, "sample_count": 512}, "b.gguf": {"p50": 9.2, "sample_count": 3}}}
+    m = console.chat_medians(tp, {"gpu": "a.gguf", "cpu": "b.gguf"}, {})
+    assert m["gpu"]["provisional"] is False and m["cpu"]["provisional"] is True
+    slots = console.model_slots({"active_file": "a.gguf"}, {"gpu": "a.gguf", "cpu": "b.gguf", "embed": None}, [], tp)
+    assert slots["gpu"]["provisional"] is False and slots["cpu"]["provisional"] is True
+    # no samples at all is not provisional, it is absent
+    assert console.chat_medians({}, {"gpu": None, "cpu": None}, {})["cpu"]["provisional"] is False

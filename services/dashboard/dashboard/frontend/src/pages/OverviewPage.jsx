@@ -130,7 +130,7 @@ function ChatEngine({ chat, series }) {
           return (
             <div key={s.key} className="grid gap-1">
               <span className="text-caption text-muted">{s.label} · median speed</span>
-              <Median value={m.p50} n={m.n} title={medianTitle(m)} />
+              <Median value={m.p50} n={m.n} provisional={m.provisional} title={medianTitle(m)} />
               {series?.available === false
                 ? <span className="text-caption text-muted">History needs the monitoring profile</span>
                 : <Sparkline points={s.points} tone={s.tone} domain={domain}

@@ -288,13 +288,19 @@ def _maybe_save_throughput() -> None:
 _load_throughput_state()
 
 _migration_lock = asyncio.Lock()
+# The v3 -> v4 migration needs the render's /model-config, which can be unreachable for minutes
+# mid-deploy, and the gateway posts a record after every completion. So at most ONE caller pays
+# for an attempt (bounded by the 5 s read) per cooldown window; every other caller skips without
+# waiting and the medians use the file-name guess meanwhile.
+_MIGRATION_RETRY_SECONDS = 30.0
+_migration_in_progress = False
+_migration_next_try = 0.0
 
 
-def _classify_file(file: str, model_config: dict | None) -> str:
+def _classify_file(file: str, model_config: dict | None) -> str | None:
     """The role one model file served in: the render's own mapping first (which service loads
-    it now, plus the catalog the GPU chat server may serve), then the file name. A GGUF the
-    GPU chat server never loads (it serves catalog models and .ninfer artifacts only) was
-    the CPU fallback's."""
+    it now, plus the catalog the GPU chat server may serve), then the file name; None when
+    neither can tell (see the last branch)."""
     if model_config:
         for entry in model_config.get("model_files") or []:
             if isinstance(entry, dict) and entry.get("file") == file:
@@ -308,14 +314,20 @@ def _classify_file(file: str, model_config: dict | None) -> str:
         return "gpu-chat"
     if _is_embedding_model(file):
         return "embed"
-    return "cpu-fallback"
+    # A GGUF the render no longer names could have served on either chat engine (a GPU model swapped
+    # out before the migration looks exactly like a departed CPU model). Guessing would put GPU-speed
+    # samples under the CPU median for up to 7 days, so such a file keeps its per-file series only.
+    return None
 
 
 def _merge_into_roles(roles: dict[str, list[dict]], samples: dict[str, list[dict]],
                       model_config: dict | None) -> None:
     """Assign every per-file series to a role and merge it into the role series, sorted by time."""
     for file, series in samples.items():
-        bucket = roles.setdefault(_classify_file(file, model_config), [])
+        role = _classify_file(file, model_config)
+        if role is None:
+            continue
+        bucket = roles.setdefault(role, [])
         for s in series:
             bucket.append({"tps": s["tps"], "ts": s["ts"], "model": file})
     for bucket in roles.values():
@@ -330,15 +342,14 @@ async def _migrate_throughput_store() -> None:
     the per-file series rather than merged into the live one: every sample already sits in the
     per-file series (records made while the migration waited included), so merging into the live
     buckets would count the pending ones twice; rebuilding also trims each bucket to the cap."""
-    global _migration_pending, _role_samples
-    if not _migration_pending:
-        return
+    global _migration_pending, _role_samples, _migration_next_try
     async with _migration_lock:
         if not _migration_pending:
             return
         code, data = await _ops_request("GET", "/model-config", timeout=5.0)
         config = data if code == 200 and isinstance(data, dict) else None
         if config is None:
+            _migration_next_try = time.monotonic() + _MIGRATION_RETRY_SECONDS
             return
         with _state_lock:
             migrated: dict[str, list[dict]] = {}
@@ -349,6 +360,19 @@ async def _migrate_throughput_store() -> None:
             _role_samples = migrated
             _migration_pending = False
             _save_throughput_state()
+
+
+async def _maybe_migrate_throughput_store() -> None:
+    """Run one migration attempt unless one is in flight or a failed one is cooling down. A caller
+    that skips answers from the per-file series; nothing ever queues behind the attempt."""
+    global _migration_in_progress
+    if not _migration_pending or _migration_in_progress or time.monotonic() < _migration_next_try:
+        return
+    _migration_in_progress = True
+    try:
+        await _migrate_throughput_store()
+    finally:
+        _migration_in_progress = False
 
 
 def _role_for(model: str, alias: str, backend: str) -> str:
@@ -395,7 +419,7 @@ async def throughput_record(req: ThroughputRecordRequest):
     model = req.model.strip()
     if not model or req.output_tokens_per_sec <= 0:
         return {"ok": True}
-    await _migrate_throughput_store()
+    await _maybe_migrate_throughput_store()
     now = time.time()
     role = _role_for(model, req.alias, req.backend)
     with _state_lock:
@@ -475,7 +499,7 @@ async def _throughput_active_model() -> dict:
 async def throughput_stats():
     """Per-model AND per-role throughput stats over timestamped samples: peak, p50/p95/p99,
     latest, sample_count, first_ts/last_ts. Includes last_benchmark if available."""
-    await _migrate_throughput_store()
+    await _maybe_migrate_throughput_store()
     result: dict[str, dict] = {}
     now = time.time()
     with _state_lock:
@@ -517,7 +541,7 @@ async def throughput_stats():
             "n": len(series),
             "first_ts": series[0]["ts"] if series else None,
             "last_ts": series[-1]["ts"] if series else None,
-            "model": series[-1]["model"] if series else None,
+            "model": series[-1].get("model") if series else None,
         }
     active = await _throughput_active_model()
     out: dict = {
