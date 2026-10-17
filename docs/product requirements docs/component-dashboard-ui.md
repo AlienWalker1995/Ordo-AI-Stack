@@ -20,11 +20,13 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/hardware/service-pressure` | GET | None | Per-container CPU/RAM; VRAM null until ops-controller measures it; unmeasured values are null with a `reason` |
 | `/api/overview` | GET | None | Status line, GPUs and who holds them, chat engine, attention items, host (Overview page) |
 | `/api/activity` | GET | None | Renders, GPU leases and operator actions, newest first |
-| `/api/services/table` | GET | None | Grouped service rows with a verdict and allowed actions (Services page) |
+| `/api/services/table` | GET | None | Every container on the host as one flat list: verdict, control kind (`ordo`, `managed`, `host`, `link`, `none`) and allowed actions (Services page) |
 | `/api/ops/services/{id}/start` | POST | Y | Start service (via ops-controller) |
 | `/api/ops/services/{id}/stop` | POST | Y | Stop service |
 | `/api/ops/services/{id}/restart` | POST | Y | Restart service |
 | `/api/ops/services/{id}/logs` | GET | Y | Tail service logs |
+| `/api/ops/projects/{project}/containers/{name}/restart` | POST | Y | Restart a managed project's container (ops-controller, `managed_projects:`) |
+| `/api/ops/projects/{project}/containers/{name}/logs` | GET | Y | Tail a managed project's container logs |
 | `/api/models` | GET | None | Chat server slots (gpu, cpu, embed), catalog, GGUF files on disk (Models page) |
 | `/api/models/switch` | POST | Y | Switch the GPU model: catalog id -> ops-controller `POST /model-config` (renders and recreates what the render changed; `restart_required_on_host` + `host_command` for what only the host can restart); refused while a GPU render lease is held |
 | `/api/models/delete` | POST | Y | Delete a GGUF file; refuses a file any server depends on |

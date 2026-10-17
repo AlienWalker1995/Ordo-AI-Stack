@@ -52,12 +52,25 @@ OPS = {
                                    "outcome": "completed"}]},
     "/audit?limit=100": {"entries": [{"ts": 300.0, "caller": "dashboard", "action": "restart",
                                       "target": "n8n", "result": "ok"}]},
+    # The managed projects' own rows (ordo/control/managed_projects.py overview).
+    "/projects": {"projects": [{"project": "media-stack", "containers": [
+        {"name": "media-server", "service": "server", "state": "running", "health": "healthy",
+         "status": "Up 4 days (healthy)", "image": "media"}]}]},
     "/doctor": {"ok": False, "checks": [
         {"check": "substrate", "ok": False, "detail": "substrate MISMATCH: ops-controller 79e3afd63f62 vs "
                                                       "the last render 0a898896c4f0."},
         {"check": "open-webui", "ok": True, "detail": "open-webui: not running"},
     ]},
 }
+# ops-controller /containers: every container on the host, a bare list (DockerBackend.container_row).
+HOST_CONTAINERS = [
+    {"name": "ordo-open-webui-1", "status": "running", "image": "webui", "project": "ordo", "service": "open-webui",
+     "health": "healthy", "status_text": "Up 1 hour (healthy)"},
+    {"name": "media-server", "status": "running", "image": "media", "project": "media-stack", "service": "server",
+     "health": "healthy", "status_text": "Up 4 days (healthy)"},
+    {"name": "web-site-web-1", "status": "running", "image": "nginx", "project": "web-site", "service": "web",
+     "health": None, "status_text": "Up 6 days"},
+]
 HARDWARE = {"cpu_pct": 18, "ram_used_gb": 46.8, "ram_total_gb": 109.7, "ram_pct": 43,
             "disk_used_gb": 1607.1, "disk_total_gb": 1999.8, "disk_pct": 80.4,
             "gpus": [{"uuid": SMALL, "name": "NVIDIA GeForce GTX 1070", "vram_total_gb": 8.6, "vram_used_gb": 3.0},
@@ -94,6 +107,7 @@ def gpu_idle():
 def live(dashboard_operator_headers):
     """Every fetcher patched with the payloads above."""
     with patch.object(routes_console, "_ops_json", side_effect=fake_ops_json), \
+         patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=HOST_CONTAINERS)), \
          patch.object(routes_console, "_hardware", new=AsyncMock(return_value=HARDWARE)), \
          patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=CARDS)), \
          patch.object(routes_console, "_rag", new=AsyncMock(return_value={"ok": True, "points_count": 2483})), \
@@ -186,15 +200,30 @@ def test_activity_merges_renders_leases_and_actions(live):
 
 # --- services ---
 
-def test_service_table_is_grouped(live):
-    groups = {g["group"]: g["services"] for g in live.get("/api/services/table").json()["groups"]}
-    assert groups["Apps"][0]["name"] == "Open WebUI"
-    assert groups["Jobs"][0]["compose"] == "evals" and groups["Jobs"][0]["verdict"] == "done"
+def test_service_table_is_one_flat_list_of_every_container_on_the_host(live):
+    table = live.get("/api/services/table").json()
+    assert "groups" not in table and table["host_containers"] == "up"
+    rows = {r["id"]: r for r in table["rows"]}
+    assert rows["ordo:open-webui"]["name"] == "Open WebUI" and rows["ordo:open-webui"]["control"] == "ordo"
+    assert rows["ordo:evals"]["verdict"] == "done"
+    assert rows["host:media-server"]["control"] == "managed" and rows["host:media-server"]["actions"] == ["restart"]
+    assert rows["host:web-site-web-1"]["control"] == "none"
+    assert [r["project"] for r in table["rows"]][-2:] == ["media-stack", "web-site"]
+
+
+def test_without_the_host_wide_list_the_table_says_so_and_keeps_the_ordo_rows(live):
+    with patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=None)):
+        table = live.get("/api/services/table").json()
+    assert table["host_containers"] == "down" and table["control_plane"] == "up"
+    rows = {r["id"]: r for r in table["rows"]}
+    assert "host:web-site-web-1" not in rows and "ordo:open-webui" in rows
+    # The managed projects' own rows still list their containers.
+    assert rows["host:media-server"]["control"] == "managed"
 
 
 def test_a_model_evicted_for_a_render_cannot_be_started_from_the_table(live):
     # Starting it would put a second tenant on the leased GPU.
-    rows = {r["compose"]: r for g in live.get("/api/services/table").json()["groups"] for r in g["services"]}
+    rows = {r["compose"]: r for r in live.get("/api/services/table").json()["rows"] if r["compose"]}
     assert rows["llamacpp"]["lent"] is True
     assert rows["llamacpp"]["actions"] == []
     assert rows["llamacpp-cpu"]["lent"] is False
@@ -206,10 +235,11 @@ def test_with_the_control_plane_down_every_container_row_is_unknown_with_no_acti
     async def ops_down(path, timeout=None):
         return None
 
-    with patch.object(routes_console, "_ops_json", side_effect=ops_down):
+    with patch.object(routes_console, "_ops_json", side_effect=ops_down), \
+         patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=None)):
         table = live.get("/api/services/table").json()
     assert table["control_plane"] == "down"
-    rows = [r for g in table["groups"] for r in g["services"] if r["compose"]]
+    rows = [r for r in table["rows"] if r["compose"]]
     assert rows
     assert all(r["verdict"] == "unknown" and r["actions"] == [] for r in rows)
 
@@ -243,7 +273,9 @@ class _OpsClient:
 OPS_LIFECYCLE_CALLS = [("post", "/api/ops/services/open-webui/start"),
                        ("post", "/api/ops/services/open-webui/stop"),
                        ("post", "/api/ops/services/open-webui/restart"),
-                       ("get", "/api/ops/services/open-webui/logs")]
+                       ("get", "/api/ops/services/open-webui/logs"),
+                       ("post", "/api/ops/projects/media-stack/containers/media-server/restart"),
+                       ("get", "/api/ops/projects/media-stack/containers/media-server/logs")]
 
 
 @pytest.mark.parametrize("method, url", OPS_LIFECYCLE_CALLS)
@@ -287,6 +319,56 @@ def test_a_lifecycle_timeout_names_the_service_and_says_it_may_still_be_running(
     assert "may still be running" in detail
     # A real restart takes 40-90 s; ops-controller's own budget is 60 s per docker verb.
     assert ops.timeouts == [dashboard_app._LIFECYCLE_TIMEOUT] and dashboard_app._LIFECYCLE_TIMEOUT >= 90
+
+
+class _RecordingOpsClient(_OpsClient):
+    """_OpsClient that also records each call's method, URL and JSON body."""
+
+    def __init__(self, response):
+        super().__init__(response)
+        self.calls = []
+
+    async def request(self, method, url, headers=None, timeout=None, **kwargs):
+        self.calls.append((method, url, kwargs.get("json")))
+        return await super().request(method, url, headers=headers, timeout=timeout, **kwargs)
+
+
+def test_a_managed_container_restart_is_confirmed_and_waits_like_a_lifecycle_call(
+        monkeypatch, dashboard_operator_headers):
+    from dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "t")
+    answer = {"ok": True, "project": "media-stack", "container": "media-server", "action": "restarted"}
+    ops = _RecordingOpsClient(_OpsResponse(200, answer))
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        r = TestClient(app, headers=dashboard_operator_headers).post(
+            "/api/ops/projects/media-stack/containers/media-server/restart")
+    assert r.status_code == 200 and r.json() == answer
+    method, url, body = ops.calls[0]
+    assert method == "POST" and url.endswith("/projects/media-stack/containers/media-server/restart")
+    assert body == {"confirm": True}
+    assert ops.timeouts == [dashboard_app._LIFECYCLE_TIMEOUT]
+
+
+def test_managed_container_logs_pass_the_tail_and_use_the_short_timeout(monkeypatch, dashboard_operator_headers):
+    from dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "t")
+    ops = _RecordingOpsClient(_OpsResponse(200, {"project": "media-stack", "container": "media-server",
+                                                 "tail": 300, "logs": "ready"}))
+    with patch("dashboard.app._get_http_client", return_value=ops):
+        r = TestClient(app, headers=dashboard_operator_headers).get(
+            "/api/ops/projects/media-stack/containers/media-server/logs?tail=300")
+    assert r.json()["logs"] == "ready"
+    assert ops.calls[0][1].endswith("/projects/media-stack/containers/media-server/logs?tail=300")
+    assert ops.timeouts == [dashboard_app._LOGS_TIMEOUT]
+
+
+@pytest.mark.parametrize("method, url", [("post", "/api/ops/projects/media-stack/containers/media-server/restart"),
+                                         ("get", "/api/ops/projects/media-stack/containers/media-server/logs")])
+def test_the_managed_container_routes_need_a_principal(method, url):
+    r = getattr(TestClient(app), method)(url)
+    assert r.status_code == 401
 
 
 def test_logs_use_a_short_timeout(monkeypatch, dashboard_operator_headers):

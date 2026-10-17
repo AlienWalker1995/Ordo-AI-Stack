@@ -55,7 +55,7 @@ describe('Services: Stop and Restart', () => {
     renderInShell(<ServicesPage />)
 
     const evalsCard = (await screen.findAllByText('evals'))[0].closest('li')
-    fireEvent.click(within(evalsCard).getByRole('button', { name: 'Start' }))
+    fireEvent.click(within(evalsCard).getByRole('button', { name: 'Start evals' }))
 
     await screen.findByText('evals: started')
     expect(confirm).not.toHaveBeenCalled()

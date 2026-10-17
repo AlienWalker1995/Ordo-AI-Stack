@@ -67,6 +67,14 @@ async def _ops_json(path: str, timeout: float = 15.0) -> dict | None:
     return data if code == 200 and isinstance(data, dict) else None
 
 
+async def _host_containers() -> list[dict] | None:
+    """Every container on the host (ops-controller GET /containers, a bare list), or None."""
+    from dashboard.app import _ops_request
+
+    code, data = await _ops_request("GET", "/containers", timeout=15.0)
+    return data if code == 200 and isinstance(data, list) else None
+
+
 async def _ops_call(method: str, path: str, json: dict | None = None) -> tuple[int, dict]:
     from dashboard.app import _ops_request
 
@@ -217,11 +225,17 @@ async def activity(limit: int = Query(25, ge=1, le=100)) -> dict:
 
 @router.get("/services/table")
 async def services_table() -> dict:
-    cards, services, status = await asyncio.gather(_service_cards(), _ops_json("/services"), _ops_json("/status"))
+    cards, services, status, host_containers, managed = await asyncio.gather(
+        _service_cards(), _ops_json("/services"), _ops_json("/status"), _host_containers(),
+        _ops_json("/projects"),
+    )
     control_plane_up = services is not None
-    groups = console.build_service_table(cards, _containers(services), (status or {}).get("gpu"),
-                                         control_plane_up=control_plane_up)
-    return {"groups": groups, "control_plane": "up" if control_plane_up else "down"}
+    rows = console.build_service_table(cards, _containers(services), (status or {}).get("gpu"),
+                                       control_plane_up=control_plane_up, host_containers=host_containers,
+                                       managed=managed)
+    # host_containers: whether the rows outside the ordo project could be read at all.
+    return {"rows": rows, "control_plane": "up" if control_plane_up else "down",
+            "host_containers": "up" if host_containers is not None else "down"}
 
 
 # ---------------------------------------------------------------------------------------------

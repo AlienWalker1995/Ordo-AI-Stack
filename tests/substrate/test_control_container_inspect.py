@@ -119,6 +119,7 @@ def test_a_ps_line_becomes_a_container_row():
     assert broker_module.DockerBackend.container_row(line) == {
         "name": "nas-stack-janitorr", "status": "running", "image": "ghcr.io/schaka/janitorr:jvm-v2.1.1",
         "project": "nas-stack", "service": "janitorr", "health": "unhealthy",
+        "status_text": "Up 3 hours (unhealthy)",
     }
 
 

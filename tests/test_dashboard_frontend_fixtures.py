@@ -56,12 +56,22 @@ OPS = {
                                    "outcome": "completed"}]},
     "/audit?limit=100": {"entries": [{"ts": 300.0, "caller": "dashboard", "action": "restart",
                                       "target": "n8n", "result": "ok"}]},
+    "/projects": {"projects": [{"project": "media-stack", "containers": [
+        {"name": "media-server", "service": "server", "state": "running", "health": "healthy",
+         "status": "Up 4 days (healthy)", "image": "media"}]}]},
     "/doctor": {"ok": False, "checks": [
         {"check": "substrate", "ok": False, "detail": "substrate MISMATCH: ops-controller 79e3afd63f62 vs "
                                                       "the last render 0a898896c4f0."},
         {"check": "open-webui", "ok": True, "detail": "open-webui: not running"},
     ]},
 }
+# GET /containers: every container on the host, a bare list (DockerBackend.container_row).
+HOST_CONTAINERS = [
+    {"name": "media-server", "status": "running", "image": "media", "project": "media-stack", "service": "server",
+     "health": "healthy", "status_text": "Up 4 days (healthy)"},
+    {"name": "web-site-web-1", "status": "running", "image": "nginx", "project": "web-site", "service": "web",
+     "health": None, "status_text": "Up 6 days"},
+]
 HARDWARE = {"cpu_pct": 18, "ram_used_gb": 46.8, "ram_total_gb": 109.7, "ram_pct": 43,
             "disk_used_gb": 1607.1, "disk_total_gb": 1999.8, "disk_pct": 80.4,
             "gpus": [{"uuid": BIG, "name": "NVIDIA GeForce RTX 5090", "vram_total_gb": 34.2, "vram_used_gb": 29.6,
@@ -128,6 +138,7 @@ def client(dashboard_operator_headers):
 
     with patch.object(routes_console, "_ops_json", side_effect=ops_json), \
          patch.object(routes_console, "_ops_call", side_effect=ops_call), \
+         patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=HOST_CONTAINERS)), \
          patch.object(routes_console, "_hardware", new=AsyncMock(return_value=HARDWARE)), \
          patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=CARDS)), \
          patch.object(routes_console, "_rag", new=AsyncMock(return_value={"ok": True, "points_count": 2483})), \

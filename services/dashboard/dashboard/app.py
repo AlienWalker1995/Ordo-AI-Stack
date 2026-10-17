@@ -10,6 +10,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 # Lock for shared mutable state accessed from both async handlers and background threads
 _state_lock = threading.Lock()
@@ -569,6 +570,22 @@ async def ops_logs(service_id: str, request: Request, tail: int = 100):
     """Get service logs via ops controller."""
     ops_id = OPS_SERVICE_MAP.get(service_id, service_id)
     return await _ops_proxy("GET", f"/services/{ops_id}/logs?tail={tail}", request, timeout=_LOGS_TIMEOUT)
+
+
+# A container of a managed project (another compose project listed in `managed_projects:`):
+# ordo/control/managed_projects.py answers its logs and a confirmed, rate-limited restart.
+@app.get("/api/ops/projects/{project}/containers/{name}/logs")
+async def ops_project_container_logs(project: str, name: str, request: Request, tail: int = 100):
+    """Get a managed-project container's logs via ops controller."""
+    path = f"/projects/{quote(project, safe='')}/containers/{quote(name, safe='')}/logs?tail={tail}"
+    return await _ops_proxy("GET", path, request, timeout=_LOGS_TIMEOUT)
+
+
+@app.post("/api/ops/projects/{project}/containers/{name}/restart")
+async def ops_project_container_restart(project: str, name: str, request: Request):
+    """Restart a managed-project container via ops controller."""
+    path = f"/projects/{quote(project, safe='')}/containers/{quote(name, safe='')}/restart"
+    return await _ops_proxy("POST", path, request, timeout=_LIFECYCLE_TIMEOUT, json={"confirm": True})
 
 
 # --- RAG ---
