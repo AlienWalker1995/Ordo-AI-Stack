@@ -277,15 +277,6 @@ catalog and the rendered compose) on every call; nothing is stored. Each record 
 id, service, the file it loads, its GPU pin and, for `local-chat`, the context window and vision
 projector:
 
-Clients address the chat deployments through the gateway's stable aliases (the deployment-derived
-pins change name on every model swap and are not grantable to keys):
-
-| Alias | Serves | When to use |
-|---|---|---|
-| `local-chat` | the GPU chat model, failing over to the CPU fallback while a render holds the GPU | the default for every consumer: a turn is never lost to a GPU failure |
-| `local-chat-gpu` | the GPU chat model only, with no CPU failover | work that must run on the GPU and accepts an error while the model is evicted for a render |
-| `local-chat-cpu` | the always-on CPU fallback | work deliberately routed off the GPU (batch jobs, overnight crons); it holds no VRAM, so it runs in parallel with GPU work |
-
 | Endpoint (ops-controller) | Method | Purpose |
 |---|---|---|
 | `/registry/models` | GET | Every model the render serves (`local-chat`, `local-chat-cpu`, `local-embed`, `comfyui`, `voice-stt`, `voice-tts`, for the services that are rendered) |
@@ -295,6 +286,20 @@ pins change name on every model swap and are not grantable to keys):
 The dashboard proxies the first two as `/api/orchestration/registry/*`, and the `orchestration` MCP server exposes them as `list_models` and `gpu_status`. The dashboard's model-file delete refuses every file in `model_files` and every file a server has loaded. GPU pins are baked in at `ordo render` time, so `POST /gpu/assign` and `POST /registry/models/{id}/assign-gpu` answer 410.
 
 The active chat model is the `model:` key in `ordo.yaml`, and its projector is the catalog entry's `mmproj`: switch it from the dashboard's Models page or the `set_active_model` MCP tool. Both call the dashboard's `POST /api/models/switch`, which calls `ops-controller` `POST /model-config`: it writes `ordo.yaml`, re-renders, and recreates exactly the services the render changed (`llamacpp` and `model-gateway`; `llamacpp-cpu` too when the context window changed). The agent reads the window as well but is never cycled from the control plane: the response names it in `restart_required_on_host` with the host command (`ordo apply --only agent`). A switch is refused while a GPU render lease is held, and a failed apply rolls `ordo.yaml` back.
+
+### Gateway aliases
+
+The served-model ids above are what the stack runs. The model gateway additionally exposes stable
+aliases over the two chat deployments, which is how clients choose a routing policy (the
+deployment-derived pins change name on every model swap and are not grantable to keys). Only
+`local-chat` and `local-chat-cpu` are served-model ids; `local-chat-gpu` is a gateway alias of the
+same GPU deployment and does not appear in `/registry/models`:
+
+| Alias | Serves | When to use |
+|---|---|---|
+| `local-chat` | the GPU chat model, failing over to the CPU fallback while a render holds the GPU | the default for every consumer: a turn is never lost to a GPU failure |
+| `local-chat-gpu` | the GPU chat model only, with no CPU failover | work that must run on the GPU and accepts an error while the model is evicted for a render |
+| `local-chat-cpu` | the always-on CPU fallback | work deliberately routed off the GPU (batch jobs, overnight crons); it holds no VRAM, so it runs in parallel with GPU work |
 
 ## Local Model Cost
 
