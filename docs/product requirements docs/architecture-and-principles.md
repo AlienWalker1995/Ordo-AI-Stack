@@ -83,9 +83,9 @@ rewrites).
 │  │ no docker.sock  │  │ --profile rag   │  │              │                  │
 │  │ auth: edge SSO  │  │ watches         │  │              │                  │
 │  │ → ops ctrl API  │  │ data/rag-input/ │  │              │                  │
-│  │ Settings reads  │  │                 │  │              │                  │
-│  │ out/mcp/        │  │                 │  │              │                  │
-│  │ servers.json    │  │                 │  │              │                  │
+│  │ 4 pages +       │  │                 │  │              │                  │
+│  │ Ctrl/Cmd K      │  │                 │  │              │                  │
+│  │ palette         │  │                 │  │              │                  │
 │  └─────────────────┘  └─────────────────┘  └──────────────┘                  │
 │                                                                                │
 │  ┌──────────────────────────────────────────────────────────────────────┐    │
