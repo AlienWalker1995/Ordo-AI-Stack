@@ -1,26 +1,42 @@
 // App shell: a compact header (name, four pages, search) over one page at a time.
 // The page is kept in the URL hash so it can be linked to; links to the retired tabs land on
 // the page that absorbed them.
-import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Component, Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import CommandPalette from './components/CommandPalette.jsx'
 import { HostStepBanners } from './components/HostSteps.jsx'
 import LocalSignIn from './components/LocalSignIn.jsx'
 import { ToastProvider } from './components/Toast.jsx'
+import { BTN } from './components/ui.jsx'
 
-// One page's render error is contained to that page and cleared when the page changes.
-class PageErrorBoundary extends Component {
-  constructor(props) { super(props); this.state = { err: null } }
+// One render error stays in the top-level region it happened in (page, command palette, banners):
+// the rest of the shell keeps working, and the card names a recovery action instead of leaving
+// the operator staring at a blank area. Recovery remounts the region fresh; `onRecover`
+// additionally closes overlays (the palette) or hides the banners.
+class RegionErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { err: null, nonce: 0 } }
   static getDerivedStateFromError(err) { return { err } }
+  componentDidCatch(err) { console.error(`[ordo] ${this.props.label} stopped rendering:`, err) }
+  recover = () => {
+    this.setState((s) => ({ err: null, nonce: s.nonce + 1 }))
+    if (this.props.onRecover) this.props.onRecover()
+  }
   render() {
     if (this.state.err) {
-      return (
-        <div className="rounded-md border border-border border-l-[3px] border-l-danger bg-danger/[0.05] px-4 py-6" role="alert">
-          <div className="text-body font-semibold text-danger">This page hit an error and stopped rendering.</div>
-          <div className="mt-1 text-caption text-muted">Switch pages and back to retry. {String(this.state.err?.message || this.state.err)}</div>
+      const card = (
+        <div role="alert" className="rounded-md border border-border border-l-[3px] border-l-danger bg-danger/[0.05] px-4 py-6">
+          <div className="text-body font-semibold text-danger">{this.props.label} hit an error and stopped rendering.</div>
+          <div className="mt-1 text-caption text-muted">{String(this.state.err?.message || this.state.err)}</div>
+          <button type="button" className={BTN + ' mt-3'} onClick={this.recover}>{this.props.recoveryLabel}</button>
         </div>
       )
+      // Overlays (palette) are fixed-positioned, so their error card floats where the overlay
+      // would have been instead of landing at the bottom of the page flow.
+      if (this.props.overlay) {
+        return <div className="fixed inset-x-0 bottom-6 z-[500] mx-auto w-fit max-w-md px-4">{card}</div>
+      }
+      return card
     }
-    return this.props.children
+    return <Fragment key={this.state.nonce}>{this.props.children}</Fragment>
   }
 }
 
@@ -50,6 +66,8 @@ const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigat
 export default function App() {
   const [active, setActive] = useState(pageFromHash)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  // A banners region that crashed is hidden until reload; the error card names that recovery.
+  const [bannersHidden, setBannersHidden] = useState(false)
   const tabRefs = useRef([])
 
   useEffect(() => {
@@ -131,20 +149,29 @@ export default function App() {
 
       <div className="mx-auto max-w-container px-6 pb-10 max-md:px-4">
         {/* Banners that stay until acted on; the wrapper collapses when neither has anything to say. */}
-        <div className="mb-5 grid gap-3 empty:hidden">
-          <LocalSignIn />
-          <HostStepBanners idPrefix="page-host-step" />
-        </div>
+        {!bannersHidden && (
+          <RegionErrorBoundary label="The banners" recoveryLabel="Dismiss"
+                               onRecover={() => setBannersHidden(true)}>
+            <div className="mb-5 grid gap-3 empty:hidden">
+              <LocalSignIn />
+              <HostStepBanners idPrefix="page-host-step" />
+            </div>
+          </RegionErrorBoundary>
+        )}
 
         <main id="page" role="tabpanel" aria-labelledby={`tab-${active}`} tabIndex={-1}>
-          <PageErrorBoundary key={active}>
+          <RegionErrorBoundary key={active} label="This page" recoveryLabel="Retry">
             <Suspense fallback={<div className="py-10 text-center text-caption text-muted" role="status">Loading…</div>}>
               <ActivePage />
             </Suspense>
-          </PageErrorBoundary>
+          </RegionErrorBoundary>
         </main>
       </div>
-      <CommandPalette open={paletteOpen} onClose={closePalette} pages={PAGES} onNavigate={navigate} />
+      {/* Keyed by open state so a closed palette starts from a clean boundary next time it opens. */}
+      <RegionErrorBoundary key={paletteOpen ? 'palette-open' : 'palette-closed'} label="The command palette"
+                           recoveryLabel="Close search" overlay onRecover={closePalette}>
+        <CommandPalette open={paletteOpen} onClose={closePalette} pages={PAGES} onNavigate={navigate} />
+      </RegionErrorBoundary>
     </ToastProvider>
   )
 }

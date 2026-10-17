@@ -56,6 +56,18 @@ All notable changes to this project are documented here. The format is loosely b
   container not running, source unavailable) instead of 0.0, and VRAM is null until ops-controller
   measures it. With the control plane down, container rows are `unknown` with no actions instead of
   Stopped with a Start button, and the table says `control_plane: "down"`.
+- **A render error in one part of the dashboard no longer blanks the whole app.** A throw inside a
+  page or the command palette used to unmount everything below the header. Each region now has its
+  own error boundary with a named recovery action (retry the page, close the palette); the banners
+  hide themselves rather than crash the content.
+- **Host-step banners survive two open tabs.** Two tabs share one storage key, so a write replaced
+  what the other tab stored: a step added in one tab vanished from the other, and a dismiss could
+  resurrect a step the other tab had closed. Writes now merge against the storage snapshot this
+  tab last wrote or adopted (keeping a step the other tab added since then, dropping one we
+  deliberately dismissed), each tab adopts foreign writes through the `storage` event, and the
+  stored shape is versioned and validated on read. The storage key moved to `ordo.hostSteps.v1`;
+  on first load a pending step left under the old `ordo.hostSteps` key is adopted once and the
+  old key removed, so an upgrade does not clear the queue.
 - **Streamed speech starts with the first sentence again.** Hermes asks the TTS endpoint for raw
   `pcm` one sentence at a time (desktop speak-stream and Discord voice), but Chatterbox-TTS-Server
   accepts only wav, opus and mp3: every streamed reply was refused (422) and spoken only after the
