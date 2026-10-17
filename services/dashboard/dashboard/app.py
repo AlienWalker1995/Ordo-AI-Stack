@@ -11,6 +11,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote, urlencode
 
 # Lock for shared mutable state accessed from both async handlers and background threads
@@ -30,12 +31,13 @@ import httpx as _httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from starlette.middleware.gzip import GZipMiddleware
 
-from dashboard import auth, diagnostics
+from dashboard import auth, diagnostics, live_work
 from dashboard.console import CHAT_MODEL_SUFFIXES
 from dashboard.routes_auth import router as auth_router
+from dashboard.routes_console import LLAMACPP_CPU_URL
 from dashboard.routes_console import router as console_router
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router
@@ -110,8 +112,9 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
     if not path.startswith("/api/"):
         return await call_next(request)
-    # /api/throughput/record: requires THROUGHPUT_RECORD_TOKEN when set (model-gateway internal; PRD §3.E)
-    if path == "/api/throughput/record":
+    # /api/throughput/record and /api/work/events: require THROUGHPUT_RECORD_TOKEN when set
+    # (model-gateway internal; PRD §3.E)
+    if path in ("/api/throughput/record", "/api/work/events"):
         token = read_secret("THROUGHPUT_RECORD_TOKEN")
         if token and not hmac.compare_digest(request.headers.get("X-Throughput-Token", ""), token):
             return JSONResponse(status_code=401, content={"detail": "Invalid or missing X-Throughput-Token"})
@@ -494,6 +497,75 @@ async def throughput_record(req: ThroughputRecordRequest):
                 _ttft_samples[model] = _ttft_samples[model][-_MAX_SAMPLES_PER_MODEL:]
         _maybe_save_throughput()
     return {"ok": True}
+
+
+# --- Live model work (dashboard/live_work.py). In memory only: a restart starts empty. ---
+
+_work_store = live_work.WorkStore()
+_CPU_SLOTS_TIMEOUT = 2.0
+_CPU_SLOTS_CACHE_TTL = 2.0
+_cpu_slots_cache: dict = {"checked": 0.0, "value": None}
+
+
+class WorkEventRequest(BaseModel):
+    event: Literal["started", "ended"]
+    call_id: str = Field(min_length=1, max_length=128)
+    caller: str = Field(default="", max_length=64)
+    model_group: str = Field(default="", max_length=256)
+    model: str = Field(default="", max_length=256)
+    deployment: str = Field(default="", max_length=64)
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    outcome: Literal["ok", "error"] = "ok"
+    error: str | None = Field(default=None, max_length=128)
+    started_at: float | None = Field(default=None, ge=0)
+    ended_at: float | None = Field(default=None, ge=0)
+    fallback: StrictBool = False
+
+
+@app.post("/api/work/events")
+async def work_events(req: WorkEventRequest):
+    """A model gateway request started or ended (throughput_callback.py). Fire-and-forget."""
+    event = req.model_dump()
+    if req.event == "started":
+        _work_store.started(event, time.time())
+    else:
+        _work_store.ended(event, time.time())
+    return {"ok": True}
+
+
+async def _cpu_prefill() -> dict:
+    """The CPU engine's prefill progress from llama.cpp GET /slots, cached for 2 s. The GPU engine
+    (NInfer) serves no /slots, so its in-flight work comes from the gateway's events alone."""
+    now = time.monotonic()
+    if _cpu_slots_cache["value"] is not None and now - _cpu_slots_cache["checked"] < _CPU_SLOTS_CACHE_TTL:
+        return _cpu_slots_cache["value"]
+    progress = None
+    try:
+        response = await _get_http_client().get(f"{LLAMACPP_CPU_URL}/slots", timeout=_CPU_SLOTS_TIMEOUT)
+        response.raise_for_status()
+        progress = live_work.slots_progress(response.json())
+    except Exception as exc:
+        logger.debug("CPU engine /slots unavailable: %s", exc)
+    if progress is None:
+        value = {"available": False, "processing": False, "prompt_tokens": 0, "processed": 0, "cached": 0}
+    else:
+        value = {"available": True, **progress}
+    _cpu_slots_cache.update(checked=now, value=value)
+    return value
+
+
+@app.get("/api/work")
+async def work():
+    """Requests in flight on the local engines and, per caller, the last five minutes."""
+    body = _work_store.snapshot(time.time())
+    for engine in body["engines"].values():
+        engine["prefill"] = None
+    cpu = body["engines"]["llamacpp-cpu"]
+    # Read the CPU engine only while the fallback is serving something.
+    if cpu["inflight"]:
+        cpu["prefill"] = await _cpu_prefill()
+    return body
 
 
 # Authoritative active model, from the same ops-controller /model-config the Model
