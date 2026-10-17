@@ -79,7 +79,7 @@ def test_memory_vault_mcp_render_passes_through_catalog_fields():
 
 def test_memory_vault_compose_service_has_rw_vault(tmp_path):
     render(_src(["memory-vault"]), CATALOG, REGISTRY).write(tmp_path)
-    # servers.json lists it (the dashboard's read-only view of the enabled roster)
+    # servers.json lists it (the rendered view of the enabled roster)
     sj = json.loads((tmp_path / "mcp" / "servers.json").read_text())
     assert "memory-vault" in {s["id"] for s in sj["servers"]}
     # its compose service carries the vault volume through, READ-WRITE (no :ro)

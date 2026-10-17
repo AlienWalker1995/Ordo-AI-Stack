@@ -74,9 +74,9 @@ def test_placeholder_digest_still_detected():
     assert any("placeholder" in n for n in notes)
 
 
-# ── Defect class: LiteLLM reads its MCP servers from the rendered `mcp_servers` fragment, and the
-#    dashboard reads the enabled roster from servers.json. render must emit both, or the gateway
-#    exposes no tools and the UI shows nothing. ──
+# ── Defect class: LiteLLM reads its MCP servers from the rendered `mcp_servers` fragment, and
+#    the native-mode checklist points operators at servers.json for the enabled roster. render
+#    must emit both, or the gateway exposes no tools and the checklist lists none. ──
 def test_write_emits_litellm_fragment_and_servers_json(tmp_path):
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     rc.write(tmp_path)
@@ -90,7 +90,7 @@ def test_write_emits_litellm_fragment_and_servers_json(tmp_path):
                  "description": q["description"], "timeout": 60, "available_on_public_internet": False,
                  "mcp_info": {"server_name": "qdrant_rag"}}
     assert servers["searxng"]["url"] == "http://mcp-searxng:8080/mcp"
-    # the dashboard's view: enabled servers + the full server_id -> plugin_id map
+    # the rendered server list: enabled servers + the full server_id -> plugin_id map
     sj = json.loads((tmp_path / "mcp" / "servers.json").read_text())
     ids = {s["id"] for s in sj["servers"]}
     assert {"qdrant-rag", "searxng"} <= ids          # servers.json ids stay the hyphenated server_id
@@ -263,8 +263,9 @@ def test_restored_servers_in_written_servers_json(tmp_path):
     assert "${CODE_ROOT:-/c/dev}:/c/dev:ro" in cb["volumes"]
 
 
-# ── server_id → plugin_id map: emitted so the dashboard can persist a UI MCP toggle into ordo.yaml's
-#    plugins list (the enabled roster is render-owned and would otherwise reseed the toggle away). ──
+# ── server_id → plugin_id map: emitted so an operator can re-enable a disabled MCP by adding its
+#    plugin back to ordo.yaml's plugins list (the enabled roster is render-owned; the native-mode
+#    checklist points operators at the rendered list). ──
 def test_render_builds_server_plugin_map():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     m = rc.mcp_server_plugin_map

@@ -44,7 +44,8 @@ this server.
   the container itself can reach nothing. No Docker socket and no host-path allowlist are involved.
 
 `ordo render` emits the server into `out/model-gateway/mcp_servers.yaml` (the LiteLLM fragment its
-entrypoint merges) and `out/mcp/servers.json` (the dashboard's server list).
+entrypoint merges) and `out/mcp/servers.json` (the rendered server list — the native-mode checklist
+points operators at it).
 
 ## How the tools appear
 

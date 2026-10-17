@@ -16,7 +16,7 @@ token: LiteLLM answers 401 to a missing or invalid key, so the route cannot degr
 
 An MCP server is a plugin manifest at `services/<id>/plugin.yaml` with `kind: mcp` and an `mcp:`
 block. The manifest is the single source of truth: the renderer derives the compose service, the
-LiteLLM registration and the dashboard's server list from it.
+LiteLLM registration and the rendered server list (`out/mcp/servers.json`) from it.
 
 | Key | Meaning |
 |-----|---------|

@@ -14,8 +14,8 @@ Design constraints (from the architecture decisions + the drift lessons):
     probe is open. This API can stop services, re-render the stack and hand out GPU leases, so
     network isolation alone is not enough: any compromised container on ordo-net could drive it.
     The check lives in the HTTP layer (`app()`); `route()` itself stays pure.
-  - ONE post-render step. Every source write (model switch, plugin enable/disable, and so the
-    dashboard's MCP toggle) is followed by `apply_render`: recreate exactly the services whose
+  - ONE post-render step. Every source write (model switch, plugin enable/disable) is followed by
+    `apply_render`: recreate exactly the services whose
     rendered config hash or image differs from their container's (ordo/render/changed_set.py, the
     computation the host's `ordo apply` makes), GPU-lease checked, netns members with their owner.
     What this process cannot recreate (itself, the agent calling it, a service missing its

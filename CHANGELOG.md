@@ -383,7 +383,8 @@ All notable changes to this project are documented here. The format is loosely b
   `path`, `network: internal|stack`, `env`, `secrets`, `volumes`, `healthcheck`, `timeout`,
   `allowed_tools`, `tools`). No container in the tool path mounts the Docker socket any more.
   `ordo render` emits `out/model-gateway/mcp_servers.yaml` (merged into the LiteLLM config by the
-  entrypoint) and `out/mcp/servers.json` (the dashboard's server list).
+  entrypoint) and `out/mcp/servers.json` (the rendered server list; the native-mode checklist
+  points operators at it).
   **Stdio-only upstreams are bridged, not spawned.** `codebase-memory`, `memory-vault` and the new
   `n8n-mcp` image (`ordo/n8n-mcp`, built over `ghcr.io/czlonkowski/n8n-mcp:2.84.1`) each run
   `mcp-proxy --stateless --pass-environment` in front of the upstream stdio server on port 9000:
@@ -398,17 +399,17 @@ All notable changes to this project are documented here. The format is loosely b
   surface the pinned servers and `mcp-proxy` do not support. Fixed by pinning **`mcp==1.30.0`**
   (with `httpx==0.28.1` and `mcp-proxy==0.12.0`) in every MCP image; "pin, don't float" now
   applies to the Python deps inside the images, not just the images themselves.
-  **Dashboard + edge.** The dashboard's MCP tab reads MCP health from LiteLLM
-  (`/v1/mcp/server/health` plus the `tools/list` `server_outcomes`), not from container status,
-  and lists servers from `out/mcp/servers.json`; `ops-api` inventories MCP containers by the
-  compose label `ordo.mcp=true`. The Caddy edge's `/mcp` route now proxies `model-gateway` and
-  authenticates with a LiteLLM key (`LITELLM_KEY_EDGE`).
+  **Dashboard + edge.** The dashboard's orchestration-readiness probe checks MCP health through
+  LiteLLM's aggregate `/mcp` (`tools/list` plus the `litellm.ai/server_outcomes` meta), not from
+  container status; `ops-api` inventories MCP containers by the compose label `ordo.mcp=true`.
+  The Caddy edge's `/mcp` route now proxies `model-gateway` and authenticates with a LiteLLM key
+  (`LITELLM_KEY_EDGE`).
   **Retired with the old gateway:** `MCP_GATEWAY_TOKEN`, `data/mcp/servers.txt`,
   `registry-custom.yaml`, `out/mcp-registry.yaml`, `scripts/mcp_add.sh` / `scripts/mcp_add.ps1`,
   and the `longLived` / `disableNetwork` / `PLACEHOLDER_*` catalog keys (now rejected by the
-  renderer). Enabling or disabling a server is an edit to `ordo.yaml`'s `plugins:` list (the
-  dashboard MCP tab writes the same file), applied by `ordo render` plus a `model-gateway`
-  recreate: LiteLLM reads config-file MCP servers at startup, so there is no hot reload.
+  renderer). Enabling or disabling a server is an edit to `ordo.yaml`'s `plugins:` list, applied
+  by `ordo render` plus a `model-gateway` recreate: LiteLLM reads config-file MCP servers at
+  startup, so there is no hot reload.
 - model-gateway trusts the edge's forwarded headers (FORWARDED_ALLOW_IPS=*) so the admin UI
   login works through SSO; the dashboard Open link now targets /ui/.
 - **Virtual-key bootstrap reconciles by ALIAS against LiteLLM's real shapes (2026-09-12).**

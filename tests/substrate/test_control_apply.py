@@ -1,8 +1,7 @@
 """ops-controller's post-render step: after a source write and a render, recreate exactly the changed set.
 
 Every caller that changes the operator source through the control plane (the model switch, a plugin
-enable or disable, the dashboard's MCP toggle) used to keep its own hand-written list of what to
-restart afterwards. The dashboard's said "llamacpp + model-gateway (+ llamacpp-cpu)" and reported
+enable or disable) used to keep its own hand-written list of what to restart afterwards. The dashboard's said "llamacpp + model-gateway (+ llamacpp-cpu)" and reported
 "restart Hermes" on a context change, because the agent reads LLAMACPP_CTX_SIZE too. The render
 already decides what changed: `ordo/render/changed_set.py` compares every rendered service's config
 hash and image with its container's, the same computation the host's `ordo apply` makes.
