@@ -245,7 +245,7 @@ export default function OverviewPage() {
 
   if (!o) {
     return overview.error
-      ? <Unavailable>The dashboard API is not answering: {overview.error.message}</Unavailable>
+      ? <Unavailable error={overview.error}>The dashboard API is not answering: {overview.error.message}</Unavailable>
       : <div className="grid gap-4"><Skeleton className="h-6 w-72" /><Skeleton className="h-64 w-full" /></div>
   }
 

@@ -696,8 +696,8 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
         )
     prompt = "Say 'ok' and nothing else."
     url = f"{MODEL_GATEWAY_URL.rstrip('/')}/v1/chat/completions"
+    started = time.perf_counter()
     try:
-        started = time.perf_counter()
         r = await _get_http_client().post(
             url,
             headers=_model_gateway_headers(),
@@ -710,7 +710,18 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
             timeout=60.0,
         )
         elapsed_ms = (time.perf_counter() - started) * 1000
-        if r.status_code == 400:
+        if r.status_code < 400:
+            try:
+                data = r.json()
+            except (ValueError, UnicodeDecodeError):
+                diagnostics.record_failure("GATEWAY", "BADPAYLOAD", "unparseable JSON response",
+                                           target="/v1/chat/completions", elapsed_ms=elapsed_ms)
+                raise HTTPException(status_code=502, detail="Model gateway returned invalid JSON")
+            diagnostics.mark_ok("GATEWAY")
+        elif r.status_code == 400:
+            # A 400 means the gateway answered (a bad model name, for instance): mark it ok and
+            # pass the gateway's own message through.
+            diagnostics.mark_ok("GATEWAY")
             try:
                 err = r.json()
                 error_obj = err.get("error", err)
@@ -721,11 +732,21 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
             except (ValueError, UnicodeDecodeError, KeyError):
                 msg = r.text or "Bad request"
             raise HTTPException(status_code=400, detail=f"Model gateway: {msg}")
-        r.raise_for_status()
-        data = r.json()
+        else:
+            kind = diagnostics.classify_failure(status=r.status_code)
+            if kind == "HTTP4XX":
+                diagnostics.mark_ok("GATEWAY")
+            else:
+                diagnostics.record_failure("GATEWAY", kind, f"HTTP {r.status_code}",
+                                           target="/v1/chat/completions", elapsed_ms=elapsed_ms)
+            raise HTTPException(status_code=502, detail=f"Model gateway answered HTTP {r.status_code}")
     except HTTPException:
         raise
     except Exception as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        diagnostics.record_failure("GATEWAY", diagnostics.classify_failure(e),
+                                   f"{type(e).__name__}: {e}", target="/v1/chat/completions",
+                                   elapsed_ms=elapsed_ms)
         raise HTTPException(status_code=502, detail=f"Model gateway request failed: {e}")
 
     usage = data.get("usage", {}) if isinstance(data, dict) else {}
@@ -946,10 +967,19 @@ RAG_COLLECTION = os.environ.get("RAG_COLLECTION", "documents")
 
 async def rag_status():
     """Qdrant health and document collection stats."""
+    target = f"/collections/{RAG_COLLECTION}"
+    started = time.perf_counter()
     try:
-        r = await _get_http_client().get(f"{QDRANT_URL}/collections/{RAG_COLLECTION}", timeout=5.0)
+        r = await _get_http_client().get(f"{QDRANT_URL}{target}", timeout=5.0)
+        elapsed_ms = (time.perf_counter() - started) * 1000
         if r.status_code == 200:
-            info = r.json().get("result", {})
+            try:
+                info = r.json().get("result", {})
+            except (ValueError, UnicodeDecodeError) as e:
+                diagnostics.record_failure("QDRANT", "BADPAYLOAD", type(e).__name__, target=target,
+                                           elapsed_ms=elapsed_ms)
+                return {"ok": False, "error": "Invalid response from Qdrant"}
+            diagnostics.mark_ok("QDRANT")
             return {
                 "ok": True,
                 "collection": RAG_COLLECTION,
@@ -957,9 +987,19 @@ async def rag_status():
                 "status": info.get("status", "unknown"),
             }
         if r.status_code == 404:
+            diagnostics.mark_ok("QDRANT")
             return {"ok": True, "collection": RAG_COLLECTION, "points_count": 0, "status": "empty"}
+        kind = diagnostics.classify_failure(status=r.status_code)
+        if kind == "HTTP4XX":
+            diagnostics.mark_ok("QDRANT")
+        else:
+            diagnostics.record_failure("QDRANT", kind, f"HTTP {r.status_code}", target=target,
+                                       elapsed_ms=elapsed_ms)
         return {"ok": False, "error": f"HTTP {r.status_code}"}
     except Exception as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        diagnostics.record_failure("QDRANT", diagnostics.classify_failure(e),
+                                   f"{type(e).__name__}: {e}", target=target, elapsed_ms=elapsed_ms)
         return {"ok": False, "error": str(e)}
 
 
@@ -986,9 +1026,17 @@ def _mib_to_gb(mib: int | None) -> float | None:
 async def _live_gpus() -> list[dict]:
     """ops-controller `GET /gpus`, the stack's one live GPU reader (ordo/render/gpu_live.py), in
     the /api/hardware `gpus` shape. The dashboard reserves no GPU and never probes one itself.
-    ops-controller unreachable or answering garbage -> [] (the GPU widgets show none)."""
+    ops-controller unreachable or answering garbage -> [] (the GPU widgets show none). A 200 whose
+    body is not an object records DEP-OPS-BADPAYLOAD (dashboard/diagnostics.py); transport and
+    status failures are already recorded by _ops_request."""
+    started = time.perf_counter()
     code, data = await _ops_request("GET", "/gpus", timeout=15.0)
+    elapsed_ms = (time.perf_counter() - started) * 1000
     if code != 200 or not isinstance(data, dict):
+        if code == 200:
+            diagnostics.record_failure("OPS", "BADPAYLOAD",
+                                       "ops-controller /gpus answered 200 without an object body",
+                                       target="/gpus", elapsed_ms=elapsed_ms)
         logger.debug("ops-controller /gpus answered %s: %s", code, data)
         return []
     gpus = []

@@ -19,7 +19,7 @@ export default function PerformancePage() {
 
   if (!grafana.data) {
     return grafana.error
-      ? <Unavailable>Could not check Grafana: {grafana.error.message}</Unavailable>
+      ? <Unavailable error={grafana.error}>Could not check Grafana: {grafana.error.message}</Unavailable>
       : <Skeleton className="h-96 w-full" />
   }
   if (!grafana.data.available) {

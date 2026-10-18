@@ -34,7 +34,7 @@ import logging
 import socket
 import time
 
-from dashboard import settings
+from dashboard import diagnostics, settings
 
 logger = logging.getLogger(__name__)
 
@@ -118,11 +118,17 @@ def edge_proxy_addresses() -> set[str]:
     """The addresses the edge proxy resolves to on the dashboard's networks (blocking DNS).
 
     An empty set (the name does not resolve) means no request can carry the edge identity."""
+    started = time.perf_counter()
     try:
         infos = socket.getaddrinfo(EDGE_PROXY_HOST, None)
     except OSError as exc:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        diagnostics.record_failure("EDGE", diagnostics.classify_failure(exc),
+                                   f"edge proxy DNS lookup failed: {type(exc).__name__}",
+                                   target=EDGE_PROXY_HOST, elapsed_ms=elapsed_ms)
         logger.debug("cannot resolve the edge proxy %s: %s", EDGE_PROXY_HOST, exc)
         return set()
+    diagnostics.mark_ok("EDGE")
     return {str(ipaddress.ip_address(info[4][0])) for info in infos}
 
 

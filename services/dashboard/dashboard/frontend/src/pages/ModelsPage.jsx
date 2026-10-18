@@ -194,7 +194,7 @@ export default function ModelsPage() {
 
   if (!d) {
     return models.error
-      ? <Unavailable>Models are unavailable: {models.error.message}</Unavailable>
+      ? <Unavailable error={models.error}>Models are unavailable: {models.error.message}</Unavailable>
       : <Skeleton className="h-64 w-full" />
   }
 

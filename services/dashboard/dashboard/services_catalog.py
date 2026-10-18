@@ -19,9 +19,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx as _httpx
+
+from dashboard import diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -256,40 +260,63 @@ async def _check_via_edge(card: dict, client: _httpx.AsyncClient) -> tuple[bool 
     (`sso_port`, derived from the plugin's `edge_site`), for the card's `edge_check` path, with the
     tailnet certificate verified and the UI's public host in `Host`. A container-level check stays
     green while the route in front of it is broken (on 2026-10-14 the Hermes card read healthy while
-    its site returned 502). Neutral (None) when the edge is not configured for this card."""
+    its site returned 502). Neutral (None) when the edge is not configured for this card. A failed
+    probe records DEP-EDGE-* (dashboard/diagnostics.py); an answer marks EDGE ok."""
     edge_host = os.environ.get("CADDY_TAILNET_HOSTNAME", "").strip()
     domain = os.environ.get("CADDY_TAILNET_DOMAIN", "").strip()
     port = card.get("sso_port")
     if not edge_host or not port:
         return None, ""
     public_host = f"{card['tailnet_label']}.{domain}" if card.get("tailnet_label") and domain else edge_host
+    target = str(card["edge_check"])
     request = client.build_request(
-        "GET", f"https://caddy:{port}{card['edge_check']}", headers={"Host": public_host},
+        "GET", f"https://caddy:{port}{target}", headers={"Host": public_host},
         # Caddy serves the tailnet certificate, so the handshake names the edge host it covers.
         extensions={"sni_hostname": edge_host})
+    started = time.perf_counter()
     try:
         response = await client.send(request)
     except (_httpx.RequestError, OSError) as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        diagnostics.record_failure("EDGE", diagnostics.classify_failure(e), detail,
+                                   target=target, elapsed_ms=elapsed_ms)
         return False, str(e)
+    elapsed_ms = (time.perf_counter() - started) * 1000
     if response.status_code >= 500:
+        diagnostics.record_failure(
+            "EDGE", diagnostics.classify_failure(status=response.status_code),
+            f"{public_host} answered HTTP {response.status_code} through the edge",
+            target=target, elapsed_ms=elapsed_ms)
         return False, f"{public_host} answers {response.status_code} through the edge"
+    diagnostics.mark_ok("EDGE")
     return True, ""
 
 
 async def _check_service(url: str, client: _httpx.AsyncClient | None = None) -> tuple[bool, str]:
-    """Check if a service is reachable. Returns (ok, error_message)."""
+    """Check if a service is reachable. Returns (ok, error_message). The probe always carries its
+    own 3 s timeout (the shared client's default is 30 s), and a failed probe records DEP-PROBE-*
+    (dashboard/diagnostics.py); an answer marks PROBE ok."""
+    target = urlsplit(url).path or url
+    started = time.perf_counter()
     try:
         c = client or _httpx.AsyncClient(timeout=3.0)
         try:
-            r = await c.get(url)
+            r = await c.get(url, timeout=3.0)
+            diagnostics.mark_ok("PROBE")
             return (r.status_code < 500, "")
         finally:
             if client is None:
                 await c.aclose()
     except (_httpx.RequestError, OSError) as e:
         err = str(e).lower()
-        if "connection refused" in err or "connection reset" in err:
-            return (False, str(e))
         if "remoteprotocolerror" in err or "protocol" in err or "closed" in err or "disconnected" in err:
+            # The peer closed the connection mid-answer: the service is up, so read it as ok
+            # instead of recording a failure.
+            diagnostics.mark_ok("PROBE")
             return (True, "")
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        diagnostics.record_failure("PROBE", diagnostics.classify_failure(e), detail,
+                                   target=target, elapsed_ms=elapsed_ms)
         return (False, str(e))

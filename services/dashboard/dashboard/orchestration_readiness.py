@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
+from dashboard import diagnostics
 from dashboard.secret_env import read_secret
 
 logger = logging.getLogger(__name__)
@@ -25,28 +28,58 @@ ORCHESTRATION_MEDIA_REQUIRED = os.environ.get("ORCHESTRATION_MEDIA_REQUIRED", "0
 )
 
 
-def _probe_get(url: str, timeout: float = 3.0) -> tuple[bool, str | None]:
+def _probe_get(url: str, timeout: float = 3.0, dep: str = "GATEWAY") -> tuple[bool, str | None]:
+    """GET url; return (ok, error). A failed probe records DEP-<dep>-* (dashboard/diagnostics.py);
+    an answer marks the dep ok."""
+    target = urlsplit(url).path or url
+    started = time.perf_counter()
     try:
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             r = client.get(url)
-        ok = r.status_code < 500
-        if r.status_code == 400 and "/mcp" in url:
-            ok = True
-        return ok, None if ok else f"HTTP {r.status_code}"
     except Exception as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        diagnostics.record_failure(dep, diagnostics.classify_failure(e), detail,
+                                   target=target, elapsed_ms=elapsed_ms)
         return False, str(e)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    ok = r.status_code < 500
+    if r.status_code == 400 and "/mcp" in url:
+        # LiteLLM answers 400 for a bare GET on /mcp when it expects POST; that still proves the
+        # route is live.
+        ok = True
+    if ok:
+        diagnostics.mark_ok(dep)
+        return ok, None
+    kind = diagnostics.classify_failure(status=r.status_code)
+    if kind == "HTTP4XX":
+        diagnostics.mark_ok(dep)
+    else:
+        diagnostics.record_failure(dep, kind, f"HTTP {r.status_code} from {target}",
+                                   target=target, elapsed_ms=elapsed_ms)
+    return ok, f"HTTP {r.status_code}"
 
 
 def _probe_litellm_mcp_tools(url: str, api_key: str, timeout: float = 30.0) -> tuple[bool, int, str | None]:
     """tools/list against LiteLLM's aggregate /mcp (no initialize needed). ok when every server
-    outcome is `ok` and at least one tool is listed; the per-server outcomes name the culprit."""
+    outcome is `ok` and at least one tool is listed; the per-server outcomes name the culprit. The
+    call records under GATEWAY like every other model-gateway request (dashboard/diagnostics.py)."""
+    target = urlsplit(url).path or url
     headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
                "x-litellm-api-key": f"Bearer {api_key}"}
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    started = time.perf_counter()
     try:
         with httpx.Client(timeout=timeout) as client:
             r = client.post(url, json=body, headers=headers)
         if r.status_code >= 400:
+            kind = diagnostics.classify_failure(status=r.status_code)
+            if kind == "HTTP4XX":
+                diagnostics.mark_ok("GATEWAY")
+            else:
+                diagnostics.record_failure(
+                    "GATEWAY", kind, f"tools/list HTTP {r.status_code} from {target}",
+                    target=target, elapsed_ms=(time.perf_counter() - started) * 1000)
             return False, 0, f"tools/list HTTP {r.status_code}"
         result: dict = {}
         for line in r.text.splitlines():
@@ -63,8 +96,14 @@ def _probe_litellm_mcp_tools(url: str, api_key: str, timeout: float = 30.0) -> t
             return False, len(tools), f"servers not ok: {', '.join(bad)}"
         if not tools:
             return False, 0, "tools/list returned 0 tools"
+        diagnostics.mark_ok("GATEWAY")
         return True, len(tools), None
     except Exception as e:  # noqa: BLE001
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        kind = ("BADPAYLOAD" if isinstance(e, ValueError | UnicodeDecodeError)
+                else diagnostics.classify_failure(e))
+        detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        diagnostics.record_failure("GATEWAY", kind, detail, target=target, elapsed_ms=elapsed_ms)
         return False, 0, str(e)
 
 
@@ -76,7 +115,7 @@ def compute_readiness() -> dict:
     media_ok = True
     media_err: str | None = None
     if ORCHESTRATION_MEDIA_REQUIRED:
-        u_ok, u_err = (_probe_get(f"{COMFYUI_URL}/") if COMFYUI_URL
+        u_ok, u_err = (_probe_get(f"{COMFYUI_URL}/", dep="COMFYUI") if COMFYUI_URL
                        else (False, "COMFYUI_URL is not set (comfyui is not enabled)"))
         if not u_ok:
             media_ok = False

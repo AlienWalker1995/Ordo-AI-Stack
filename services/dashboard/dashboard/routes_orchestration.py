@@ -7,6 +7,7 @@ import difflib
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, StrictBool
 
+from dashboard import diagnostics
 from dashboard.orchestration_db import (
     get_workflow_version,
     list_workflow_versions,
@@ -72,6 +74,42 @@ def _ops_headers(request: Request | None) -> dict[str, str]:
     if request and request.headers.get("X-Request-ID"):
         h["X-Request-ID"] = request.headers["X-Request-ID"]
     return h
+
+
+def _exc_detail(exc: BaseException) -> str:
+    """The class name plus the message: str(exc) alone embeds internal hostnames and ports."""
+    return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+
+
+async def _raw_ops_request(method: str, path: str, request: Request, *, timeout: float,
+                           headers: dict[str, str], json_body: dict | None = None) -> dict:
+    """An ops-controller call on its own client (these routes predate the shared client), recorded
+    under OPS like every other outbound call (dashboard/diagnostics.py). A 4xx other than AUTH
+    means the controller answered, so it marks OPS ok before passing the status on."""
+    url = f"{OPS_CONTROLLER_URL}{path}"
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.request(method, url, headers=headers, json=json_body)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+        diagnostics.mark_ok("OPS")
+        return r.json()
+    except HTTPException as exc:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        kind = diagnostics.classify_failure(status=exc.status_code)
+        if kind == "HTTP4XX":
+            diagnostics.mark_ok("OPS")
+        else:
+            diagnostics.record_failure("OPS", kind, f"HTTP {exc.status_code} from {path}",
+                                       target=path, elapsed_ms=elapsed_ms)
+        raise
+    except Exception as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        kind = ("BADPAYLOAD" if isinstance(e, ValueError | UnicodeDecodeError)
+                else diagnostics.classify_failure(e))
+        diagnostics.record_failure("OPS", kind, _exc_detail(e), target=path, elapsed_ms=elapsed_ms)
+        raise HTTPException(status_code=502, detail=str(e)) from e
 
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -251,17 +289,8 @@ async def restart_comfyui(request: Request, body: RestartBody):
         raise HTTPException(status_code=400, detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
     if not OPS_CONTROLLER_TOKEN:
         raise HTTPException(status_code=503, detail="OPS_CONTROLLER_TOKEN not configured")
-    url = f"{OPS_CONTROLLER_URL}/services/comfyui/restart"
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(url, headers=_ops_headers(request), json={"confirm": True})
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return r.json()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+    return await _raw_ops_request("POST", "/services/comfyui/restart", request, timeout=60.0,
+                                  headers=_ops_headers(request), json_body={"confirm": True})
 
 
 @router.get("/comfyui/status")
@@ -271,23 +300,36 @@ async def comfyui_status(request: Request):
     Deliberately ComfyUI-INDEPENDENT: it queries ops-controller (which stays up
     when ComfyUI is down), not ComfyUI directly — so an agent can reliably check
     state before/after a restart instead of guessing raw `/api/comfyui/*` paths.
-    Returns container state + queue reachability + a rolled-up `up`.
+    Returns container state + queue reachability + a rolled-up `up`. The two
+    outbound calls record under their own deps (OPS, COMFYUI).
     """
     if not OPS_CONTROLLER_TOKEN:
         raise HTTPException(status_code=503, detail="OPS_CONTROLLER_TOKEN not configured")
     container_state = "unknown"
     queue: dict[str, Any] = {"reachable": False}
+    started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             sr = await client.get(f"{OPS_CONTROLLER_URL}/services", headers=_ops_headers(request))
             if sr.status_code < 400:
+                diagnostics.mark_ok("OPS")
                 for svc in sr.json().get("services", []):
                     if svc.get("id") == "comfyui":
                         container_state = svc.get("state", "unknown")
                         break
+            else:
+                kind = diagnostics.classify_failure(status=sr.status_code)
+                if kind == "HTTP4XX":
+                    # A 4xx other than AUTH means ops-controller answered: it is up.
+                    diagnostics.mark_ok("OPS")
+                else:
+                    diagnostics.record_failure(
+                        "OPS", kind, f"HTTP {sr.status_code} from /services", target="/services",
+                        elapsed_ms=(time.perf_counter() - started) * 1000)
             # Probe ComfyUI's queue (through its gate) instead of relying on guardian_status,
             # which is only updated when COMFYUI_SERIALIZE_LLAMACPP is enabled.
             if COMFYUI_URL:
+                q_started = time.perf_counter()
                 try:
                     qr = await client.get(f"{COMFYUI_URL}/api/queue", timeout=5.0)
                     if qr.status_code < 400:
@@ -297,9 +339,29 @@ async def comfyui_status(request: Request):
                             "pending": len(qdata.get("queue_pending", [])),
                             "running": len(qdata.get("queue_running", [])),
                         }
-                except Exception:
+                        diagnostics.mark_ok("COMFYUI")
+                    else:
+                        kind = diagnostics.classify_failure(status=qr.status_code)
+                        if kind == "HTTP4XX":
+                            diagnostics.mark_ok("COMFYUI")
+                        else:
+                            diagnostics.record_failure(
+                                "COMFYUI", kind, f"HTTP {qr.status_code} from /api/queue",
+                                target="/api/queue",
+                                elapsed_ms=(time.perf_counter() - q_started) * 1000)
+                except Exception as e:
+                    kind = ("BADPAYLOAD" if isinstance(e, ValueError | UnicodeDecodeError)
+                            else diagnostics.classify_failure(e))
+                    diagnostics.record_failure("COMFYUI", kind, _exc_detail(e),
+                                               target="/api/queue",
+                                               elapsed_ms=(time.perf_counter() - q_started) * 1000)
                     queue = {"reachable": False}
     except Exception as e:
+        # Only the ops-controller call can escape here: the queue probe swallows its own errors.
+        kind = ("BADPAYLOAD" if isinstance(e, ValueError | UnicodeDecodeError)
+                else diagnostics.classify_failure(e))
+        diagnostics.record_failure("OPS", kind, _exc_detail(e), target="/services",
+                                   elapsed_ms=(time.perf_counter() - started) * 1000)
         raise HTTPException(status_code=502, detail=str(e)) from e
     return {
         "service": "comfyui",
@@ -321,19 +383,8 @@ async def orch_registry_list_models(request: Request):
     """Hermes passthrough: list all managed models from ops-controller registry."""
     if not OPS_CONTROLLER_TOKEN:
         raise HTTPException(status_code=503, detail="OPS_CONTROLLER_TOKEN not configured")
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(
-                f"{OPS_CONTROLLER_URL}/registry/models",
-                headers=_hermes_ops_headers(request),
-            )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return r.json()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+    return await _raw_ops_request("GET", "/registry/models", request, timeout=15.0,
+                                  headers=_hermes_ops_headers(request))
 
 
 @router.get("/registry/gpus")
@@ -341,16 +392,5 @@ async def orch_registry_list_gpus(request: Request):
     """Hermes passthrough: live GPU VRAM/util + model assignments from ops-controller."""
     if not OPS_CONTROLLER_TOKEN:
         raise HTTPException(status_code=503, detail="OPS_CONTROLLER_TOKEN not configured")
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(
-                f"{OPS_CONTROLLER_URL}/registry/gpus",
-                headers=_hermes_ops_headers(request),
-            )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return r.json()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+    return await _raw_ops_request("GET", "/registry/gpus", request, timeout=15.0,
+                                  headers=_hermes_ops_headers(request))

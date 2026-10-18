@@ -1,0 +1,1 @@
+{"generated_at": 1792300000, "dependencies": [{"dep": "OPS", "status": "unknown", "last_ok": null, "last_failure": null, "consecutive_failures": 0}], "recent": [], "codes": [{"code": "DEP-OPS-TIMEOUT", "meaning": "the dependency did not answer within the client's timeout"}]}

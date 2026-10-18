@@ -520,7 +520,7 @@ export default function ServicesPage() {
 
   if (!table.data) {
     return table.error
-      ? <Unavailable>The service list is unavailable: {table.error.message}</Unavailable>
+      ? <Unavailable error={table.error}>The service list is unavailable: {table.error.message}</Unavailable>
       : <Skeleton className="h-64 w-full" />
   }
 

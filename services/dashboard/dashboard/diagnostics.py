@@ -23,11 +23,14 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# The DEP part of a code: which dependency failed. Instrumented today: OPS (_ops_request) and
-# PROMETHEUS, GRAFANA, COMFYUI, LLAMACPP-GPU, LLAMACPP-CPU, LLAMACPP-EMBED (_get_json). Each
-# llama.cpp server has its own dep so one blip cannot flip the healthy siblings' status. The rest
-# are reserved for the remaining outbound helpers (slice 2) and read `unknown` in snapshot()
-# until something records them.
+# The DEP part of a code: which dependency failed. OPS covers every ops-controller call
+# (_ops_request, the orchestration routes' raw clients, _live_gpus); GATEWAY the model-gateway
+# calls (the throughput benchmark and the readiness probes); PROMETHEUS, GRAFANA, COMFYUI and the
+# three llama.cpp servers the _get_json reads (each llama.cpp server has its own dep so one blip
+# cannot flip the healthy siblings' status); QDRANT the collection count; EDGE the caddy tailnet
+# checks (the identity DNS lookup and the cards' edge_check probes); PROBE the hub service
+# liveness checks. FS is reserved for filesystem faults and reads `unknown` in snapshot() until
+# something records it.
 DEPENDENCIES = ("OPS", "GATEWAY", "PROMETHEUS", "GRAFANA", "COMFYUI",
                 "LLAMACPP-GPU", "LLAMACPP-CPU", "LLAMACPP-EMBED", "QDRANT", "EDGE", "PROBE", "FS")
 

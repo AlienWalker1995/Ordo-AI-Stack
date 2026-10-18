@@ -229,6 +229,7 @@ REAL_REQUESTS = {
     "api/perf/series.json": ("GET", "/api/perf/series", None),
     "api/perf/grafana.json": ("GET", "/api/perf/grafana", None),
     "api/auth/session.json": ("GET", "/api/auth/session", None),
+    "api/diagnostics.json": ("GET", "/api/diagnostics", None),
 }
 
 

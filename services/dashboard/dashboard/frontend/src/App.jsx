@@ -45,6 +45,7 @@ const PAGES = [
   { id: 'services', label: 'Services', Component: lazy(() => import('./pages/ServicesPage.jsx')) },
   { id: 'models', label: 'Models', Component: lazy(() => import('./pages/ModelsPage.jsx')) },
   { id: 'performance', label: 'Performance', Component: lazy(() => import('./pages/PerformancePage.jsx')) },
+  { id: 'logs', label: 'Logs', Component: lazy(() => import('./pages/LogsPage.jsx')) },
 ]
 const PAGE_IDS = new Set(PAGES.map((p) => p.id))
 

@@ -19,9 +19,9 @@ export function ToastProvider({ children }) {
     setToasts((t) => t.filter((x) => x.id !== id))
   }, [])
 
-  const toast = useCallback((msg, type = '') => {
+  const toast = useCallback((msg, type = '', metadata = {}) => {
     const id = ++idRef.current
-    setToasts((t) => [...t, { id, msg, type }])
+    setToasts((t) => [...t, { id, msg, type, code: metadata.code, traceId: metadata.traceId }])
     setTimeout(() => remove(id), 5000)
   }, [remove])
 
@@ -53,6 +53,9 @@ export function ToastProvider({ children }) {
             onClick={() => remove(t.id)}
           >
             {t.msg}
+            {(t.code || t.traceId) && <span className="mt-1 block text-caption font-normal text-muted">
+              {[t.code, t.traceId && `Trace ${t.traceId}`].filter(Boolean).join(' · ')}
+            </span>}
           </button>
         ))}
       </div>

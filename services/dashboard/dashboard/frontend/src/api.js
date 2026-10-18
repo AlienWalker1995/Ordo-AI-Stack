@@ -12,11 +12,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 export const UNAUTHORIZED_EVENT = 'ordo:unauthorized'
 
 export class ApiError extends Error {
-  constructor(message, status, body) {
+  constructor(message, status, body, traceId = null, code = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.body = body
+    this.traceId = traceId
+    this.code = code
   }
 }
 
@@ -62,12 +64,16 @@ async function request(path, { method = 'GET', body, headers, signal } = {}) {
   }
 
   const ct = res.headers.get('content-type') || ''
+  const traceId = res.headers.get('X-Trace-Id')
   const isJson = ct.includes('application/json')
   const payload = isJson ? await res.json().catch(() => null) : await res.text().catch(() => null)
 
   if (!res.ok) {
     if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
-    throw new ApiError(errorMessage(payload, res.status), res.status, payload)
+    const code = payload && typeof payload === 'object'
+      ? (typeof payload.code === 'string' ? payload.code : typeof payload.detail?.code === 'string' ? payload.detail.code : null)
+      : null
+    throw new ApiError(errorMessage(payload, res.status), res.status, payload, traceId, code)
   }
   return payload
 }
