@@ -2,17 +2,18 @@
 //   GET  /api/services/table                                    rows with a verdict, a control kind and allowed actions
 //   GET  /api/hardware/service-pressure                         CPU and memory per container (slow: ~8 s, so async)
 //   POST /api/ops/services/{compose}/{action}                   start | stop | restart an ordo service
-//   GET  /api/ops/services/{compose}/logs                       tail, polled while the drawer is open
+//   GET  /api/ops/services/{compose}/logs                       tail, then what came after it, while the drawer is open
 //   POST /api/ops/projects/{project}/containers/{name}/restart  restart a managed project's container (start, stop when offered)
-//   GET  /api/ops/projects/{project}/containers/{name}/logs     its tail
+//   GET  /api/ops/projects/{project}/containers/{name}/logs     the same for its logs (serviceLogs.js)
 // An action is reported done only once the table shows it (serviceActions.js).
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { BTN, BTN_DANGER, ConfirmDialog, Dot, Drawer, INPUT, Skeleton, Unavailable } from '../components/ui.jsx'
 import { useToast } from '../components/Toast.jsx'
 import {
   CONFIRM_FAST_FOR_MS, CONFIRM_FAST_MS, CONFIRM_SLOW_MS, GIVE_UP_MS, isConfirmed, outcomeUnknown,
 } from './serviceActions.js'
+import { bufferNotice, bufferText, describeBuffer, POLL_MS, useLogTail } from './serviceLogs.js'
 
 const VERDICT_LABEL = {
   up: 'Running', starting: 'Starting', unhealthy: 'Unhealthy', failed: 'Failed', stopped: 'Stopped', done: 'Finished',
@@ -61,45 +62,98 @@ function formatCpu(pct) {
   return pct >= 100 ? `${(pct / 100).toFixed(1)} cores` : `${pct.toFixed(pct < 10 ? 1 : 0)}%`
 }
 
-function LogsDrawer({ service, onClose }) {
-  const [text, setText] = useState('')
-  const [paused, setPaused] = useState(false)
-  const [error, setError] = useState(null)
-  const preRef = useRef(null)
+// How close to the end of the log (in px) still counts as reading the newest line.
+const AT_BOTTOM_SLACK = 8
 
-  useEffect(() => {
-    if (!service || paused) return undefined
-    let stopped = false
-    const load = async () => {
-      try {
-        const d = await api.get(`${opsPath(service)}/logs?tail=300`)
-        if (!stopped) { setText(d.logs || ''); setError(null) }
-      } catch (e) {
-        if (!stopped) setError(e.message)
-      }
+// A file name for a row's logs: `<project>-<name>-logs.txt`, with anything a file system might
+// refuse replaced.
+function logsFileName(row) {
+  const name = [row.project, row.compose || row.container || row.name].filter(Boolean).join('-')
+  return `${name.replace(/[^A-Za-z0-9._-]+/g, '-')}-logs.txt`
+}
+
+// The log of one row (serviceLogs.js reads it). While the reader is at the bottom it follows the
+// newest line; scrolled up, it stays put and offers a jump to what arrived since.
+function LogsView({ row }) {
+  const toast = useToast()
+  const { buffer, error, loaded } = useLogTail(opsPath(row))
+  const [follow, setFollow] = useState(true)
+  // The buffer's counters as the reader last saw them, so a jump can say how much is new.
+  const [seen, setSeen] = useState({ received: 0, changes: 0 })
+  const logRef = useRef(null)
+
+  useLayoutEffect(() => {
+    if (!follow) return
+    const el = logRef.current
+    if (el) el.scrollTop = el.scrollHeight
+    setSeen((prev) => (prev.received === buffer.received && prev.changes === buffer.changes
+      ? prev
+      : { received: buffer.received, changes: buffer.changes }))
+  }, [follow, buffer])
+
+  const onScroll = () => {
+    const el = logRef.current
+    if (el) setFollow(el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_SLACK)
+  }
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(bufferText(buffer))
+      toast(`Copied ${describeBuffer(buffer)}`, 'success')
+    } catch (e) {
+      toast(`Could not copy: ${e.message}`, 'error')
     }
-    load()
-    const timer = setInterval(load, 3000)
-    return () => { stopped = true; clearInterval(timer) }
-  }, [service, paused])
+  }
 
-  useEffect(() => {
-    const el = preRef.current
-    if (el && !paused) el.scrollTop = el.scrollHeight
-  }, [text, paused])
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([bufferText(buffer)], { type: 'text/plain' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = logsFileName(row)
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const unseen = !follow && buffer.changes !== seen.changes
+  const newLines = buffer.received - seen.received
+  const notice = bufferNotice(buffer)
+  const empty = !buffer.lines.length
+
+  let placeholder = ''
+  if (empty && !loaded && !error) placeholder = 'Loading logs…'
+  else if (empty && loaded) placeholder = 'No log output yet'
 
   return (
-    <Drawer open={!!service} title={service ? `${rowLabel(service)} logs` : ''} onClose={onClose}>
-      <div className="mb-3 flex items-center gap-2">
-        <button type="button" className={BTN} onClick={() => setPaused((p) => !p)} aria-pressed={paused}>
-          {paused ? 'Resume live tail' : 'Pause'}
-        </button>
-        <span className="text-caption text-muted">{paused ? 'Paused' : 'Refreshing every 3 s'} · last 300 lines</span>
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className={BTN} aria-pressed={follow} onClick={() => setFollow((f) => !f)}>Follow logs</button>
+        <button type="button" className={BTN} onClick={copy} disabled={empty}>Copy</button>
+        <button type="button" className={BTN} onClick={download} disabled={empty}>Download</button>
+        <span className="text-caption text-muted">Refreshing every {POLL_MS / 1000} s</span>
       </div>
-      {error && <Unavailable>Could not read logs: {error}</Unavailable>}
-      <pre ref={preRef} className="max-h-[calc(100vh-10rem)] overflow-auto whitespace-pre-wrap break-words rounded-sm border border-border-subtle bg-bg p-3 font-mono text-caption text-fg-muted">
-        {text || (error ? '' : 'Loading…')}
+      {error && <Unavailable>{loaded ? 'Could not refresh' : 'Could not read logs'}: {error.message}</Unavailable>}
+      {notice && <p className="text-caption text-fg-muted">{notice}</p>}
+      <pre ref={logRef} role="log" aria-live="off" aria-label={`${rowLabel(row)} log output`} tabIndex={0} onScroll={onScroll}
+           className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-border-subtle bg-bg p-3 font-mono text-caption text-fg-muted">
+        {empty ? placeholder : buffer.lines.join('\n')}
       </pre>
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
+        <span className="text-caption tabular-nums text-muted">{loaded && !empty ? describeBuffer(buffer) : ''}</span>
+        {unseen && (
+          <button type="button" className={BTN} onClick={() => setFollow(true)}>
+            {newLines > 0 ? `Jump to latest (${newLines.toLocaleString()} new)` : 'Jump to latest'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// A new row starts a new LogsView (the key), so no scroll position or follow state carries over.
+function LogsDrawer({ service, onClose }) {
+  return (
+    <Drawer open={!!service} title={service ? `${rowLabel(service)} logs` : ''} onClose={onClose}>
+      {service && <LogsView key={service.id} row={service} />}
     </Drawer>
   )
 }
