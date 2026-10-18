@@ -2,7 +2,7 @@
 // samples into the tiles the band draws. It follows the spec's tile table exactly; a tile whose
 // source is missing is omitted, never drawn as zero (the exact 24 h token count is gap G3, so
 // until it lands the tile estimates from the rate series instead).
-import { clock } from '../lib/format.js'
+import { clock, formatGb } from '../lib/format.js'
 
 // Container counts across every project from /api/overview services.by_project (G2): the status
 // line and the Containers-up tile count the same containers, ordo and non-ordo alike.
@@ -78,6 +78,8 @@ export function vramFacts(gpus) {
   return {
     name: gpu.name || 'GPU',
     pct: Math.round(pctUsed),
+    usedGb: gpu.vram_used_gb,
+    totalGb: gpu.vram_total_gb,
     utilPct: gpu.util_pct ?? null,
     tenants: gpu.tenants || [],
     borrowedBy: gpu.borrowed_by || [],
@@ -165,14 +167,20 @@ export function kpiTiles(overview, series) {
   }
   const vram = vramFacts(overview?.gpus)
   if (vram) {
+    // The GB figure leads so it survives truncation on a phone; the holders part is omitted
+    // when the GPU has neither tenants nor borrowers, or the line would end in a dangling colon.
     const holders = vram.borrowedBy.length
       ? `lent to ${vram.borrowedBy.join(', ')}`
-      : `resident: ${vram.tenants.join(', ')}`
+      : vram.tenants.length
+        ? `resident: ${vram.tenants.join(', ')}`
+        : ''
     tiles.push({
       key: 'vram',
       label: `${vram.name} VRAM`,
       value: `${vram.pct}%`,
-      sub: [vram.utilPct != null ? `${vram.utilPct}% compute` : '', holders].filter(Boolean).join(' · '),
+      sub: [`${formatGb(vram.usedGb)} / ${formatGb(vram.totalGb)} GB`,
+            vram.utilPct != null ? `${vram.utilPct}% compute` : '', holders]
+        .filter(Boolean).join(' · '),
       tone: vram.pct >= 95 ? 'warning' : 'fg',
       title: 'gpus[0] from /api/overview',
     })

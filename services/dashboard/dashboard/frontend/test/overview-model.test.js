@@ -127,6 +127,17 @@ describe('kpiTiles', () => {
     expect(disk.sub).toBe('1.52 / 2.00 TB')
   })
 
+  it('leads the VRAM context line with the GB figure so it survives truncation', () => {
+    const vram = kpiTiles(FULL_OVERVIEW, SERIES).find((t) => t.key === 'vram')
+    expect(vram.sub).toBe('30.8 / 34.2 GB · 99% compute · resident: GPU chat, ComfyUI')
+  })
+
+  it('omits the holders part when the GPU has neither tenants nor borrowers', () => {
+    const vram = kpiTiles({ ...FULL_OVERVIEW, gpus: [{ ...FULL_OVERVIEW.gpus[0], tenants: [], borrowed_by: [] }] }, SERIES)
+      .find((t) => t.key === 'vram')
+    expect(vram.sub).toBe('30.8 / 34.2 GB · 99% compute')
+  })
+
   it('omits a tile whose source is missing', () => {
     const bare = { services: {}, chat: { engine: 'gpu', reason: '' }, gpus: [], host: {} }
     expect(kpiTiles(bare, undefined).map((t) => t.key)).toEqual(['engine'])

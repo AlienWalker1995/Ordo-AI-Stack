@@ -157,7 +157,8 @@ const SEVERITY_TONE = { critical: 'critical', warning: 'warning' }
 
 // Promoted to full width directly under the status line: what needs a person, most severe first.
 // Rendered only when non-empty; when nothing needs attention the status line already says so.
-// A container item links to Services, where its row carries the project filter.
+// A container item links to #services, which applies no project filter yet; the filter arrives
+// with the Services filters slice.
 function AttentionStrip({ items }) {
   if (!items.length) return null
   return (
