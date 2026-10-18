@@ -491,7 +491,7 @@ def test_live_gpus_non_object_body_records_dep_ops_badpayload():
 # --- the caddy identity DNS lookup records under EDGE --------------------------------
 
 
-def test_edge_proxy_addresses_dns_error_records_dep_edge_unreachable():
+def test_edge_proxy_addresses_dns_error_records_dep_edge_unreachable(edge_env):
     from dashboard import auth
 
     with patch.object(auth.socket, "getaddrinfo", side_effect=OSError("no address")):
@@ -503,7 +503,7 @@ def test_edge_proxy_addresses_dns_error_records_dep_edge_unreachable():
     assert _dep("EDGE", "dns:caddy")["status"] == "failing"
 
 
-def test_edge_proxy_addresses_success_marks_edge_ok():
+def test_edge_proxy_addresses_success_marks_edge_ok(edge_env):
     from dashboard import auth
 
     infos = [(2, 1, 6, "", ("10.0.0.5", 0))]
@@ -511,3 +511,22 @@ def test_edge_proxy_addresses_success_marks_edge_ok():
         addrs = auth.edge_proxy_addresses()
     assert addrs == {"10.0.0.5"}
     assert diagnostics._failures == [] and _dep("EDGE", "dns:caddy")["status"] == "ok"
+
+
+def test_forged_identity_header_with_edge_off_adds_no_ring_entry(monkeypatch):
+    """A request claiming an SSO identity while the edge is not configured must not touch the
+    ring: caddy never resolves with the edge profile off, so before the gate each such request
+    appended DEP-EDGE-UNREACHABLE under dns:caddy (~200 of them evicting real failures)."""
+    from fastapi.testclient import TestClient
+
+    import dashboard.app as app
+    from dashboard import auth
+
+    monkeypatch.delenv("CADDY_TAILNET_HOSTNAME", raising=False)
+    with patch.object(auth.socket, "getaddrinfo", side_effect=OSError("no address")):
+        response = TestClient(app.app).get(
+            "/api/ops/services/searxng/logs", headers={"X-Forwarded-Email": "attacker@example.com"})
+    assert response.status_code == 401
+    assert diagnostics._failures == []
+    rows = [row for row in diagnostics.snapshot()["dependencies"] if row["dep"] == "EDGE"]
+    assert all(row["target"] != "dns:caddy" for row in rows)

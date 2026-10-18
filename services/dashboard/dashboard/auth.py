@@ -31,6 +31,7 @@ import hashlib
 import hmac
 import ipaddress
 import logging
+import os
 import socket
 import time
 
@@ -118,19 +119,25 @@ def edge_proxy_addresses() -> set[str]:
     """The addresses the edge proxy resolves to on the dashboard's networks (blocking DNS).
 
     An empty set (the name does not resolve) means no request can carry the edge identity. The
-    lookup keeps its own EDGE status, under "dns:<host>" (dashboard/diagnostics.py)."""
+    lookup keeps its own EDGE status, under "dns:<host>" (dashboard/diagnostics.py), only while
+    the edge is configured (CADDY_TAILNET_HOSTNAME set, the same gate _check_via_edge uses):
+    with the edge profile off, caddy never resolves, and every request claiming an SSO identity
+    would otherwise pin dns:caddy to Failing and evict real failures from the open-read ring."""
     check_name = f"dns:{EDGE_PROXY_HOST}"
+    edge_configured = bool(os.environ.get("CADDY_TAILNET_HOSTNAME", "").strip())
     started = time.perf_counter()
     try:
         infos = socket.getaddrinfo(EDGE_PROXY_HOST, None)
     except OSError as exc:
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        diagnostics.record_failure("EDGE", diagnostics.classify_failure(exc),
-                                   f"edge proxy DNS lookup failed: {type(exc).__name__}",
-                                   target=check_name, elapsed_ms=elapsed_ms)
+        if edge_configured:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            diagnostics.record_failure("EDGE", diagnostics.classify_failure(exc),
+                                       f"edge proxy DNS lookup failed: {type(exc).__name__}",
+                                       target=check_name, elapsed_ms=elapsed_ms)
         logger.debug("cannot resolve the edge proxy %s: %s", EDGE_PROXY_HOST, exc)
         return set()
-    diagnostics.mark_ok("EDGE", check_name)
+    if edge_configured:
+        diagnostics.mark_ok("EDGE", check_name)
     return {str(ipaddress.ip_address(info[4][0])) for info in infos}
 
 
