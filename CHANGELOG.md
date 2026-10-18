@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Removed
+- **The GPU pin's 503 hook in the model gateway.** It existed only so a client using `local-chat-gpu`
+  as its primary could fail over to its own chain; clients now use `local-chat` and the gateway
+  routes, and which deployment served a request is visible in Langfuse, the response header,
+  Grafana, the dashboard and the CPU-fallback alert. A request to `local-chat-gpu` while the GPU
+  model is away gets the upstream error again.
+
 ### Fixed
 - **The Overview's status line and counts now cover every container on the host, not only the ordo project.** `/api/overview` reuses the Services table's rows (the same ops-controller reads, no second docker call): `services` gains `by_project: {project: {total, up, failed, unhealthy}}`, the "N of M containers up" count includes every project (finished one-shot jobs still leave the total), and a crashed or unhealthy container outside ordo lands in Needs attention naming its project (a crash is critical, an unhealthy healthcheck a warning; stopping or finishing one is not a problem). When ops-controller's host-wide `GET /containers` cannot be read, the response says so (`host_containers: "down"`, counts keep what was still read) and the status line reports the gap instead of claiming all normal by omission. Ordo semantics are unchanged: a GPU resident lent to a render stays a non-problem.
 - Keep dashboard throughput medians across model swaps by tracking GPU chat, CPU fallback, and embedding samples by role, migrating v3 history, and marking thin medians provisional. A model file the render no longer names is not migrated into a role (it could have served on either chat engine), so it keeps its per-file history only and the affected role median starts fresh after the migration. At most one request per 30 s waits on the migration, and only for the bounded 5 s `/model-config` read: one attempt at a time, with a 30 s cooldown after a failed read; while it waits the store stays v3-shaped on disk, so a restart retries the migration instead of losing it.
@@ -72,14 +79,6 @@ All notable changes to this project are documented here. The format is loosely b
   the row says what it last saw, and that note clears (with the action reported done) if a later
   read shows the result. Stop and restart ask in an in-app dialog instead of the browser's
   `confirm()`.
-- **The GPU pin fails fast while the GPU chat model is away.** A request for `local-chat-gpu` (or the
-  deployment-named GPU alias) while a render holds the lease or the GPU engine is down answered a
-  500 "Connection error", which Hermes retries as a server error, so a turn waited out the whole
-  render instead of moving to its fallback. The gateway now answers 503 at once (up to ~3 s on a
-  cold metrics read while the engine hangs) with the reason in `error.message`
-  ("GPU chat model is evicted for a render (lease held); ..."); Hermes
-  treats that as overloaded: two quick retries, then its next fallback, announced. `local-chat` and `local-chat-cpu`
-  are unchanged, and an unreadable ops-controller `/metrics` never blocks the pin.
 - **The Services page reports what it knows, not a guess.** A refused start, stop, restart or
   logs call shows the control plane's reason instead of "HTTP 409" (ops-controller answers
   `{"error": ...}`, which the proxy dropped); lifecycle calls wait 180 s instead of 30 s, so a 40 s

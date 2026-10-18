@@ -84,8 +84,9 @@ def test_full_render_declares_hermes_and_open_webui_keys(tmp_path):
     # local-chat-gpu and local-chat-cpu are granted so Hermes can be PINNED to a specific engine
     # per invocation rather than only reaching one through an involuntary failover: the GPU pin
     # errors while the model is evicted for a render, the CPU pin holds no VRAM and runs in
-    # parallel with GPU work. Operator decision 2026-10-16: Hermes runs the GPU pin as its
-    # primary with the CPU pin as its announced first fallback (brain config).
+    # parallel with GPU work. Hermes itself uses local-chat and leaves the routing to the
+    # gateway; the 2026-10-16 decision to run it on the GPU pin with the CPU pin as its
+    # announced first fallback was superseded by the revert of the GPU pin's 503 hook.
     assert by_env["LITELLM_KEY_HERMES"]["models"] == ["local-chat", "local-chat-gpu", "local-embed", "local-chat-cpu"]
     assert by_env["LITELLM_KEY_OPEN_WEBUI"]["mcp_servers"] == []
     for env in by_env:

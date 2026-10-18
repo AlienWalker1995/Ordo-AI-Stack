@@ -1,5 +1,4 @@
-"""LiteLLM custom callback: local-chat's CPU fallback is always allowed, and the GPU pin
-answers 503 at once while the GPU chat model is away.
+"""LiteLLM custom callback: local-chat's CPU fallback is always allowed.
 
 Wired in `litellm_config.yaml` as:
     litellm_settings:
@@ -12,18 +11,11 @@ allowed — whether the GPU is evicted for a render, down, or merely returned an
 This hook runs on the fallback hop and logs the lease state (read from ops-controller's
 unauthenticated /metrics) for observability, but no longer denies the fallback.
 
-The GPU pins (local-chat-gpu, and the deployment-named GPU alias the entrypoint exports as
-GPU_MODEL_NAME) have no fallback of their own. While the GPU chat model is evicted for a
-render or down, LiteLLM would answer them with a 500 "Connection error", which a client
-such as Hermes retries as a server error instead of walking its own fallback chain. The
-pre-call hook answers those requests with a 503 (overloaded) and a readable message
-instead, so the client walks its fallback chain. local-chat and local-chat-cpu are never blocked.
-
 The lease state is read from ops-controller's unauthenticated /metrics (Prometheus
 text): ordo_gpu_resident_evicted{resident="llamacpp"} is 1 while a render has evicted
-the GPU chat model, and ordo_gpu_chat_up is 0 while the chat engine is down. One cached
-scrape (5 s) serves both hooks. An unreadable metrics response fails open: the fallback
-is allowed and the pin is not blocked, and the warning is logged once per minute.
+the GPU chat model, and ordo_gpu_chat_up is 0 while the chat engine is down. The parsed
+state is cached for 5 s; an unreadable or unparseable metrics response is logged (at most
+once per minute) and treated as "not evicted" (the fallback is allowed regardless).
 """
 from __future__ import annotations
 
@@ -35,29 +27,16 @@ from typing import Any
 
 import httpx
 from litellm.integrations.custom_logger import CustomLogger
-from litellm.proxy._types import ProxyException
 
 logger = logging.getLogger("gpu_lease_fallback_gate")
 
 # ops-controller serves the GPU lease/eviction state unauthenticated (Prometheus scrapes
 # it without a token), the same as /health.
 METRICS_URL = os.environ.get("GPU_LEASE_GATE_METRICS_URL", "http://ops-controller:9000/metrics")
-# Must stay above ops-controller's 3 s /health probe (MetricsCollector._chat_up,
-# ordo/control/metrics.py): it computes /metrics synchronously per scrape, so a hung
-# (black-holed) chat engine makes every scrape take ~3 s. A shorter timeout would give up
-# mid-scrape exactly in the "down" case this hook exists for, cache the fail-open None, and
-# let the pin wait out the hung engine (the 500 "Connection error" this PR removes).
-METRICS_TIMEOUT = float(os.environ.get("GPU_LEASE_GATE_TIMEOUT_SEC", "4"))
+METRICS_TIMEOUT = float(os.environ.get("GPU_LEASE_GATE_TIMEOUT_SEC", "2"))
 CACHE_TTL = float(os.environ.get("GPU_LEASE_GATE_CACHE_TTL_SEC", "5"))
 # An unreachable ops-controller is logged once per this many seconds, not once per scrape.
 UNREADABLE_WARN_INTERVAL = 60.0
-
-# The model groups that serve only the GPU chat model: the stable pin, plus the deployment-named
-# alias (entrypoint.sh derives it from the weights file and exports it as GPU_MODEL_NAME).
-GPU_PIN_ALIAS = "local-chat-gpu"
-
-EVICTED_MESSAGE = "GPU chat model is evicted for a render (lease held); use local-chat for automatic CPU failover or wait"
-DOWN_MESSAGE = "GPU chat model is down; use local-chat for automatic CPU failover or wait"
 
 # The two series ops-controller exports for the GPU chat service (ordo/control/metrics.py):
 # one per resident (1 while stopped for a lease) and the /health liveness of the chat engine.
@@ -100,28 +79,6 @@ def fallback_allowed(metrics_text: str) -> bool:
     return False
 
 
-def gpu_unavailable_reason(metrics_text: str) -> str | None:
-    """Why the GPU chat model cannot serve, from one ops-controller /metrics scrape, or None.
-
-    Evicted for a lease takes precedence over down (an evicted engine is also down). A missing
-    or malformed series is not evidence of anything, so it never blocks.
-    """
-    if _first_value(_EVICTED_RE, metrics_text) == 1.0:
-        return EVICTED_MESSAGE
-    if _first_value(_CHAT_UP_RE, metrics_text) == 0.0:
-        return DOWN_MESSAGE
-    return None
-
-
-def gpu_pin_models() -> set[str]:
-    """The model groups that route only to the GPU chat model (never local-chat itself)."""
-    pins = {GPU_PIN_ALIAS}
-    deployment_name = os.environ.get("GPU_MODEL_NAME", "").strip()
-    if deployment_name and deployment_name != "local-chat":
-        pins.add(deployment_name)
-    return pins
-
-
 def _is_fallback_hop(model: str, request_kwargs: dict[str, Any] | None) -> bool:
     """True only on a fallback hop out of local-chat.
 
@@ -142,40 +99,14 @@ def _is_fallback_hop(model: str, request_kwargs: dict[str, Any] | None) -> bool:
 
 
 class GpuLeaseFallbackGate(CustomLogger):
-    """LiteLLM CustomLogger: always allows local-chat's CPU fallback, logs the GPU lease
-    state, and fails the GPU pins fast while the GPU is away (see the module docstring)."""
+    """LiteLLM CustomLogger: always allows local-chat's CPU fallback and logs the
+    GPU lease state for observability (see the module docstring)."""
 
     def __init__(self) -> None:
-        # (expiry as time.monotonic(), metrics text or None when unreadable) of the last read.
-        self._cache: tuple[float, str | None] | None = None
+        # (expiry as time.monotonic(), parsed allowed state) of the last metrics read.
+        self._cache: tuple[float, bool] | None = None
         # time.monotonic() of the last "cannot read" warning, or None before the first.
         self._last_unreadable_warning: float | None = None
-
-    async def async_pre_call_hook(
-        self,
-        user_api_key_dict: Any,
-        cache: Any,
-        data: dict,
-        call_type: str,
-    ) -> None:
-        """Answer a GPU-pin request with a 503 while the GPU chat model is evicted or down.
-
-        The proxy runs this once per client request (streaming or not) with the model group the
-        caller named, before routing; router fallback hops and the background health probes do
-        not pass through it. Raising ProxyException makes the proxy answer with that status and
-        an OpenAI-shaped JSON error whose error.message is EVICTED_MESSAGE or DOWN_MESSAGE.
-        """
-        model = data.get("model") if isinstance(data, dict) else None
-        if not isinstance(model, str) or model not in gpu_pin_models():
-            return None
-        metrics_text = await self._metrics_text()
-        if metrics_text is None:
-            return None  # fail open: no evidence the GPU is away
-        reason = gpu_unavailable_reason(metrics_text)
-        if reason is None:
-            return None
-        logger.info("gpu_lease_fallback_gate: answering 503 for %s: %s", model, reason)
-        raise ProxyException(message=reason, type="service_unavailable", param="model", code=503)
 
     async def async_filter_deployments(
         self,
@@ -195,8 +126,7 @@ class GpuLeaseFallbackGate(CustomLogger):
         # longer gates the fallback. (Previously this raised ServiceUnavailable
         # when no lease was held, which turned a GPU 400 into a hard failure for
         # Claude Code instead of degrading to the CPU Qwen model.)
-        metrics_text = await self._metrics_text()
-        allowed = metrics_text is None or fallback_allowed(metrics_text)
+        allowed = await self._fallback_allowed()
         logger.info(
             "gpu_lease_fallback_gate: allowing CPU fallback for %s (lease-allowed=%s)",
             model,
@@ -204,35 +134,34 @@ class GpuLeaseFallbackGate(CustomLogger):
         )
         return healthy_deployments
 
-    async def _metrics_text(self) -> str | None:
-        """One ops-controller /metrics scrape, cached for CACHE_TTL seconds (both hooks share it).
+    async def _fallback_allowed(self) -> bool:
+        """The lease state from ops-controller, cached for CACHE_TTL seconds.
 
-        None when the metrics cannot be read; that result is cached too, so an unreachable
-        ops-controller costs one fetch per window, and its warning is logged at most once per
+        Fails open: when the metrics cannot be read or parsed, the fallback is allowed
+        (availability first) and the warning is logged at most once per
         UNREADABLE_WARN_INTERVAL.
         """
         now = time.monotonic()
         cached = self._cache
         if cached is not None and now < cached[0]:
             return cached[1]
-        metrics_text: str | None
         try:
             async with httpx.AsyncClient(timeout=METRICS_TIMEOUT) as client:
                 response = await client.get(METRICS_URL)
                 response.raise_for_status()
-                metrics_text = response.text
+                allowed = fallback_allowed(response.text)
         except Exception as exc:
             last = self._last_unreadable_warning
             if last is None or now - last >= UNREADABLE_WARN_INTERVAL:
                 logger.warning(
-                    "gpu_lease_fallback_gate: cannot read %s (%s); allowing the CPU fallback and the GPU pins",
+                    "gpu_lease_fallback_gate: cannot read %s (%s); allowing the CPU fallback",
                     METRICS_URL,
                     exc,
                 )
                 self._last_unreadable_warning = now
-            metrics_text = None
-        self._cache = (now + CACHE_TTL, metrics_text)
-        return metrics_text
+            allowed = True
+        self._cache = (now + CACHE_TTL, allowed)
+        return allowed
 
 
 # Module-level singleton, referenced from litellm_config.yaml (litellm_settings.callbacks).
