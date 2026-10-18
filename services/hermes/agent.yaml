@@ -26,16 +26,17 @@ consumes:
 # Hermes' own LiteLLM virtual key (LITELLM_KEY_HERMES in secrets.env; provisioned by
 # model-gateway-keys from the rendered keys.json). Chat + embeddings + EVERY enabled MCP server.
 litellm_key:
-  # The stable pins are granted so Hermes can be POINTED at a specific engine, not just land on
-  # one through local-chat's routing: local-chat-gpu is the GPU model with no CPU failover (it
-  # errors while the model is evicted for a render), local-chat-cpu is the always-on CPU
-  # deployment. The CPU pin holds no VRAM, so a CPU-pinned run executes in parallel with a
-  # GPU-pinned one instead of queueing on one llama.cpp slot. Operator decision 2026-10-16:
-  # Hermes runs local-chat-gpu as its primary with local-chat-cpu as its announced first
-  # fallback (brain config), because the gateway's local-chat failover is invisible to the
-  # conversation while Hermes's own fallback chain announces the switch and the recovery.
-  # Without the grants the key returns 403 and the only way onto those models is an involuntary
-  # failover.
+  # Hermes uses local-chat and leaves the routing to the gateway (which fails over to the CPU
+  # fallback while the GPU model is evicted or down). The two stable pins are granted for
+  # deliberate pinning only: local-chat-gpu is the GPU model with no CPU failover (it errors
+  # while the model is evicted for a render), for work that must run on the GPU; local-chat-cpu
+  # is the always-on CPU deployment, for work deliberately routed off the GPU (batch jobs,
+  # overnight crons). The CPU pin holds no VRAM, so a CPU-pinned run executes in parallel with
+  # a GPU-pinned one instead of queueing on one llama.cpp slot. The 2026-10-16 decision to run
+  # Hermes on local-chat-gpu with local-chat-cpu as its announced first fallback (brain config)
+  # was superseded by the revert of the GPU pin's 503 hook: clients use local-chat and the
+  # gateway routes. Without the grants the key returns 403 and the only way onto those models
+  # is an involuntary failover.
   models: [local-chat, local-chat-gpu, local-embed, local-chat-cpu]
   mcp_servers: all
 

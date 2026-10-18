@@ -14,8 +14,8 @@ unauthenticated /metrics) for observability, but no longer denies the fallback.
 The lease state is read from ops-controller's unauthenticated /metrics (Prometheus
 text): ordo_gpu_resident_evicted{resident="llamacpp"} is 1 while a render has evicted
 the GPU chat model, and ordo_gpu_chat_up is 0 while the chat engine is down. The parsed
-state is cached for 5 s; an unreadable or unparseable metrics response is logged and
-treated as "not evicted" (the fallback is allowed regardless).
+state is cached for 5 s; an unreadable or unparseable metrics response is logged (at most
+once per minute) and treated as "not evicted" (the fallback is allowed regardless).
 """
 from __future__ import annotations
 
@@ -35,6 +35,8 @@ logger = logging.getLogger("gpu_lease_fallback_gate")
 METRICS_URL = os.environ.get("GPU_LEASE_GATE_METRICS_URL", "http://ops-controller:9000/metrics")
 METRICS_TIMEOUT = float(os.environ.get("GPU_LEASE_GATE_TIMEOUT_SEC", "2"))
 CACHE_TTL = float(os.environ.get("GPU_LEASE_GATE_CACHE_TTL_SEC", "5"))
+# An unreachable ops-controller is logged once per this many seconds, not once per scrape.
+UNREADABLE_WARN_INTERVAL = 60.0
 
 # The two series ops-controller exports for the GPU chat service (ordo/control/metrics.py):
 # one per resident (1 while stopped for a lease) and the /health liveness of the chat engine.
@@ -103,6 +105,8 @@ class GpuLeaseFallbackGate(CustomLogger):
     def __init__(self) -> None:
         # (expiry as time.monotonic(), parsed allowed state) of the last metrics read.
         self._cache: tuple[float, bool] | None = None
+        # time.monotonic() of the last "cannot read" warning, or None before the first.
+        self._last_unreadable_warning: float | None = None
 
     async def async_filter_deployments(
         self,
@@ -134,7 +138,8 @@ class GpuLeaseFallbackGate(CustomLogger):
         """The lease state from ops-controller, cached for CACHE_TTL seconds.
 
         Fails open: when the metrics cannot be read or parsed, the fallback is allowed
-        (availability first) and the warning is logged.
+        (availability first) and the warning is logged at most once per
+        UNREADABLE_WARN_INTERVAL.
         """
         now = time.monotonic()
         cached = self._cache
@@ -146,11 +151,14 @@ class GpuLeaseFallbackGate(CustomLogger):
                 response.raise_for_status()
                 allowed = fallback_allowed(response.text)
         except Exception as exc:
-            logger.warning(
-                "gpu_lease_fallback_gate: cannot read %s (%s); allowing the CPU fallback",
-                METRICS_URL,
-                exc,
-            )
+            last = self._last_unreadable_warning
+            if last is None or now - last >= UNREADABLE_WARN_INTERVAL:
+                logger.warning(
+                    "gpu_lease_fallback_gate: cannot read %s (%s); allowing the CPU fallback",
+                    METRICS_URL,
+                    exc,
+                )
+                self._last_unreadable_warning = now
             allowed = True
         self._cache = (now + CACHE_TTL, allowed)
         return allowed

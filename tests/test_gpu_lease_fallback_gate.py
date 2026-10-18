@@ -13,6 +13,7 @@ test_throughput_callback.py does it.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -196,3 +197,18 @@ async def test_hook_caches_metrics_state_for_five_seconds(monkeypatch):
         out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs())
         assert out == _deployments()
     assert len(calls) == 1  # the second and third hops read the 5 s cache, not the network
+
+
+async def test_hook_logs_unreadable_metrics_at_most_once_per_minute(monkeypatch, caplog):
+    """A sustained ops-controller outage must not log a 'cannot read' warning per cached
+    failure (one per CACHE_TTL window): the warning is rate-limited to once per
+    UNREADABLE_WARN_INTERVAL."""
+    _install_client(monkeypatch, exc=RuntimeError("ops-controller unreachable"))
+    monkeypatch.setattr(gate, "CACHE_TTL", 0.0)  # every hop re-fetches instead of reading the cache
+    hook = gate.GpuLeaseFallbackGate()
+    with caplog.at_level(logging.WARNING, logger="gpu_lease_fallback_gate"):
+        for _ in range(3):
+            out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs())
+            assert out == _deployments()
+    warnings = [r for r in caplog.records if "cannot read" in r.getMessage()]
+    assert len(warnings) == 1
