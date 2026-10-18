@@ -60,6 +60,9 @@ ops-controller send the same id as `X-Request-ID` so the two audit logs correlat
 authentication — any client may set it (spoofable/collidable), and the regex only bounds length and
 charset against log injection. Failures are kept in an in-memory ring (cap 200, single-process) plus
 per-dependency last-ok / last-failure / consecutive-failure state; `GET /api/diagnostics` serves it.
+`PROBE` and `EDGE` keep that state per target, so one healthy target cannot reset another's
+failure count: a hub card's liveness check under its card id, an edge check under its card id, and
+the edge proxy's DNS lookup under `dns:caddy`.
 Details are short by contract: the exception class plus a one-line summary, no tokens, headers or
 bodies, URLs stripped, truncated to 200 characters.
 
@@ -68,22 +71,19 @@ Codes are `DEP-<DEP>-<KIND>`. The DEP part names the dependency:
 | DEP | Dependency |
 |-----|------------|
 | `OPS` | ops-controller (control plane) |
-| `GATEWAY` | model-gateway (LiteLLM) — planned |
+| `GATEWAY` | model-gateway (LiteLLM) |
 | `PROMETHEUS` | Prometheus |
 | `GRAFANA` | Grafana |
 | `COMFYUI` | ComfyUI (through the GPU admission gate) |
 | `LLAMACPP-GPU` | the GPU llama.cpp chat server |
 | `LLAMACPP-CPU` | the CPU fallback llama.cpp server |
 | `LLAMACPP-EMBED` | the embedding llama.cpp server |
-| `QDRANT` | Qdrant — planned |
-| `EDGE` | the Caddy SSO edge — planned |
-| `PROBE` | a service liveness probe — planned |
-| `FS` | the filesystem (state files, model dir) — planned |
+| `QDRANT` | Qdrant |
+| `EDGE` | the Caddy SSO edge: each card's edge check, and the edge proxy's DNS name (per target) |
+| `PROBE` | a hub card's liveness check (per card) |
+| `FS` | the filesystem (state files, model dir), reserved |
 
-`— planned` marks dependencies no current code path instruments yet: today only `OPS` (via
-`_ops_request`) and `PROMETHEUS`, `GRAFANA`, `COMFYUI`, `LLAMACPP-GPU`, `LLAMACPP-CPU`,
-`LLAMACPP-EMBED` (via `_get_json`) record failures. The rest read `unknown` in
-`GET /api/diagnostics` until the remaining outbound helpers (slice 2) record them.
+Every dependency is instrumented except `FS`, which reads `unknown` until something records it.
 
 The KIND part names how it failed:
 
@@ -99,7 +99,14 @@ The KIND part names how it failed:
 A 4xx other than AUTH is not a failure kind: the dependency answered, so the central helpers mark
 it ok instead of recording it, and no `DEP-*-HTTP4XX` code exists.
 
-`GET /api/diagnostics` answers `{"generated_at", "dependencies": [{dep, status: ok|failing|unknown, last_ok, last_failure: {code, at, detail}, consecutive_failures}], "recent": [...newest first...], "codes": [{code, meaning}]}`.
+`GET /api/diagnostics` answers `{"generated_at", "dependencies": [{dep, target, status: ok|failing|unknown, last_ok, last_failure: {code, at, detail}, consecutive_failures}], "recent": [...newest first...], "legend": {"kinds": [{kind, meaning}], "dependencies": [{dep, meaning}]}}`.
+`target` is null for a dependency that is one target; `PROBE` and `EDGE` have a row per target seen
+(one `unknown` row with a null target until any is).
+
+When a recorded failure turns into an HTTP error (the `/api/ops/*` proxy, the orchestration routes'
+502s, the throughput benchmark), the error body carries its code next to `detail`:
+`{"detail": "...", "code": "DEP-OPS-UNREACHABLE"}`. The page shows it, with the `X-Trace-Id`, in the
+error toast.
 
 ## Core Responsibilities
 

@@ -8,7 +8,7 @@ import { useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { BTN, BTN_DANGER, BTN_PRIMARY, Chip, INPUT, Panel, Skeleton, Unavailable } from '../components/ui.jsx'
 import { useHostSteps } from '../components/HostSteps.jsx'
-import { useToast } from '../components/Toast.jsx'
+import { errorMeta, useToast } from '../components/Toast.jsx'
 import { formatBytes, formatRate } from '../lib/format.js'
 
 function Slot({ title, file, children }) {
@@ -52,7 +52,7 @@ function SwitchModel({ data, onSwitched }) {
       setChoice('')
       onSwitched()
     } catch (e) {
-      toast(`Switch failed: ${e.message}`, 'error')
+      toast(`Switch failed: ${e.message}`, 'error', errorMeta(e))
     } finally {
       setBusy(false)
     }
@@ -92,7 +92,7 @@ function Benchmark() {
     try {
       setResult(await api.post('/api/throughput/benchmark', { model: 'local-chat' }))
     } catch (e) {
-      toast(`Benchmark failed: ${e.message}`, 'error')
+      toast(`Benchmark failed: ${e.message}`, 'error', errorMeta(e))
     } finally {
       setBusy(false)
     }
@@ -122,7 +122,7 @@ function Files({ files, onDeleted }) {
       toast(`Deleted ${name}`, 'success')
       onDeleted()
     } catch (e) {
-      toast(e.message, 'error')
+      toast(e.message, 'error', errorMeta(e))
     } finally {
       setBusy(null)
     }

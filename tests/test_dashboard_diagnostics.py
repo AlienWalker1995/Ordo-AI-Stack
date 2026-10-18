@@ -125,7 +125,7 @@ def test_mark_ok_resets_consecutive_failures():
 
     diagnostics.record_failure("QDRANT", "UNREACHABLE", "refused", target="/collections/documents", elapsed_ms=1.0)
     diagnostics.record_failure("QDRANT", "UNREACHABLE", "refused", target="/collections/documents", elapsed_ms=1.0)
-    st = diagnostics._dep_status["QDRANT"]
+    st = diagnostics._dep_status[("QDRANT", None)]
     assert st["consecutive_failures"] == 2
     diagnostics.mark_ok("QDRANT")
     assert st["consecutive_failures"] == 0 and st["last_ok"] is not None
@@ -218,7 +218,7 @@ def test_ops_request_non_200_records_the_status_kind_and_success_marks_ok(monkey
     with patch("dashboard.app._get_http_client", return_value=_ops_client(response=good)):
         code, _ = asyncio.run(app._ops_request("GET", "/status", timeout=15.0))
     assert code == 200
-    st = diagnostics._dep_status["OPS"]
+    st = diagnostics._dep_status[("OPS", None)]
     assert st["consecutive_failures"] == 0 and st["last_ok"] is not None
 
 
@@ -235,7 +235,7 @@ def test_ops_request_marks_ok_on_a_non_auth_4xx(monkeypatch):
     assert code == 409 and data == {"error": "substrate digest mismatch"}
     from dashboard import diagnostics
     assert all(f["dep"] != "OPS" for f in diagnostics._failures)
-    st = diagnostics._dep_status["OPS"]
+    st = diagnostics._dep_status[("OPS", None)]
     assert st["last_ok"] is not None and st["consecutive_failures"] == 0
 
 
@@ -280,7 +280,7 @@ def test_ops_request_marks_ok_on_a_non_auth_4xx_with_an_unparseable_body(monkeyp
     assert code == 404 and data == {"detail": "Not Found"}
     from dashboard import diagnostics
     assert all(f["dep"] != "OPS" for f in diagnostics._failures)
-    st = diagnostics._dep_status["OPS"]
+    st = diagnostics._dep_status[("OPS", None)]
     assert st["last_ok"] is not None and st["consecutive_failures"] == 0
 
 
@@ -355,7 +355,7 @@ def test_get_json_marks_ok_on_a_non_auth_4xx():
     assert _get_json("GRAFANA", "http://grafana:3000/api/health", response=r) is None
     from dashboard import diagnostics
     assert all(f["dep"] != "GRAFANA" for f in diagnostics._failures)
-    st = diagnostics._dep_status["GRAFANA"]
+    st = diagnostics._dep_status[("GRAFANA", None)]
     assert st["last_ok"] is not None and st["consecutive_failures"] == 0
 
 
@@ -388,7 +388,7 @@ def test_get_json_returns_the_payload_on_success():
     r.json.return_value = {"database": "ok"}
     assert _get_json("GRAFANA", "http://grafana:3000/api/health", response=r) == {"database": "ok"}
     from dashboard import diagnostics
-    assert diagnostics._dep_status["GRAFANA"]["last_ok"] is not None
+    assert diagnostics._dep_status[("GRAFANA", None)]["last_ok"] is not None
 
 
 def test_served_records_each_server_under_its_own_dep():
@@ -411,9 +411,9 @@ def test_served_records_each_server_under_its_own_dep():
         assert served == {"gpu": "model.gguf", "cpu": None, "embed": "model.gguf"}
         from dashboard import diagnostics
         st = diagnostics._dep_status
-        assert st["LLAMACPP-GPU"]["last_ok"] is not None and st["LLAMACPP-GPU"]["consecutive_failures"] == 0
-        assert st["LLAMACPP-EMBED"]["last_ok"] is not None and st["LLAMACPP-EMBED"]["consecutive_failures"] == 0
-        assert st["LLAMACPP-CPU"]["last_ok"] is None and st["LLAMACPP-CPU"]["consecutive_failures"] >= 1
+        assert st[("LLAMACPP-GPU", None)]["last_ok"] is not None and st[("LLAMACPP-GPU", None)]["consecutive_failures"] == 0
+        assert st[("LLAMACPP-EMBED", None)]["last_ok"] is not None and st[("LLAMACPP-EMBED", None)]["consecutive_failures"] == 0
+        assert st[("LLAMACPP-CPU", None)]["last_ok"] is None and st[("LLAMACPP-CPU", None)]["consecutive_failures"] >= 1
         statuses = {d["dep"]: d["status"] for d in diagnostics.snapshot()["dependencies"]}
         assert statuses["LLAMACPP-GPU"] == "ok" and statuses["LLAMACPP-EMBED"] == "ok"
         assert statuses["LLAMACPP-CPU"] == "failing"
@@ -484,29 +484,33 @@ def test_diagnostics_endpoint_shape(monkeypatch):
     r = TestClient(app.app).get("/api/diagnostics")
     assert r.status_code == 200
     body = r.json()
-    assert set(body) == {"generated_at", "dependencies", "recent", "codes"}
+    assert set(body) == {"generated_at", "dependencies", "recent", "legend"}
     deps = {d["dep"]: d for d in body["dependencies"]}
     assert set(deps) == set(diagnostics.DEPENDENCIES)
     for d in body["dependencies"]:
-        assert set(d) == {"dep", "status", "last_ok", "last_failure", "consecutive_failures"}
+        assert set(d) == {"dep", "target", "status", "last_ok", "last_failure", "consecutive_failures"}
         assert d["status"] in ("ok", "failing", "unknown")
     ops_dep = deps["OPS"]
     assert ops_dep["status"] == "failing"
     assert ops_dep["consecutive_failures"] == 1
     assert ops_dep["last_failure"]["code"] == "DEP-OPS-TIMEOUT"
     assert body["recent"][0]["code"] == "DEP-OPS-TIMEOUT"     # newest first
-    codes = {c["code"] for c in body["codes"]}
-    assert {"DEP-OPS-TIMEOUT", "DEP-LLAMACPP-GPU-UNREACHABLE", "DEP-QDRANT-AUTH"} <= codes
-    assert all(set(c) == {"code", "meaning"} for c in body["codes"])
+    # The legend is two short lists (a code is DEP-<DEP>-<KIND>), not every DEP x KIND pair.
+    legend = body["legend"]
+    assert set(legend) == {"kinds", "dependencies"}
+    assert [k["kind"] for k in legend["kinds"]] == list(diagnostics.KIND_MEANINGS)
+    assert [d["dep"] for d in legend["dependencies"]] == list(diagnostics.DEPENDENCIES)
+    assert all(set(k) == {"kind", "meaning"} and k["meaning"] for k in legend["kinds"])
+    assert all(set(d) == {"dep", "meaning"} and d["meaning"] for d in legend["dependencies"])
 
 
-def test_diagnostics_codes_do_not_advertise_http4xx():
+def test_diagnostics_legend_does_not_advertise_http4xx():
     # A non-AUTH 4xx marks the dependency ok (it answered), so no DEP-*-HTTP4XX code is ever
-    # recorded; the codes table must not advertise one an operator could never find in the ring.
+    # recorded; the legend must not advertise a kind an operator could never find in the ring.
     import dashboard.app as app
 
     body = TestClient(app.app).get("/api/diagnostics").json()
-    assert all(not c["code"].endswith("-HTTP4XX") for c in body["codes"])
+    assert all(k["kind"] != "HTTP4XX" for k in body["legend"]["kinds"])
 
 
 def test_diagnostics_reports_unknown_until_anything_is_observed():

@@ -117,7 +117,9 @@ def local_session_valid(cookie: str, token: str, *, now: float) -> bool:
 def edge_proxy_addresses() -> set[str]:
     """The addresses the edge proxy resolves to on the dashboard's networks (blocking DNS).
 
-    An empty set (the name does not resolve) means no request can carry the edge identity."""
+    An empty set (the name does not resolve) means no request can carry the edge identity. The
+    lookup keeps its own EDGE status, under "dns:<host>" (dashboard/diagnostics.py)."""
+    check_name = f"dns:{EDGE_PROXY_HOST}"
     started = time.perf_counter()
     try:
         infos = socket.getaddrinfo(EDGE_PROXY_HOST, None)
@@ -125,10 +127,10 @@ def edge_proxy_addresses() -> set[str]:
         elapsed_ms = (time.perf_counter() - started) * 1000
         diagnostics.record_failure("EDGE", diagnostics.classify_failure(exc),
                                    f"edge proxy DNS lookup failed: {type(exc).__name__}",
-                                   target=EDGE_PROXY_HOST, elapsed_ms=elapsed_ms)
+                                   target=check_name, elapsed_ms=elapsed_ms)
         logger.debug("cannot resolve the edge proxy %s: %s", EDGE_PROXY_HOST, exc)
         return set()
-    diagnostics.mark_ok("EDGE")
+    diagnostics.mark_ok("EDGE", check_name)
     return {str(ipaddress.ip_address(info[4][0])) for info in infos}
 
 

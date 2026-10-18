@@ -13,8 +13,8 @@ export function fixture(path) {
   return structuredClone(body)
 }
 
-function jsonResponse(status, body) {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+function jsonResponse(status, body, headers = {}) {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } })
 }
 
 /**
@@ -22,7 +22,7 @@ function jsonResponse(status, body) {
  *
  * `overrides` maps 'METHOD /api/path' to how that request is answered:
  *   - a plain value: sent as a 200 JSON body;
- *   - { status, body }: sent with that status (an error, for one);
+ *   - { status, body }: sent with that status (an error, for one), plus `headers` when given;
  *   - a function (request) => either of those (or a promise of one, to hold the request in
  *     flight), or throws to simulate a network failure.
  * A request with neither an override nor a fixture gets a 404, and is listed in `unhandled`.
@@ -52,7 +52,7 @@ export function mockApi(overrides = {}) {
       return jsonResponse(200, structuredClone(body))
     }
     if (answer && typeof answer === 'object' && 'status' in answer && 'body' in answer) {
-      return jsonResponse(answer.status, answer.body)
+      return jsonResponse(answer.status, answer.body, answer.headers)
     }
     return jsonResponse(200, answer)
   })

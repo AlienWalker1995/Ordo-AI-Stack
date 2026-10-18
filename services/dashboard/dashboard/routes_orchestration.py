@@ -77,7 +77,11 @@ def _ops_headers(request: Request | None) -> dict[str, str]:
 
 
 def _exc_detail(exc: BaseException) -> str:
-    """The class name plus the message: str(exc) alone embeds internal hostnames and ports."""
+    """The failure detail record_failure is given: the exception's class name plus its message.
+
+    The message of an httpx error embeds the request URL (internal hostname, port and path);
+    record_failure strips URLs before the detail is logged or enters the open-read ring
+    (diagnostics.sanitize_detail), so passing it here does not leak them."""
     return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
 
 
@@ -85,31 +89,36 @@ async def _raw_ops_request(method: str, path: str, request: Request, *, timeout:
                            headers: dict[str, str], json_body: dict | None = None) -> dict:
     """An ops-controller call on its own client (these routes predate the shared client), recorded
     under OPS like every other outbound call (dashboard/diagnostics.py). A 4xx other than AUTH
-    means the controller answered, so it marks OPS ok before passing the status on."""
+    means the controller answered, so it marks OPS ok and passes the status on. A recorded failure
+    answers with its DEP code in the body next to detail (DependencyHTTPException): a refused or
+    failed connection or an unparseable body as 502, a 5xx or AUTH answer with its own status."""
     url = f"{OPS_CONTROLLER_URL}{path}"
     started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.request(method, url, headers=headers, json=json_body)
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        diagnostics.mark_ok("OPS")
-        return r.json()
-    except HTTPException as exc:
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        kind = diagnostics.classify_failure(status=exc.status_code)
-        if kind == "HTTP4XX":
-            diagnostics.mark_ok("OPS")
-        else:
-            diagnostics.record_failure("OPS", kind, f"HTTP {exc.status_code} from {path}",
-                                       target=path, elapsed_ms=elapsed_ms)
-        raise
     except Exception as e:
         elapsed_ms = (time.perf_counter() - started) * 1000
-        kind = ("BADPAYLOAD" if isinstance(e, ValueError | UnicodeDecodeError)
-                else diagnostics.classify_failure(e))
-        diagnostics.record_failure("OPS", kind, _exc_detail(e), target=path, elapsed_ms=elapsed_ms)
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        code = diagnostics.record_failure("OPS", diagnostics.classify_failure(e), _exc_detail(e),
+                                          target=path, elapsed_ms=elapsed_ms)
+        raise diagnostics.DependencyHTTPException(502, str(e), code) from e
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    if r.status_code >= 400:
+        kind = diagnostics.classify_failure(status=r.status_code)
+        if kind == "HTTP4XX":
+            diagnostics.mark_ok("OPS")
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+        code = diagnostics.record_failure("OPS", kind, f"HTTP {r.status_code} from {path}",
+                                          target=path, elapsed_ms=elapsed_ms)
+        raise diagnostics.DependencyHTTPException(r.status_code, r.text, code)
+    try:
+        data = r.json()
+    except (ValueError, UnicodeDecodeError) as e:
+        code = diagnostics.record_failure("OPS", "BADPAYLOAD", _exc_detail(e), target=path,
+                                          elapsed_ms=elapsed_ms)
+        raise diagnostics.DependencyHTTPException(502, str(e), code) from e
+    diagnostics.mark_ok("OPS")
+    return data
 
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -360,9 +369,9 @@ async def comfyui_status(request: Request):
         # Only the ops-controller call can escape here: the queue probe swallows its own errors.
         kind = ("BADPAYLOAD" if isinstance(e, ValueError | UnicodeDecodeError)
                 else diagnostics.classify_failure(e))
-        diagnostics.record_failure("OPS", kind, _exc_detail(e), target="/services",
-                                   elapsed_ms=(time.perf_counter() - started) * 1000)
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        code = diagnostics.record_failure("OPS", kind, _exc_detail(e), target="/services",
+                                          elapsed_ms=(time.perf_counter() - started) * 1000)
+        raise diagnostics.DependencyHTTPException(502, str(e), code) from e
     return {
         "service": "comfyui",
         "container_state": container_state,

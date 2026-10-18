@@ -4,7 +4,7 @@ Every outbound call the dashboard makes to a dependency (ops-controller, Prometh
 ComfyUI, the llama.cpp servers, Qdrant, ...) degrades instead of 500ing when it fails. This
 module gives each failure a stable code (DEP-<DEP>-<KIND>), ties it to the request's trace id,
 logs exactly one WARNING line, and keeps an in-memory ring of recent failures plus per-dependency
-status so GET /api/diagnostics can answer what is failing and since when.
+status (per target for PROBE and EDGE) so GET /api/diagnostics can answer what is failing and since when.
 
 Details are short by contract: callers pass a one-line summary without tokens, headers or bodies;
 record_failure truncates to _DETAIL_MAX characters. The ring and the status map are process-local
@@ -20,19 +20,39 @@ import uuid
 from contextvars import ContextVar
 
 import httpx
+from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
-# The DEP part of a code: which dependency failed. OPS covers every ops-controller call
-# (_ops_request, the orchestration routes' raw clients, _live_gpus); GATEWAY the model-gateway
-# calls (the throughput benchmark and the readiness probes); PROMETHEUS, GRAFANA, COMFYUI and the
-# three llama.cpp servers the _get_json reads (each llama.cpp server has its own dep so one blip
-# cannot flip the healthy siblings' status); QDRANT the collection count; EDGE the caddy tailnet
-# checks (the identity DNS lookup and the cards' edge_check probes); PROBE the hub service
+# The DEP part of a code: which dependency failed, and what each is. OPS covers every
+# ops-controller call (_ops_request, the orchestration routes' raw clients, _live_gpus); GATEWAY
+# the model-gateway calls (the throughput benchmark and the readiness probes); PROMETHEUS, GRAFANA,
+# COMFYUI and the three llama.cpp servers the _get_json reads (each llama.cpp server has its own dep
+# so one blip cannot flip the healthy siblings' status); QDRANT the collection count; EDGE the caddy
+# tailnet checks (the identity DNS lookup and the cards' edge_check probes); PROBE the hub service
 # liveness checks. FS is reserved for filesystem faults and reads `unknown` in snapshot() until
 # something records it.
-DEPENDENCIES = ("OPS", "GATEWAY", "PROMETHEUS", "GRAFANA", "COMFYUI",
-                "LLAMACPP-GPU", "LLAMACPP-CPU", "LLAMACPP-EMBED", "QDRANT", "EDGE", "PROBE", "FS")
+DEP_MEANINGS = {
+    "OPS": "ops-controller, the control plane",
+    "GATEWAY": "model-gateway (LiteLLM)",
+    "PROMETHEUS": "Prometheus",
+    "GRAFANA": "Grafana",
+    "COMFYUI": "ComfyUI, through the GPU admission gate",
+    "LLAMACPP-GPU": "the GPU llama.cpp chat server",
+    "LLAMACPP-CPU": "the CPU fallback llama.cpp server",
+    "LLAMACPP-EMBED": "the embedding llama.cpp server",
+    "QDRANT": "Qdrant, the vector store",
+    "EDGE": "the Caddy SSO edge: each card's edge check, and the edge proxy's DNS name",
+    "PROBE": "a hub card's liveness check, one per card",
+    "FS": "the filesystem (state files, model dir); reserved",
+}
+DEPENDENCIES = tuple(DEP_MEANINGS)
+
+# PROBE and EDGE each cover several independent targets (one per hub card, one per edge check, plus
+# the edge proxy's DNS lookup), so their status is kept per target: one healthy card must not
+# reset another card's failure count. For these the caller's `target` names the thing checked (the
+# card id, or "dns:caddy"), never a URL path. Every other dependency is one target.
+PER_TARGET_DEPS = frozenset({"PROBE", "EDGE"})
 
 # The KIND part of a code, and what each means. TIMEOUT, UNREACHABLE, HTTP5XX and AUTH come from
 # classify_failure; BADPAYLOAD and NOTCONFIGURED are declared by the caller (an unparseable body,
@@ -66,7 +86,21 @@ def sanitize_detail(detail: str) -> str:
 _trace_id: ContextVar[str] = ContextVar("dashboard_trace_id", default="")
 _ring_lock = threading.Lock()
 _failures: list[dict] = []   # the ring, oldest first
-_dep_status: dict[str, dict] = {}
+# Per-dependency status, keyed by (dep, target): target is None for a dependency that is one
+# target, and the checked thing's name for a PER_TARGET_DEPS one (_status_key).
+_dep_status: dict[tuple[str, str | None], dict] = {}
+
+
+def _status_key(dep: str, target: str | None) -> tuple[str, str | None]:
+    if dep in PER_TARGET_DEPS:
+        if not target:
+            raise ValueError(f"{dep} keeps its status per target: name the target")
+        return dep, target
+    return dep, None
+
+
+def _new_status() -> dict:
+    return {"last_ok": None, "last_failure": None, "consecutive_failures": 0}
 
 
 def new_trace_id() -> str:
@@ -124,8 +158,10 @@ def record_failure(dep: str, kind: str, detail: str, *, target: str, elapsed_ms:
     """Log ONE WARNING line for a dependency failure and record it in the ring. Returns the code.
 
     detail must be a short one-liner without tokens, headers or bodies; URLs are stripped
-    (sanitize_detail) and the result truncated to _DETAIL_MAX characters.
+    (sanitize_detail) and the result truncated to _DETAIL_MAX characters. For a PER_TARGET_DEPS
+    dependency the status is kept under (dep, target).
     """
+    key = _status_key(dep, target)
     code = f"DEP-{dep}-{kind}"
     trace = current_trace_id()
     detail = sanitize_detail(detail)[:_DETAIL_MAX]
@@ -141,49 +177,73 @@ def record_failure(dep: str, kind: str, detail: str, *, target: str, elapsed_ms:
         })
         if len(_failures) > _RING_CAP:
             del _failures[: len(_failures) - _RING_CAP]
-        st = _dep_status.setdefault(dep, {"last_ok": None, "last_failure": None, "consecutive_failures": 0})
+        st = _dep_status.setdefault(key, _new_status())
         st["last_failure"] = {"code": code, "at": now, "detail": detail}
         st["consecutive_failures"] += 1
     return code
 
 
-def mark_ok(dep: str) -> None:
-    """Record a successful call: notes the last ok time and resets the consecutive-failure count."""
+def mark_ok(dep: str, target: str | None = None) -> None:
+    """Record a successful call: notes the last ok time and resets the consecutive-failure count.
+    A PER_TARGET_DEPS dependency needs the target, the same name record_failure was given."""
+    key = _status_key(dep, target)
     with _ring_lock:
-        st = _dep_status.setdefault(dep, {"last_ok": None, "last_failure": None, "consecutive_failures": 0})
+        st = _dep_status.setdefault(key, _new_status())
         st["last_ok"] = time.time()
         st["consecutive_failures"] = 0
 
 
-def snapshot() -> dict:
-    """The GET /api/diagnostics payload: per-dependency status, the ring newest first, the codes.
+def _status_row(dep: str, target: str | None, st: dict | None) -> dict:
+    if st is None:
+        status = "unknown"
+    elif st["last_failure"] is not None and (st["last_ok"] is None or st["last_failure"]["at"] >= st["last_ok"]):
+        status = "failing"
+    else:
+        status = "ok"
+    return {
+        "dep": dep,
+        "target": target,
+        "status": status,
+        "last_ok": st["last_ok"] if st else None,
+        "last_failure": dict(st["last_failure"]) if st and st["last_failure"] else None,
+        "consecutive_failures": st["consecutive_failures"] if st else 0,
+    }
 
-    A dependency reads failing while its newest event is a failure, ok once it has answered since,
-    unknown until anything has been observed.
+
+def snapshot() -> dict:
+    """The GET /api/diagnostics payload: status rows, the ring newest first, and the legend.
+
+    One status row per dependency, except a PER_TARGET_DEPS one, which has a row per target seen
+    (sorted by target) and a single `unknown` row with target null until any is seen. A row reads
+    failing while its newest event is a failure, ok once it has answered since, unknown until
+    anything has been observed. The legend lists the KINDs and the DEPs with what each means
+    (a code is DEP-<DEP>-<KIND>).
     """
     with _ring_lock:
         dependencies = []
         for dep in DEPENDENCIES:
-            st = _dep_status.get(dep)
-            if st is None:
-                status = "unknown"
-            elif st["last_failure"] is not None and (st["last_ok"] is None or st["last_failure"]["at"] >= st["last_ok"]):
-                status = "failing"
+            targets = sorted(target for (seen_dep, target) in _dep_status if seen_dep == dep and target is not None)
+            if dep in PER_TARGET_DEPS and targets:
+                dependencies.extend(_status_row(dep, target, _dep_status[(dep, target)]) for target in targets)
             else:
-                status = "ok"
-            dependencies.append({
-                "dep": dep,
-                "status": status,
-                "last_ok": st["last_ok"] if st else None,
-                "last_failure": dict(st["last_failure"]) if st and st["last_failure"] else None,
-                "consecutive_failures": st["consecutive_failures"] if st else 0,
-            })
+                dependencies.append(_status_row(dep, None, _dep_status.get((dep, None))))
         recent = [dict(entry) for entry in reversed(_failures)]
-    codes = [{"code": f"DEP-{dep}-{kind}", "meaning": meaning}
-             for dep in DEPENDENCIES for kind, meaning in KIND_MEANINGS.items()]
     return {
         "generated_at": time.time(),
         "dependencies": dependencies,
         "recent": recent,
-        "codes": codes,
+        "legend": {
+            "kinds": [{"kind": kind, "meaning": meaning} for kind, meaning in KIND_MEANINGS.items()],
+            "dependencies": [{"dep": dep, "meaning": meaning} for dep, meaning in DEP_MEANINGS.items()],
+        },
     }
+
+
+class DependencyHTTPException(HTTPException):
+    """An HTTP error a recorded dependency failure caused. The body is `{"detail", "code"}`: detail
+    as an HTTPException's, plus the DEP code record_failure returned, so the page can name it
+    (rendered by the handler app.py registers)."""
+
+    def __init__(self, status_code: int, detail: str, code: str):
+        super().__init__(status_code=status_code, detail=detail)
+        self.code = code

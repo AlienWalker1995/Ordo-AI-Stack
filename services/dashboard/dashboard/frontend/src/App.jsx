@@ -130,7 +130,7 @@ export default function App() {
                 <button key={p.id} ref={(el) => { tabRefs.current[i] = el }} type="button" role="tab"
                         id={`tab-${p.id}`} aria-selected={selected} aria-controls="page" tabIndex={selected ? 0 : -1}
                         onClick={() => navigate(p.id)}
-                        className={'h-8 shrink-0 rounded-sm px-3 text-label font-semibold transition-colors ' +
+                        className={'h-8 shrink-0 rounded-sm px-3 text-label font-semibold max-md:px-2.5 transition-colors ' +
                           (selected ? 'bg-accent/[0.12] text-accent-soft' : 'text-fg-muted hover:bg-surface hover:text-fg')}>
                   {p.label}
                 </button>
