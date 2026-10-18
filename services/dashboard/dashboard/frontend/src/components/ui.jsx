@@ -154,29 +154,45 @@ export function StatTile({ label, value, unit, sub, tone = 'fg', title, sparklin
 
 // Sparkline of [[epochSeconds, value], ...]: area fill, emphasised endpoint, scaled to its own max.
 // `domain` ([startEpoch, endEpoch]) pins the time axis, so a series that began an hour ago is
-// drawn in the last hour of the window instead of stretched across all of it.
-/** @param {{ points: [number, number][], tone?: string, label: string, height?: number, domain?: [number, number] }} props */
-export function Sparkline({ points, tone = 'accent', label, height = 32, domain }) {
-  const stroke = { accent: 'text-accent', warning: 'text-warning', success: 'text-success' }[tone] || 'text-accent'
-  if (!points || points.length < 2) {
+// drawn in the last hour of the window instead of stretched across all of it. `compare` draws a
+// second series in the same chart on the SAME time and value scales, so two roles read against
+// each other instead of each against itself.
+/** @param {{ points: [number, number][], tone?: string, label: string, height?: number, domain?: [number, number], compare?: { points: [number, number][], tone?: string, label: string } }} props */
+export function Sparkline({ points, tone = 'accent', label, height = 32, domain, compare }) {
+  const strokeFor = (t) => ({ accent: 'text-accent', warning: 'text-warning', success: 'text-success' }[t] || 'text-accent')
+  const series = [{ points, tone, label }]
+  if (compare && Array.isArray(compare.points) && compare.points.length >= 2) {
+    series.push({ points: compare.points, tone: compare.tone || 'warning', label: compare.label || '' })
+  }
+  const allPoints = series.flatMap((s) => s.points)
+  if (allPoints.length < 2) {
     return <div className="flex items-end text-caption text-muted" style={{ height }}>No samples yet</div>
   }
   const w = 200
   const h = height
-  const xs = points.map((p) => p[0])
-  const ys = points.map((p) => p[1])
+  const xs = allPoints.map((p) => p[0])
+  const ys = allPoints.map((p) => p[1])
   const x0 = domain ? domain[0] : Math.min(...xs)
   const x1 = domain ? domain[1] : Math.max(...xs)
+  // One value scale for every series in the chart: a role at a tenth of the other's rate must
+  // draw at a tenth of the height, or the comparison reads as equal.
   const yMax = Math.max(...ys, 0.0001)
   const px = (t) => ((t - x0) / Math.max(1, x1 - x0)) * w
   const py = (v) => h - 2 - (v / yMax) * (h - 6)
-  const line = points.map((p, i) => `${i ? 'L' : 'M'}${px(p[0]).toFixed(1)} ${py(p[1]).toFixed(1)}`).join(' ')
-  const last = points[points.length - 1]
+  const ariaLabel = series.map((s) => s.label).filter(Boolean).join(', ')
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className={'block w-full ' + stroke} style={{ height }} role="img" aria-label={label}>
-      <path d={`${line} L${px(last[0]).toFixed(1)} ${h} L${px(points[0][0]).toFixed(1)} ${h} Z`} fill="currentColor" opacity="0.14" />
-      <path d={line} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-      <circle cx={px(last[0])} cy={py(last[1])} r="2.2" fill="currentColor" />
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="block w-full" style={{ height }} role="img" aria-label={ariaLabel}>
+      {series.map((s, i) => {
+        const line = s.points.map((p, j) => `${j ? 'L' : 'M'}${px(p[0]).toFixed(1)} ${py(p[1]).toFixed(1)}`).join(' ')
+        const last = s.points[s.points.length - 1]
+        return (
+          <g key={i} className={strokeFor(s.tone)}>
+            <path d={`${line} L${px(last[0]).toFixed(1)} ${h} L${px(s.points[0][0]).toFixed(1)} ${h} Z`} fill="currentColor" opacity="0.14" />
+            <path d={line} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+            <circle cx={px(last[0])} cy={py(last[1])} r="2.2" fill="currentColor" />
+          </g>
+        )
+      })}
     </svg>
   )
 }

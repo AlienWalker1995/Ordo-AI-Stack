@@ -326,11 +326,48 @@ def summarise_renders(history: dict, limit: int) -> list[dict]:
     return renders[:limit]
 
 
+# The GPU chat service, by its compose id: the resident a lease evicts when its VRAM demand
+# cannot share the card.
+_CHAT_SERVICE = "llamacpp"
+# How long after a lease ends its restore still counts as evidence of that lease's eviction:
+# the broker restores on its next sweep tick, and an operator restarting the model by hand
+# within the window says the same thing.
+_RESTORE_WINDOW_S = 900
+_RESTORE_ACTIONS = frozenset({"restart", "start", "recreate"})
+
+
+def _lease_evicted_chat(ended, audit: list[dict]) -> bool:
+    """Whether a lease evicted the chat model, from what the activity route already reads.
+
+    The broker's own restore is not audited, so the evidence is a recorded restart/start/recreate
+    of the GPU chat service right after the lease ended: the model came back because the lease
+    put it away. Nothing earlier than the lease's end counts (a restart before it did not answer
+    this lease), and nothing later than the window (the model was up all along, or someone got to
+    it much later).
+    """
+    if not isinstance(ended, int | float):
+        return False
+    for entry in audit or []:
+        if entry.get("action") not in _RESTORE_ACTIONS:
+            continue
+        if (entry.get("target") or "") != _CHAT_SERVICE:
+            continue
+        if entry.get("result") not in ("ok", None):
+            continue
+        ts = entry.get("ts")
+        if isinstance(ts, int | float) and ended <= ts <= ended + _RESTORE_WINDOW_S:
+            return True
+    return False
+
+
 def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], limit: int) -> list[dict]:
     """Renders, GPU leases and operator actions in one newest-first feed.
 
-    A gate's lease and the render it admitted are the same event, so gate leases are left out
-    and the render stands for both. Read-only audit entries are dropped.
+    Every item carries the same keys; the lease fields (holder, started, ended, duration_s,
+    evicted_chat) are null/false on non-lease items. Gate leases are no longer dropped: the
+    render they admitted stands beside them as its own item, and the lease says who held the
+    GPU, for how long, and whether the chat model was evicted. Read-only audit entries are
+    dropped.
     """
     items: list[dict] = []
     for r in renders or []:
@@ -338,17 +375,27 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
             continue
         title = f"Render finished · {r['kind']}" if r.get("ok") else "Render failed"
         items.append({"ts": r["ts"], "kind": "render", "title": title,
-                      "severity": "ok" if r.get("ok") else "critical"})
+                      "severity": "ok" if r.get("ok") else "critical",
+                      "holder": None, "started": None, "ended": None, "duration_s": None,
+                      "evicted_chat": False})
     for lease in leases or []:
         job_id = lease.get("id", "")
-        if job_id.startswith("gate-"):
-            continue
         ts = lease.get("ended") or lease.get("started")
         if ts is None:
             continue
-        items.append({"ts": float(ts), "kind": "gpu",
-                      "title": f"GPU lease {lease_label(job_id)} {lease.get('outcome', '')}".strip(),
-                      "severity": "ok" if lease.get("outcome") == "completed" else "warning"})
+        holder = lease_label(job_id)
+        started, ended = lease.get("started"), lease.get("ended")
+        duration = round(ended - started) if isinstance(started, int | float) \
+            and isinstance(ended, int | float) and ended >= started else None
+        outcome = lease.get("outcome", "")
+        if job_id.startswith("gate-"):
+            title = f"GPU lent to {holder}" + (" (rejected)" if outcome == "rejected" else "")
+        else:
+            title = f"GPU lease {holder} {outcome}".strip()
+        items.append({"ts": float(ts), "kind": "gpu", "title": title,
+                      "severity": "ok" if outcome == "completed" else "warning",
+                      "holder": holder, "started": started, "ended": ended, "duration_s": duration,
+                      "evicted_chat": _lease_evicted_chat(ended, audit)})
     for entry in audit or []:
         action = entry.get("action", "")
         if action in _READ_ONLY_ACTIONS or action in _LEASE_ACTIONS or entry.get("ts") is None:
@@ -361,7 +408,9 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
         elif entry.get("dry_run"):
             title += " (dry run)"
         items.append({"ts": float(entry["ts"]), "kind": "action", "title": title,
-                      "severity": "info" if ok else "warning"})
+                      "severity": "info" if ok else "warning",
+                      "holder": None, "started": None, "ended": None, "duration_s": None,
+                      "evicted_chat": False})
     items.sort(key=lambda i: i["ts"], reverse=True)
     return items[:limit]
 

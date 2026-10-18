@@ -58,3 +58,16 @@ export function formatElapsed(ms) {
   const wholeMs = Math.round(ms)
   return wholeMs < 10000 ? `${wholeMs} ms` : `${(ms / 1000).toFixed(1)} s`
 }
+
+// "14 m" from seconds: the activity feed's lease durations. Under a minute reads in seconds;
+// an hour only appears when there is one, and never without its leftover minutes.
+export function formatDuration(seconds) {
+  if (seconds == null || Number.isNaN(seconds)) return ''
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s} s`
+  const minutes = Math.floor(s / 60)
+  if (minutes < 60) return `${minutes} m`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours} h ${rest} m` : `${hours} h`
+}

@@ -4,31 +4,67 @@
       "ts": 1790679880.0,
       "kind": "render",
       "title": "Render finished · image",
-      "severity": "ok"
+      "severity": "ok",
+      "holder": null,
+      "started": null,
+      "ended": null,
+      "duration_s": null,
+      "evicted_chat": false
     },
     {
       "ts": 1790679100.0,
+      "kind": "gpu",
+      "title": "GPU lent to ComfyUI",
+      "severity": "ok",
+      "holder": "ComfyUI",
+      "started": 1790678920.0,
+      "ended": 1790679100.0,
+      "duration_s": 180,
+      "evicted_chat": true
+    },
+    {
+      "ts": 1790678950.0,
       "kind": "action",
-      "title": "Restarted n8n",
-      "severity": "info"
+      "title": "Restarted llamacpp",
+      "severity": "info",
+      "holder": null,
+      "started": null,
+      "ended": null,
+      "duration_s": null,
+      "evicted_chat": false
     },
     {
       "ts": 1790676400.0,
       "kind": "render",
       "title": "Render failed",
-      "severity": "critical"
+      "severity": "critical",
+      "holder": null,
+      "started": null,
+      "ended": null,
+      "duration_s": null,
+      "evicted_chat": false
     },
     {
       "ts": 1790672800.0,
       "kind": "gpu",
       "title": "GPU lease train-lora completed",
-      "severity": "ok"
+      "severity": "ok",
+      "holder": "train-lora",
+      "started": 1790672200.0,
+      "ended": 1790672800.0,
+      "duration_s": 600,
+      "evicted_chat": false
     },
     {
       "ts": 1790593600.0,
       "kind": "action",
       "title": "Switched model to qwen3.8-27b-turbo",
-      "severity": "info"
+      "severity": "info",
+      "holder": null,
+      "started": null,
+      "ended": null,
+      "duration_s": null,
+      "evicted_chat": false
     }
   ]
 }

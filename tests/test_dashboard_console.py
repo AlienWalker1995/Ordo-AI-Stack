@@ -303,6 +303,73 @@ def test_activity_is_capped():
     assert len(console.merge_activity([], audit, [], limit=25)) == 25
 
 
+def test_gate_leases_are_visible_with_holder_and_duration():
+    # The operator's ask: a render that borrowed the GPU must be readable afterwards, with who
+    # held it, when, and for how long.
+    leases = [{"id": "gate-comfyui", "kind": "media", "started": 1790171000.0,
+               "ended": 1790171180.0, "outcome": "completed"}]
+    [item] = console.merge_activity(leases, [], [], limit=10)
+    assert item["title"] == "GPU lent to ComfyUI"
+    assert item["kind"] == "gpu"
+    assert item["severity"] == "ok"
+    assert item["holder"] == "ComfyUI"
+    assert item["started"] == 1790171000.0
+    assert item["ended"] == 1790171180.0
+    assert item["duration_s"] == 180
+    assert item["evicted_chat"] is False
+
+
+def test_rejected_gate_lease_reads_as_rejected_without_a_duration():
+    # Rejected before it started: no start stamp, so no duration, and the row says why.
+    leases = [{"id": "gate-comfyui", "kind": "media", "submitted": 100.0, "started": None,
+               "ended": 200.0, "outcome": "rejected"}]
+    [item] = console.merge_activity(leases, [], [], limit=10)
+    assert item["title"] == "GPU lent to ComfyUI (rejected)"
+    assert item["severity"] == "warning"
+    assert item["duration_s"] is None
+    assert item["ts"] == 200.0
+
+
+def test_non_gate_lease_keeps_its_title_and_carries_the_same_fields():
+    leases = [{"id": "train-lora", "kind": "train", "started": 100.0, "ended": 700.0,
+               "outcome": "completed"}]
+    [item] = console.merge_activity(leases, [], [], limit=10)
+    assert item["title"] == "GPU lease train-lora completed"
+    assert item["holder"] == "train-lora"
+    assert item["duration_s"] == 600
+
+
+def test_every_activity_item_carries_the_lease_fields():
+    # One shape for every kind, so the page can read holder/duration without per-kind guards.
+    audit = [_audit("restart", "n8n")]
+    items = console.merge_activity([], audit, [], limit=10)
+    [item] = items
+    assert set(item) == {"ts", "kind", "title", "severity", "holder", "started", "ended",
+                         "duration_s", "evicted_chat"}
+    assert (item["holder"], item["started"], item["ended"], item["duration_s"]) == (None, None, None, None)
+    assert item["evicted_chat"] is False
+
+
+@pytest.mark.parametrize("entry, evicted", [
+    ({**_audit("restart", "llamacpp"), "ts": 1790171300.0}, True),      # restored right after
+    ({**_audit("start", "llamacpp"), "ts": 1790172100.0}, True),        # at the window's edge
+    ({**_audit("recreate", "llamacpp"), "ts": 1790171200.0}, True),
+    ({**_audit("restart", "llamacpp"), "ts": 1790172200.0}, False),     # past the 15 min window
+    ({**_audit("restart", "llamacpp"), "ts": 1790171100.0}, False),     # before the lease ended
+    ({**_audit("restart", "comfyui"), "ts": 1790171300.0}, False),      # a different service
+    ({**_audit("restart", "llamacpp", result="error"), "ts": 1790171300.0}, False),
+])
+def test_lease_flags_the_chat_model_eviction_from_the_restore_event(entry, evicted):
+    # The broker's own restore is not audited; a recorded restart of the GPU chat service right
+    # after the lease ended is the evidence the activity route can read. The restore stands in
+    # the feed beside the lease as its own item.
+    leases = [{"id": "gate-comfyui", "kind": "media", "started": 1790171000.0,
+               "ended": 1790171200.0, "outcome": "completed"}]
+    items = console.merge_activity(leases, [entry], [], limit=10)
+    [item] = [i for i in items if i["kind"] == "gpu"]
+    assert item["evicted_chat"] is evicted
+
+
 # --- models ---
 
 # The render's answer (ops-controller /model-config): every file a rendered service loads.

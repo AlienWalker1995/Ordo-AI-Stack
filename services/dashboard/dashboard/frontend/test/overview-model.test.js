@@ -1,7 +1,7 @@
 // The KPI band's pure model: container counts across projects, the token estimate from the rate
 // series, medians passed through untouched, and the omit-don't-zero rule for missing sources.
 import { describe, expect, it } from 'vitest'
-import { countContainers, diskFacts, formatTokens, kpiTiles, speedByRole, tokensFromSeries, vramFacts } from '../src/pages/overviewModel.js'
+import { activityCategory, activityDaySummary, countContainers, diskFacts, filterActivity, formatTokens, groupActivity, kpiTiles, speedByRole, tokensFromSeries, vramFacts } from '../src/pages/overviewModel.js'
 
 describe('countContainers', () => {
   it('sums every project, ordo and non-ordo alike', () => {
@@ -186,5 +186,100 @@ describe('kpiTiles', () => {
     expect(hot.find((t) => t.key === 'vram').tone).toBe('warning')
     const full = kpiTiles({ ...FULL_OVERVIEW, host: { ...FULL_OVERVIEW.host, disk_pct: 91 } }, SERIES)
     expect(full.find((t) => t.key === 'disk').tone).toBe('warning')
+  })
+})
+
+describe('groupActivity', () => {
+  it('collapses consecutive identical events into one row with a count and span', () => {
+    const items = [300, 200, 100].map((ts) => ({ ts, kind: 'action', title: 'Restarted comfyui', severity: 'info' }))
+    const [group] = groupActivity(items)
+    expect(group).toMatchObject({ title: 'Restarted comfyui', count: 3, ts: 300, oldestTs: 100 })
+  })
+
+  it('keeps the newest member\'s facts and the worst severity of the run', () => {
+    const items = [
+      { ts: 300, kind: 'action', title: 'Restarted comfyui', severity: 'info' },
+      { ts: 200, kind: 'action', title: 'Restarted comfyui', severity: 'warning' },
+      { ts: 100, kind: 'action', title: 'Restarted comfyui', severity: 'critical' },
+    ]
+    const [group] = groupActivity(items)
+    expect(group.severity).toBe('critical')
+    expect(group.ts).toBe(300)
+  })
+
+  it('passes the lease fields through on a GPU row', () => {
+    const [group] = groupActivity([{ ts: 400, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok',
+      holder: 'ComfyUI', started: 220, ended: 400, duration_s: 180, evicted_chat: true }])
+    expect(group).toMatchObject({ holder: 'ComfyUI', duration_s: 180, evicted_chat: true })
+  })
+
+  it('splits a run when the gap between members exceeds the six hour window', () => {
+    const apart = [
+      { ts: 6 * 3600 + 1, kind: 'action', title: 'Restarted comfyui', severity: 'info' },
+      { ts: 0, kind: 'action', title: 'Restarted comfyui', severity: 'info' },
+    ]
+    expect(groupActivity(apart)).toHaveLength(2)
+    // At the window's edge the run still holds.
+    const edge = [
+      { ts: 6 * 3600, kind: 'action', title: 'Restarted comfyui', severity: 'info' },
+      { ts: 0, kind: 'action', title: 'Restarted comfyui', severity: 'info' },
+    ]
+    expect(groupActivity(edge)).toHaveLength(1)
+  })
+
+  it('keeps different titles apart and preserves feed order', () => {
+    const groups = groupActivity([
+      { ts: 500, kind: 'render', title: 'Render finished · image', severity: 'ok' },
+      { ts: 400, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok' },
+      { ts: 300, kind: 'action', title: 'Restarted n8n', severity: 'info' },
+      { ts: 200, kind: 'action', title: 'Restarted n8n', severity: 'info' },
+    ])
+    expect(groups.map((g) => g.title)).toEqual(['Render finished · image', 'GPU lent to ComfyUI', 'Restarted n8n'])
+    expect(groups[2].count).toBe(2)
+    expect(groupActivity([])).toEqual([])
+  })
+})
+
+describe('activityCategory and filterActivity', () => {
+  it('maps kinds to the chip categories; a model switch is its own category', () => {
+    expect(activityCategory({ kind: 'render' })).toBe('render')
+    expect(activityCategory({ kind: 'gpu' })).toBe('gpu')
+    expect(activityCategory({ kind: 'action', title: 'Switched model to x' })).toBe('model')
+    expect(activityCategory({ kind: 'action', title: 'Restarted n8n' })).toBe('service')
+  })
+
+  it('filters the grouped feed by category and passes everything through otherwise', () => {
+    const groups = groupActivity([
+      { ts: 400, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok' },
+      { ts: 300, kind: 'action', title: 'Restarted n8n', severity: 'info' },
+      { ts: 200, kind: 'action', title: 'Switched model to x', severity: 'info' },
+      { ts: 100, kind: 'render', title: 'Render failed', severity: 'critical' },
+    ])
+    expect(filterActivity(groups, 'all')).toHaveLength(4)
+    expect(filterActivity(groups, undefined)).toHaveLength(4)
+    for (const category of ['render', 'gpu', 'model', 'service']) {
+      expect(filterActivity(groups, category), category).toHaveLength(1)
+    }
+  })
+})
+
+describe('activityDaySummary', () => {
+  it('counts today\'s renders, failures, leases and actions from the same payload', () => {
+    const now = new Date(2026, 9, 18, 12, 0, 0).getTime()
+    const s = now / 1000
+    const items = [
+      { ts: s - 3600, kind: 'render', severity: 'ok' },
+      { ts: s - 7200, kind: 'render', severity: 'critical' },
+      { ts: s - 10800, kind: 'gpu', severity: 'ok' },
+      { ts: s - 14400, kind: 'action', severity: 'info' },
+      { ts: s - 2 * 86400, kind: 'render', severity: 'ok' },
+    ]
+    expect(activityDaySummary(items, now)).toBe('Today: 2 renders, 1 failed · 1 lease · 1 operator action')
+  })
+
+  it('is absent when nothing happened today', () => {
+    const now = new Date(2026, 9, 18, 12, 0, 0).getTime()
+    expect(activityDaySummary([{ ts: now / 1000 - 86400, kind: 'render', severity: 'ok' }], now)).toBeNull()
+    expect(activityDaySummary([], now)).toBeNull()
   })
 })
