@@ -86,18 +86,26 @@ function clockTime(ms) {
 }
 
 // A poll's data is stale when the latest refresh failed while earlier data is still shown, or (with
-// `maxAgeMs`) when nothing has replaced it for that long. Null while fresh, else when the shown data
+// `maxAgeMs`) when nothing has replaced it for that long. Coming back to a hidden tab fires a
+// refresh at once, so the age clock restarts then: the data is merely old, not failing, and the
+// in-flight read gets its full window before any note. Null while fresh, else when the shown data
 // was read and why it is stale.
 function useStale(poll, maxAgeMs) {
   const [now, setNow] = useState(() => Date.now())
+  // When the tab last came into view (or the page mounted): the age limit runs from here, not from
+  // a reading made while the tab was hidden.
+  const [visibleSince, setVisibleSince] = useState(() => Date.now())
   useEffect(() => {
     if (!maxAgeMs) return undefined
     const timer = setInterval(() => setNow(Date.now()), STALE_CHECK_MS)
-    return () => clearInterval(timer)
+    const onVisibility = () => { if (!document.hidden) setVisibleSince(Date.now()) }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisibility) }
   }, [maxAgeMs])
   if (!poll.data || !poll.lastUpdated) return null
   if (poll.error) return { at: poll.lastUpdated, reason: poll.error.message }
-  if (maxAgeMs && now - poll.lastUpdated > maxAgeMs) {
+  const since = Math.max(poll.lastUpdated, visibleSince)
+  if (maxAgeMs && now - since > maxAgeMs) {
     return { at: poll.lastUpdated, reason: `no new reading for over ${maxAgeMs / 1000} s` }
   }
   return null

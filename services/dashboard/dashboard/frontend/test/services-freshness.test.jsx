@@ -93,4 +93,33 @@ describe('Services: stale and unmeasured data', () => {
     await advance(10000)
     expect(screen.getByText(PRESSURE_STALE).getAttribute('title')).toBe('no new reading for over 60 s')
   })
+
+  it('gives the on-return refresh its full window before marking pressure stale', async () => {
+    let reads = 0
+    mockApi({
+      // The first read answers; the next one hangs.
+      [`GET ${PRESSURE}`]: () => (reads++ === 0 ? fixture(PRESSURE) : new Promise(() => {})),
+    })
+    renderInShell(<ServicesPage />)
+    await advance()
+
+    const setHidden = (hidden) => act(async () => {
+      Object.defineProperty(document, 'hidden', { configurable: true, value: hidden })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    // Hidden for over the 60 s limit: polling pauses and the data ages out of view.
+    await setHidden(true)
+    await advance(70000)
+
+    // Back in view: the refetch is already running, so the data is merely old, not failing — no note yet.
+    await setHidden(false)
+    await advance(10000)
+    expect(screen.queryByText(PRESSURE_STALE)).toBeNull()
+
+    // Still nothing 60 s after the return: now it is stale.
+    await advance(60000)
+    expect(screen.getByText(PRESSURE_STALE).getAttribute('title')).toBe('no new reading for over 60 s')
+    delete document.hidden
+  })
 })

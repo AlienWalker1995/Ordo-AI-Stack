@@ -85,6 +85,21 @@ def test_every_ops_mapped_service_exists_in_the_rendered_stack():
         )
 
 
+def test_every_runs_in_target_exists_in_the_rendered_stack():
+    """Each card's `runs_in` must name a real compose service, else `_card_container` merges the
+    card into a container that does not exist: the row reads Unknown/stopped while the real
+    container shows as its own row — the same drift class the ops_service check above stops."""
+    rendered = _rendered_services()
+    if not rendered:
+        __import__("pytest").skip("no rendered stack in this checkout")
+    for card in SERVICES:
+        runs_in = card.get("runs_in")
+        if runs_in:
+            assert runs_in in rendered, (
+                f"{card['id']} runs_in {runs_in} is not a service in the rendered stack"
+            )
+
+
 def test_no_card_targets_a_service_the_backend_refuses():
     for display_id, compose_id in OPS_SERVICE_MAP.items():
         assert compose_id not in DockerBackend.SELF_REFERENTIAL, (
