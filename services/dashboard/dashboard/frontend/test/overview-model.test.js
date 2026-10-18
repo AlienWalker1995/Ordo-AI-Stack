@@ -50,6 +50,16 @@ describe('tokensFromSeries', () => {
   it('ignores gaps that run backwards in time', () => {
     expect(tokensFromSeries({ gpu: [[0, 10], [3600, 20], [1800, 30]] })).toBe(10 * 3600)
   })
+
+  it('caps each interval at the series resolution, so a multi-step gap cannot extrapolate', () => {
+    // 5-minute samples: 200 tok/s until t=3600, then the model is evicted for 3 h and the
+    // series resumes at t=14400. The last known rate must not span the 10800 s gap — only one
+    // step of it counts, or a quiet day would show ~2.9 M tokens instead of ~780 k.
+    const gpu = []
+    for (let t = 0; t <= 3600; t += 300) gpu.push([t, 200])
+    gpu.push([14400, 200])
+    expect(tokensFromSeries({ gpu })).toBe(13 * 200 * 300)
+  })
 })
 
 describe('formatTokens', () => {
