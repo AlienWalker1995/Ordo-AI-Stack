@@ -8,9 +8,9 @@
 // (an older ops-controller answered null there). Either way it is "nothing new": the buffer is
 // kept as it is, the same object, and the cursor stays where it was.
 //
-// An ops-controller without the cursor answers no last_ts and
-// ignores since, so the reader never gets a cursor: every read is a first read whose answer
-// replaces the buffer, the whole tail again, never a repeated line.
+// An ops-controller without the cursor answers no last_ts and ignores since, so the reader
+// never gets a cursor: every read is a first read whose answer replaces the buffer, the whole
+// tail again, never a repeated line.
 //
 // The buffer keeps the newest BUFFER_MAX lines. `dropped` counts what the cap removed, `truncated`
 // says ops-controller cut an answer (its byte cap) or a read may have skipped lines.
