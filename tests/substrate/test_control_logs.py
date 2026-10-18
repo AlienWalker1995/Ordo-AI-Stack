@@ -101,8 +101,21 @@ def test_the_answer_is_plain_text_with_the_cursor_beside_it():
 
 
 def test_no_line_is_an_empty_text_and_no_cursor():
+    """A duration names no point in time, so with nothing new there is no cursor to answer."""
     assert logs.payload([], logs.LogQuery(tail=5, since="10m")) == {
         "logs": "", "tail": 5, "since": "10m", "last_ts": None, "truncated": False}
+
+
+def test_an_idle_poll_answers_the_incoming_cursor_not_null():
+    """A caller stores `last_ts` and sends it back; a null would reset it to the full tail."""
+    since = "2026-10-17T04:00:00.000000002Z"
+    answer = logs.payload([("2026-10-17T04:00:00.000000002Z", "seen")], logs.LogQuery(tail=200, since=since))
+    assert answer["logs"] == "" and answer["last_ts"] == since
+
+
+def test_an_idle_poll_normalises_the_cursor_to_the_form_docker_stamps():
+    answer = logs.payload([], logs.LogQuery(tail=200, since="2026-10-17T00:00:00.5-04:00"))
+    assert answer["last_ts"] == "2026-10-17T04:00:00.500000000Z"
 
 
 def test_an_absolute_since_drops_the_line_docker_returns_at_it():
@@ -163,7 +176,21 @@ def test_polling_with_last_ts_returns_only_the_new_lines(cp, backend):
     second = cp.route("GET", "/services/web/logs", {}, {"since": first["last_ts"]})[1]
     assert second["logs"] == "three\n"
     third = cp.route("GET", "/services/web/logs", {}, {"since": second["last_ts"]})[1]
-    assert third["logs"] == "" and third["last_ts"] is None
+    assert third["logs"] == "" and third["last_ts"] == second["last_ts"]
+
+
+def test_the_cursor_survives_an_idle_poll_and_then_advances(cp, backend):
+    container = backend.project_containers["web"]
+    container.output.append("one")
+    cursor = cp.route("GET", "/services/web/logs", {}, {})[1]["last_ts"]
+    for _ in range(2):  # idle polls: nothing new, the cursor stays put
+        idle = cp.route("GET", "/services/web/logs", {}, {"since": cursor})[1]
+        assert idle["logs"] == "" and idle["last_ts"] == cursor
+        cursor = idle["last_ts"]
+    container.output.append("two")
+    fresh = cp.route("GET", "/services/web/logs", {}, {"since": cursor})[1]
+    assert fresh["logs"] == "two\n"
+    assert logs.instant(fresh["last_ts"]) > logs.instant(cursor)
 
 
 @pytest.mark.parametrize("query", [{"tail": "0"}, {"tail": "x"}, {"since": "yesterday"}])

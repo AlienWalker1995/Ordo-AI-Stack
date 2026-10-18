@@ -10,6 +10,12 @@ and gets only the lines after it. Docker's `--since` is inclusive (a line stampe
 comes back), so `payload` drops the lines at or before an absolute `since`: polling never repeats
 a line. A duration (`10m`) is relative to now and is passed through as docker reads it.
 
+The cursor never goes backwards or null. A poll with an absolute `since` that finds nothing new
+answers `last_ts` equal to that `since`, normalised to the form docker stamps lines with (UTC,
+nine fraction digits, `Z`), so a caller can always store `last_ts` and send it next. `last_ts` is
+null only when no absolute cursor exists yet: no line came back and `since` was absent or a
+duration (a duration is relative to now, so it cannot be echoed back as a point in time).
+
 A tail of 1000 lines of a chatty container can still be megabytes, so the body is capped in bytes
 too (`BODY_MAX_BYTES`), keeping the newest lines, and `truncated` says when that happened.
 """
@@ -61,6 +67,12 @@ def instant(timestamp: str) -> _Instant | None:
     return whole.astimezone(UTC), int((fraction or "").ljust(9, "0"))
 
 
+def cursor(when: _Instant) -> str:
+    """An instant written as docker stamps a line: `2026-10-17T04:10:21.044180797Z`."""
+    whole, nanoseconds = when
+    return f"{whole.strftime('%Y-%m-%dT%H:%M:%S')}.{nanoseconds:09d}Z"
+
+
 def parse_query(query: dict[str, str]) -> LogQuery:
     """`tail` (an integer in 1..TAIL_MAX, default TAIL_DEFAULT) and `since` (RFC 3339 or a docker
     duration). Anything else raises LogQueryError: a `since` docker would read some other way
@@ -110,7 +122,8 @@ def merge_streams(stdout: str, stderr: str) -> list[LogLine]:
 def payload(lines: list[LogLine], query: LogQuery) -> dict:
     """The fields every logs route answers: `logs` (the text, timestamps removed, as the dashboard
     has always shown it), `tail`, `since`, `last_ts` (the newest returned line's timestamp, the
-    next call's `since`; None when no line came back) and `truncated` (lines were dropped to stay
+    next call's `since`; the incoming absolute `since`, normalised, when no line came back; None
+    only when neither exists) and `truncated` (lines were dropped to stay
     under BODY_MAX_BYTES)."""
     since = instant(query.since) if query.since else None
     if since is not None:
@@ -129,5 +142,7 @@ def payload(lines: list[LogLine], query: LogQuery) -> dict:
         size += len(encoded)
     kept.reverse()
     last_ts = next((timestamp for timestamp, _text in reversed(kept) if timestamp), None)
+    if last_ts is None and since is not None:
+        last_ts = cursor(since)  # nothing new: the cursor stays where the caller left it
     return {"logs": "".join(text for _timestamp, text in kept), "tail": query.tail, "since": query.since,
             "last_ts": last_ts, "truncated": truncated}
