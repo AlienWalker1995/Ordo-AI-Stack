@@ -32,13 +32,23 @@ describe('countContainers', () => {
     expect(countContainers(null)).toBeNull()
     expect(countContainers({})).toBeNull()
   })
+
+  it('labels containers without a compose project so the tile cannot end in a dangling "in "', () => {
+    // service_counts files containers with no compose project under the key "".
+    const byProject = { '': { total: 2, up: 1, failed: 1, unhealthy: 1 }, ordo: { total: 1, up: 1, failed: 0, unhealthy: 0 } }
+    const counts = countContainers(byProject)
+    expect(counts.failedProjects).toEqual(['no project'])
+    expect(counts.unhealthyProjects).toEqual(['no project'])
+    const tile = kpiTiles({ services: { by_project: byProject } }, undefined).find((t) => t.key === 'containers')
+    expect(tile.sub).toBe('1 failed in no project · 1 unhealthy in no project')
+  })
 })
 
 describe('tokensFromSeries', () => {
   it('integrates each rate over the gap to the next sample, gpu and cpu together', () => {
-    // Two hourly samples: 40 tok/s held for the hour, then 50; cpu 1 then 2.
-    const series = { gpu: [[0, 40], [3600, 50]], cpu: [[0, 1], [3600, 2]] }
-    expect(tokensFromSeries(series)).toBe(40 * 3600 + 1 * 3600)
+    // Samples at the request's own 300 s step: every gap counts in full, gpu and cpu summed.
+    const series = { gpu: [[0, 40], [300, 50]], cpu: [[0, 1], [300, 2]] }
+    expect(tokensFromSeries(series)).toBe(40 * 300 + 1 * 300)
   })
 
   it('is missing when neither role has two samples', () => {
@@ -48,10 +58,10 @@ describe('tokensFromSeries', () => {
   })
 
   it('ignores gaps that run backwards in time', () => {
-    expect(tokensFromSeries({ gpu: [[0, 10], [3600, 20], [1800, 30]] })).toBe(10 * 3600)
+    expect(tokensFromSeries({ gpu: [[0, 10], [300, 20], [150, 30]] })).toBe(10 * 300)
   })
 
-  it('caps each interval at the series resolution, so a multi-step gap cannot extrapolate', () => {
+  it('caps each interval at the request step, so a multi-step gap cannot extrapolate', () => {
     // 5-minute samples: 200 tok/s until t=3600, then the model is evicted for 3 h and the
     // series resumes at t=14400. The last known rate must not span the 10800 s gap — only one
     // step of it counts, or a quiet day would show ~2.9 M tokens instead of ~780 k.
@@ -59,6 +69,13 @@ describe('tokensFromSeries', () => {
     for (let t = 0; t <= 3600; t += 300) gpu.push([t, 200])
     gpu.push([14400, 200])
     expect(tokensFromSeries({ gpu })).toBe(13 * 200 * 300)
+  })
+
+  it('caps an all-sparse series at the request step, not the data\'s own gaps', () => {
+    // Two isolated bursts 3 h apart and nothing else: a step derived from the data would be
+    // 3 h and extrapolate 40 tok/s across the whole silent span (~432 k); the request's
+    // 300 s step counts one interval per burst instead.
+    expect(tokensFromSeries({ gpu: [[0, 40], [10800, 40]] })).toBe(40 * 300)
   })
 })
 
@@ -129,7 +146,7 @@ describe('kpiTiles', () => {
     expect(engine.value).toBe('GPU')
     expect(speed.median).toMatchObject({ value: 153.2, n: 500, provisional: false })
     expect(speed.sparkline).toBe(SERIES.gpu)
-    expect(tokens.value).toBe('~148 k')
+    expect(tokens.value).toBe('~12 k')
     expect(vram.value).toBe('90%')
     expect(vram.sub).toContain('99% compute')
     expect(vram.sub).toContain('resident: GPU chat, ComfyUI')

@@ -19,8 +19,10 @@ export function countContainers(byProject) {
     if (!stats || typeof stats.total !== 'number') continue
     total += stats.total
     up += stats.up || 0
-    if (stats.failed > 0) { failed += stats.failed; failedProjects.push(project) }
-    if (stats.unhealthy > 0) { unhealthy += stats.unhealthy; unhealthyProjects.push(project) }
+    // Containers without a compose project are filed under "" by service_counts; label them,
+    // or the tile would read "1 failed in ".
+    if (stats.failed > 0) { failed += stats.failed; failedProjects.push(project || 'no project') }
+    if (stats.unhealthy > 0) { unhealthy += stats.unhealthy; unhealthyProjects.push(project || 'no project') }
   }
   if (!total) return null
   return { up, total, failed, unhealthy, failedProjects, unhealthyProjects }
@@ -28,27 +30,28 @@ export function countContainers(byProject) {
 
 // Tokens generated over the sample span, estimated from the rate series /api/perf/series serves
 // (5-minute tok/s samples, last 24 h): each rate integrated over the gap to the next sample,
-// capped at one step of the series' own resolution. Prometheus query_range drops the points
-// where rate() has no data, so a gap wider than one step means the model was silent; without
-// the cap the last known rate would be extrapolated across the whole missing span.
+// capped at one step of the request's resolution. The band polls the endpoint with its default
+// 24 h window, which the backend resolves at max(60, hours * 3600 // 288) = 300 s and passes
+// through without zero-filling — Prometheus query_range drops the timestamps where rate() has
+// no data, so a gap wider than one step means the model was silent. The cap must come from the
+// request, not the data: derived from the samples it caps nothing when the series is sparse,
+// because then every gap equals or exceeds the true step and the last known rate would be
+// extrapolated across the whole silent span.
 // Null when neither role has two or more samples, so the tile is left undrawn instead of
 // showing a zero.
+// One step of the request behind the band's 24 h poll: the backend's max(60, hours * 3600 // 288).
+const SERIES_STEP_S = Math.max(60, Math.floor((24 * 3600) / 288))
+
 /** @param {{ gpu?: [number, number][], cpu?: [number, number][] } | undefined} [series] */
 export function tokensFromSeries(series) {
   const integrate = (points) => {
     if (!Array.isArray(points) || points.length < 2) return null
-    // The series' own resolution: the smallest positive step between consecutive samples.
-    let step = Infinity
-    for (let i = 1; i < points.length; i++) {
-      const d = points[i][0] - points[i - 1][0]
-      if (Number.isFinite(d) && d > 0 && d < step) step = d
-    }
     let sum = 0
     for (let i = 1; i < points.length; i++) {
       const [t0, v0] = points[i - 1]
       const t1 = points[i][0]
       if (typeof v0 === 'number' && Number.isFinite(t1) && t1 > t0) {
-        sum += v0 * Math.min(t1 - t0, step)
+        sum += v0 * Math.min(t1 - t0, SERIES_STEP_S)
       }
     }
     return sum
