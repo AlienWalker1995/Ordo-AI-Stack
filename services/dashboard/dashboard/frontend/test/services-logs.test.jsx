@@ -14,7 +14,7 @@ const T1 = '2026-10-17T04:10:21.044180797Z'
 const T2 = '2026-10-17T04:10:24.500000000Z'
 const T3 = '2026-10-17T04:10:27.000000001Z'
 
-// An answer in the shape ops-controller's logs routes send (ordo/control/logs.py).
+// An answer in the shape ops-controller's logs routes send.
 function logsAnswer(lines, lastTs, extra = {}) {
   return { service: 'open-webui', logs: lines.map((line) => `${line}\n`).join(''), tail: 300, since: null,
            last_ts: lastTs, truncated: false, ...extra }
@@ -331,7 +331,7 @@ describe('Services: the logs drawer', () => {
   })
 
   it('works against an ops-controller without the cursor: the whole tail each time, no repeats', async () => {
-    // Before ordo/control/logs.py: no last_ts, since ignored, the same tail every time.
+    // Without the cursor: no last_ts, since ignored, the same tail every time.
     const api = mockApi({ [`GET ${WEBUI_LOGS}`]: { service: 'open-webui', logs: 'a\nb\n' } })
     renderInShell(<ServicesPage />)
     await openLogs('Open WebUI')

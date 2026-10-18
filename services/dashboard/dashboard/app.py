@@ -818,7 +818,7 @@ async def ops_restart(service_id: str, request: Request):
 
 
 # ops-controller's logs routes take `tail` (1-1000 lines) and `since` (the previous answer's
-# `last_ts`, exclusive), and answer the newest tail with a cursor (ordo/control/logs.py).
+# `last_ts`, exclusive), and answer the newest tail with a cursor.
 _LOGS_TAIL_MAX = 1000
 
 

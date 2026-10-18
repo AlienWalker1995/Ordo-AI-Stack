@@ -78,7 +78,9 @@ All notable changes to this project are documented here. The format is loosely b
   reason; reading pauses while the tab is hidden. It follows the end only while the reader is
   there ("Jump to latest (N new)" otherwise, and a "Follow logs" toggle), labels the real line
   count and newest time instead of "last 300 lines", and can copy or download the buffer. Against
-  an ops-controller without the cursor it reads the whole tail each time, never repeating a line.
+  an ops-controller without the cursor it reads the whole tail each time, never repeating a line;
+  incremental reads need the `since`/`last_ts` cursor from **PR #399**, so until it lands the
+  drawer stays in this degraded mode.
 - **A Services action reads as done only once the table shows it.** Each row has its own action
   state, so a second click no longer clears the first row's pending state: the row says
   Starting…, Stopping… or Restarting… with its buttons held, and the table is re-read (every 2 s

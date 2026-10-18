@@ -8,7 +8,7 @@
 // (an older ops-controller answered null there). Either way it is "nothing new": the buffer is
 // kept as it is, the same object, and the cursor stays where it was.
 //
-// An ops-controller without the cursor (before ordo/control/logs.py) answers no last_ts and
+// An ops-controller without the cursor answers no last_ts and
 // ignores since, so the reader never gets a cursor: every read is a first read whose answer
 // replaces the buffer, the whole tail again, never a repeated line.
 //
