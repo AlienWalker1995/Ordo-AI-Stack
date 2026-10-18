@@ -34,6 +34,8 @@ describe('Services: stale and unmeasured data', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
   })
   afterEach(() => {
+    // Restore the prototype getter if a test overrode document.hidden.
+    delete document.hidden
     vi.useRealTimers()
   })
 
@@ -120,6 +122,5 @@ describe('Services: stale and unmeasured data', () => {
     // Still nothing 60 s after the return: now it is stale.
     await advance(60000)
     expect(screen.getByText(PRESSURE_STALE).getAttribute('title')).toBe('no new reading for over 60 s')
-    delete document.hidden
   })
 })
