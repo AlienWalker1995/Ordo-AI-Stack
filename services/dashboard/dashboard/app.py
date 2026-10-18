@@ -817,8 +817,9 @@ async def ops_restart(service_id: str, request: Request):
     )
 
 
-# ops-controller's logs routes take `tail` (1-1000 lines) and `since` (the previous answer's
-# `last_ts`, exclusive), and answer the newest tail with a cursor.
+# ops-controller's logs routes take `tail` (1-1000 lines, default 200) and `since` (the previous
+# answer's `last_ts`, exclusive) and answer the newest tail with that cursor
+# (ordo/control/logs.py); the proxy caps `tail` at the same 1000.
 _LOGS_TAIL_MAX = 1000
 
 

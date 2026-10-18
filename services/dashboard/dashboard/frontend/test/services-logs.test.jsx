@@ -151,6 +151,20 @@ describe('Services: the logs drawer', () => {
     expect(next.received).toBe(buffer.received + 1)
   })
 
+  it('keeps the very same buffer for an unchanged answer without a cursor, so an idle drawer stays quiet', () => {
+    // An ops-controller without the cursor answers no last_ts: every read is a first read.
+    const stale = { service: 'open-webui', logs: 'a\nb\n' }
+    const buffer = applyAnswer(EMPTY_BUFFER, stale)
+    expect(applyAnswer(buffer, stale)).toBe(buffer)
+    // A changed flag still moves the buffer even when the lines do not.
+    const flagged = applyAnswer(buffer, { ...stale, truncated: true })
+    expect(flagged).not.toBe(buffer)
+    expect(flagged.truncated).toBe(true)
+    // An empty container whose answer never carries a cursor churns no less.
+    const empty = applyAnswer(EMPTY_BUFFER, { service: 'open-webui', logs: '' })
+    expect(applyAnswer(empty, { service: 'open-webui', logs: '' })).toBe(empty)
+  })
+
   it('keeps the newest 1000 lines and says how many older ones were dropped', async () => {
     const after = { first: logsAnswer(numbered('first', 300), T1), [T1]: logsAnswer(numbered('next', 800), T2) }
     mockApi({ [`GET ${WEBUI_LOGS}`]: (request) => after[request.query.since || 'first'] || logsAnswer([], null) })

@@ -9,7 +9,7 @@
 // kept as it is, the same object, and the cursor stays where it was.
 //
 // An ops-controller without the cursor answers no last_ts and ignores since, so the reader
-// never gets a cursor: every read is a first read whose answer replaces the buffer, the whole
+// never gets a cursor: every read is a first read whose answer becomes the buffer, the whole
 // tail again, never a repeated line.
 //
 // The buffer keeps the newest BUFFER_MAX lines. `dropped` counts what the cap removed, `truncated`
@@ -50,12 +50,15 @@ export function applyAnswer(buffer, answer) {
 
   if (!buffer.cursor) {
     // A first read replaces the buffer. Against an old ops-controller every read is one: the same
-    // tail again adds nothing, a different one is new text of an unknown line count.
+    // tail again adds nothing and keeps the very same buffer, a different one is new text of an
+    // unknown line count.
     const kept = lines.slice(-BUFFER_MAX)
     const same = kept.length === buffer.lines.length && kept.every((line, i) => line === buffer.lines[i])
     const added = same ? 0 : buffer.lines.length ? null : kept.length
+    const truncated = Boolean(answer?.truncated)
+    if (same && cursor === buffer.cursor && lastTs === buffer.lastTs && truncated === buffer.truncated) return buffer
     return {
-      lines: kept, cursor, lastTs, dropped: 0, truncated: Boolean(answer?.truncated),
+      lines: kept, cursor, lastTs, dropped: 0, truncated,
       received: buffer.received + (added || 0), changes: buffer.changes + (same ? 0 : 1),
     }
   }
