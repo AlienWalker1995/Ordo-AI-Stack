@@ -72,6 +72,19 @@ def test_a_fallback_hop_under_the_same_call_id_is_in_flight_again():
     assert snap["recent"]["callers"][0]["errors"] == 1
 
 
+def test_an_end_for_the_older_attempt_keeps_the_fallback_hop_in_flight():
+    """The events are independent fire-and-forget POSTs, so the failed attempt's end can arrive
+    after the fallback hop's start; it must not pop the fallback out of the in-flight map."""
+    store = live_work.WorkStore()
+    store.started(_started("c", at=T0), now=T0)
+    store.started(_started("c", deployment="llamacpp-cpu", at=T0 + 1.1, fallback=True), now=T0 + 1.1)
+    store.ended(_ended("c", started=T0, ended=T0 + 1, outcome="error", error="InternalServerError"), now=T0 + 1.2)
+    snap = store.snapshot(now=T0 + 5)
+    assert [(r["deployment"], r["fallback"]) for r in snap["inflight"]] == [("llamacpp-cpu", True)]
+    assert snap["engines"]["llamacpp-cpu"]["inflight"] == 1
+    assert snap["recent"]["callers"][0]["errors"] == 1  # the older attempt's end still landed
+
+
 def test_an_end_keeps_the_start_estimate_when_the_engine_sent_no_usage():
     store = live_work.WorkStore()
     store.started(_started("e"), now=T0)

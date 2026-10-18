@@ -49,7 +49,12 @@ class WorkStore:
         ended_at = event.get("ended_at") or now
         with self._lock:
             self._prune(now)
-            start = self._inflight.pop(event["call_id"], None) or {}
+            start = self._inflight.pop(event["call_id"], None)
+            if start is not None and start["started_at"] > ended_at:
+                # A newer attempt for this call_id is already in flight (the fallback hop); this
+                # end belongs to the older attempt, so put the newer start back and keep it visible.
+                self._inflight[event["call_id"]] = start
+            start = start or {}
             record = {key: event.get(key) if event.get(key) is not None else start.get(key) for key in _EVENT_FIELDS}
             record["started_at"] = event.get("started_at") or start.get("started_at") or ended_at
             record["ended_at"] = ended_at
