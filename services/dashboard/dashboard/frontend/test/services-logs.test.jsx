@@ -4,7 +4,7 @@
 import { act, fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ServicesPage from '../src/pages/ServicesPage.jsx'
-import { formatLogTime } from '../src/pages/serviceLogs.js'
+import { EMPTY_BUFFER, applyAnswer, formatLogTime } from '../src/pages/serviceLogs.js'
 import { mockApi } from './mockApi.js'
 import { renderInShell } from './renderInShell.jsx'
 
@@ -109,6 +109,46 @@ describe('Services: the logs drawer', () => {
     await advance(3000)
     expect(api.sent('GET', WEBUI_LOGS).at(-1).query).toEqual({ tail: '1000', since: T2 })
     expect(screen.getByText(`3 lines, newest at ${formatLogTime(T2)}`)).toBeTruthy()
+  })
+
+  it('treats an idle answer that echoes the cursor as nothing new, then appends the next line', async () => {
+    // ops-controller answers an idle poll with last_ts equal to the since it was sent.
+    let arrived = false
+    const api = mockApi({
+      [`GET ${WEBUI_LOGS}`]: (request) => {
+        if (!request.query.since) return logsAnswer(['a'], T1)
+        if (request.query.since === T1 && !arrived) return logsAnswer([], T1)
+        if (request.query.since === T1) return logsAnswer(['b'], T2)
+        return logsAnswer([], request.query.since)
+      },
+    })
+    renderInShell(<ServicesPage />)
+    await openLogs('Open WebUI')
+
+    await advance(3000)
+    await advance(3000)
+    expect(api.sent('GET', WEBUI_LOGS).map((r) => r.query)).toEqual([
+      { tail: '300' }, { tail: '1000', since: T1 }, { tail: '1000', since: T1 },
+    ])
+    expect(logText()).toBe('a')
+    expect(screen.getByText(`1 line, newest at ${formatLogTime(T1)}`)).toBeTruthy()
+
+    arrived = true
+    await advance(3000)
+    expect(logText()).toBe('a\nb')
+    await advance(3000)
+    expect(api.sent('GET', WEBUI_LOGS).at(-1).query).toEqual({ tail: '1000', since: T2 })
+    expect(logText()).toBe('a\nb')
+  })
+
+  it('keeps the very same buffer for an idle answer, so nothing re-renders or counts as new', () => {
+    const buffer = applyAnswer(EMPTY_BUFFER, logsAnswer(['a', 'b'], T1))
+    expect(applyAnswer(buffer, logsAnswer([], T1))).toBe(buffer)
+    expect(applyAnswer(buffer, logsAnswer([], null))).toBe(buffer)
+    const next = applyAnswer(buffer, logsAnswer(['c'], T2))
+    expect(next.lines).toEqual(['a', 'b', 'c'])
+    expect(next.cursor).toBe(T2)
+    expect(next.received).toBe(buffer.received + 1)
   })
 
   it('keeps the newest 1000 lines and says how many older ones were dropped', async () => {

@@ -4,6 +4,10 @@
 //   every 3 s    ?tail=FOLLOW_TAIL&since=<cursor>   only lines after the cursor (since is exclusive in
 //                                                   ops-controller), appended; no client dedupe
 //
+// A read that finds nothing new answers empty logs with last_ts equal to the cursor it was sent
+// (an older ops-controller answered null there). Either way it is "nothing new": the buffer is
+// kept as it is, the same object, and the cursor stays where it was.
+//
 // An ops-controller without the cursor (before ordo/control/logs.py) answers no last_ts and
 // ignores since, so the reader never gets a cursor: every read is a first read whose answer
 // replaces the buffer, the whole tail again, never a repeated line.
@@ -56,7 +60,11 @@ export function applyAnswer(buffer, answer) {
     }
   }
 
-  if (!lines.length) return { ...buffer, cursor, lastTs, truncated: buffer.truncated || Boolean(answer?.truncated) }
+  if (!lines.length) {
+    const truncated = buffer.truncated || Boolean(answer?.truncated)
+    if (cursor === buffer.cursor && lastTs === buffer.lastTs && truncated === buffer.truncated) return buffer
+    return { ...buffer, cursor, lastTs, truncated }
+  }
   const all = buffer.lines.concat(lines)
   const over = Math.max(0, all.length - BUFFER_MAX)
   return {
