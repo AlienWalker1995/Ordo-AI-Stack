@@ -11,26 +11,54 @@ The dashboard's `/api/throughput/record` endpoint accepts:
 This callback fires after every successful completion and POSTs a fire-and-
 forget sample. Never raises into the inference path — telemetry failures are
 logged at WARN and swallowed so a dashboard outage cannot break /v1/chat.
+
+It also reports live work to the dashboard's `/api/work/events` (same token): a `started`
+event when LiteLLM hands a request to an engine (the sync `log_pre_api_call` hook; LiteLLM
+1.100.1 never calls `async_log_pre_api_call`) and an `ended` event from the success and
+failure hooks (a stream ends at its final success event). Each attempt is one pair, so a
+GPU error followed by the CPU fallback hop is two pairs under one call_id.
 """
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 import os
+import threading
+import time
 from collections import OrderedDict
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+import litellm
 from litellm.integrations.custom_logger import CustomLogger
 
 logger = logging.getLogger("throughput_recorder")
 
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://dashboard:8080").rstrip("/")
 RECORD_PATH = "/api/throughput/record"
+WORK_EVENTS_PATH = "/api/work/events"
 TOKEN = os.environ.get("THROUGHPUT_RECORD_TOKEN", "").strip()
 TIMEOUT = float(os.environ.get("THROUGHPUT_POST_TIMEOUT_SEC", "1.5"))
+
+
+def _load_fallback_gate():
+    """The sibling gpu_lease_fallback_gate module, for its fallback-hop test.
+
+    LiteLLM loads callbacks by file path without adding their directory to sys.path, so a
+    plain `import gpu_lease_fallback_gate` fails in the container; the entrypoint copies both
+    files next to the rendered config, so load it from beside this one."""
+    path = Path(__file__).with_name("gpu_lease_fallback_gate.py")
+    spec = importlib.util.spec_from_file_location("gpu_lease_fallback_gate_for_throughput", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_fallback_gate = _load_fallback_gate()
 
 # User-Agent substrings → friendly service name. First match wins; ordered most-
 # specific first. Unknown UAs fall through to "unknown".
@@ -77,7 +105,8 @@ def _detect_service(kwargs: dict[str, Any]) -> str:
     ua = (slo.get("user_agent") or "").strip()
     if not ua:
         # Older LiteLLM paths still expose proxy_server_request — try that too.
-        req = kwargs.get("proxy_server_request") or {}
+        params = kwargs.get("litellm_params") or {}
+        req = kwargs.get("proxy_server_request") or params.get("proxy_server_request") or {}
         headers = req.get("headers") or {}
         if hasattr(headers, "items"):
             norm = {str(k).lower(): str(v) for k, v in headers.items()}
@@ -113,6 +142,8 @@ def _served_api_base(kwargs: dict[str, Any]) -> str:
         slo.get("api_base")
         or ((kwargs.get("litellm_params") or {}).get("metadata") or {}).get("api_base")
         or (kwargs.get("metadata") or {}).get("api_base")
+        # Before the call (log_pre_api_call) only LiteLLM's own record of the target is set.
+        or (kwargs.get("litellm_params") or {}).get("api_base")
         or ""
     )
 
@@ -262,22 +293,26 @@ def _generation_tokens_per_sec(response_obj, kwargs, completion_tokens: int, end
     return None
 
 
+def _usage(response_obj: Any) -> dict[str, Any]:
+    """The response's token usage as a dict ({} when the response carries none)."""
+    if isinstance(response_obj, dict):
+        return response_obj.get("usage") or {}
+    u = getattr(response_obj, "usage", None)
+    if isinstance(u, dict):
+        return u
+    if u is not None:
+        return {
+            "completion_tokens": getattr(u, "completion_tokens", 0),
+            "prompt_tokens": getattr(u, "prompt_tokens", 0),
+        }
+    return {}
+
+
 def _build_payload(kwargs, response_obj, start_time, end_time) -> dict[str, Any] | None:
     duration = _duration_sec(start_time, end_time)
     if duration <= 0:
         return None
-    usage: dict[str, Any] = {}
-    if isinstance(response_obj, dict):
-        usage = response_obj.get("usage") or {}
-    elif hasattr(response_obj, "usage"):
-        u = getattr(response_obj, "usage", None)
-        if isinstance(u, dict):
-            usage = u
-        elif u is not None:
-            usage = {
-                "completion_tokens": getattr(u, "completion_tokens", 0),
-                "prompt_tokens": getattr(u, "prompt_tokens", 0),
-            }
+    usage = _usage(response_obj)
     completion_tokens = int(usage.get("completion_tokens") or 0)
     if completion_tokens <= 0:
         return None
@@ -300,6 +335,126 @@ def _build_payload(kwargs, response_obj, start_time, end_time) -> dict[str, Any]
     if backend:
         payload["backend"] = backend
     return payload
+
+
+# --- live work events (/api/work/events) ---
+
+def _request_metadata(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The proxy and router metadata of the request. Chat completions carry it under
+    litellm_params.metadata, /v1/messages under litellm_params.litellm_metadata; later
+    sources win when a key is in both."""
+    params = kwargs.get("litellm_params") or {}
+    merged: dict[str, Any] = {}
+    for candidate in (kwargs.get("litellm_metadata"), kwargs.get("metadata"),
+                      params.get("litellm_metadata"), params.get("metadata")):
+        if isinstance(candidate, dict):
+            merged.update(candidate)
+    return merged
+
+
+def _detect_caller(kwargs: dict[str, Any]) -> str:
+    """Who is calling: the virtual key's alias (never the key or its hash), else the client the
+    request headers name (_detect_service)."""
+    alias = str(_request_metadata(kwargs).get("user_api_key_alias") or "").strip()
+    if alias:
+        return alias[:64]
+    return _detect_service(kwargs)
+
+
+def _model_group(kwargs: dict[str, Any]) -> str:
+    """The model group this attempt was routed to: the requested alias, or the fallback's group."""
+    group = str(_request_metadata(kwargs).get("model_group") or "").strip()
+    return group[:256] if group else _detect_alias(kwargs)
+
+
+def _is_fallback(kwargs: dict[str, Any]) -> bool:
+    """Whether this attempt is local-chat's fallback hop, by the gate's own test."""
+    return _fallback_gate._is_fallback_hop(_model_group(kwargs), {"metadata": _request_metadata(kwargs)})
+
+
+def _prompt_text(messages: Any) -> str:
+    """The text of the prompt's messages. Images and other parts are left out: counting an
+    image_url makes LiteLLM's counter fetch the image."""
+    if not isinstance(messages, list):
+        return ""
+    texts: list[str] = []
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            texts += [str(part["text"]) for part in content if isinstance(part, dict) and part.get("text")]
+    return "\n".join(texts)
+
+
+def _count_prompt_tokens(messages: Any) -> int | None:
+    """An estimate of the prompt's size with LiteLLM's default tokenizer (tiktoken, about 20 ms
+    for 170k tokens, so it runs off the event loop). The engine's own count arrives with the
+    ended event. None when it cannot be counted."""
+    text = _prompt_text(messages)
+    if not text:
+        return None
+    try:
+        return int(litellm.token_counter(text=text))
+    except Exception as exc:
+        logger.debug("throughput_recorder prompt token count failed: %s", exc)
+        return None
+
+
+def _epoch(value: Any) -> float | None:
+    """Epoch seconds from LiteLLM's start/end time (a naive local datetime, or a number)."""
+    if isinstance(value, datetime):
+        return round(value.timestamp(), 3)
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _event_base(kwargs: dict[str, Any], event: str) -> dict[str, Any] | None:
+    """Fields both events carry, or None when the request has no call id or is a health probe
+    (`no-log`: LiteLLM skips the end hooks for those, so a start would never end)."""
+    call_id = str(kwargs.get("litellm_call_id") or "").strip()
+    if not call_id or (kwargs.get("litellm_params") or {}).get("no-log") is True:
+        return None
+    return {
+        "event": event,
+        "call_id": call_id[:128],
+        "caller": _detect_caller(kwargs),
+        "model_group": _model_group(kwargs),
+        "model": _resolve_model(kwargs, None),
+        "deployment": _detect_backend(kwargs),
+        "fallback": _is_fallback(kwargs),
+    }
+
+
+def _started_event(kwargs: dict[str, Any]) -> dict[str, Any] | None:
+    event = _event_base(kwargs, "started")
+    if event is not None:
+        event["started_at"] = round(time.time(), 3)
+    return event
+
+
+def _ended_event(kwargs: dict[str, Any], response_obj: Any, start_time: Any, end_time: Any,
+                 failed: bool) -> dict[str, Any] | None:
+    event = _event_base(kwargs, "ended")
+    if event is None:
+        return None
+    usage = {} if failed else _usage(response_obj)
+    event.update({
+        "model": _resolve_model(kwargs, None if failed else response_obj),
+        "prompt_tokens": int(usage.get("prompt_tokens") or 0) or None,
+        "completion_tokens": int(usage.get("completion_tokens") or 0) or None,
+        "outcome": "error" if failed else "ok",
+        "started_at": _epoch(start_time),
+        "ended_at": _epoch(end_time) or round(time.time(), 3),
+    })
+    if failed:
+        exception = kwargs.get("exception")
+        if exception is None and isinstance(response_obj, BaseException):
+            exception = response_obj
+        event["error"] = type(exception).__name__ if exception is not None else "unknown"
+    return event
 
 
 def _headers() -> dict[str, str]:
@@ -328,6 +483,7 @@ class ThroughputRecorder(CustomLogger):
             yield chunk
 
     async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
+        await self._post_ended(kwargs, response_obj, start_time, end_time, failed=False)
         payload = _build_payload(kwargs, response_obj, start_time, end_time)
         if not payload:
             return
@@ -340,6 +496,7 @@ class ThroughputRecorder(CustomLogger):
             logger.warning("throughput_recorder async post failed: %s", exc)
 
     def log_success_event(self, kwargs, response_obj, start_time, end_time):
+        self._fire(self._post_ended(kwargs, response_obj, start_time, end_time, failed=False))
         payload = _build_payload(kwargs, response_obj, start_time, end_time)
         if not payload:
             return
@@ -361,14 +518,66 @@ class ThroughputRecorder(CustomLogger):
         except Exception as exc:
             logger.warning("throughput_recorder sync post failed: %s", exc)
 
-    async def _post_async(self, payload: dict[str, Any]) -> None:
+    async def _post_async(self, payload: dict[str, Any], path: str = RECORD_PATH) -> None:
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
                 await client.post(
-                    f"{DASHBOARD_URL}{RECORD_PATH}", json=payload, headers=_headers()
+                    f"{DASHBOARD_URL}{path}", json=payload, headers=_headers()
                 )
         except Exception as exc:
-            logger.warning("throughput_recorder backgrounded post failed: %s", exc)
+            logger.warning("throughput_recorder backgrounded post to %s failed: %s", path, exc)
+
+    # --- live work events ---
+
+    def log_pre_api_call(self, model, messages, kwargs):
+        """LiteLLM calls this synchronously on the request's event loop just before the engine
+        call, so the event (and its token count) goes out on a background task."""
+        try:
+            event = _started_event(kwargs)
+        except Exception as exc:
+            logger.warning("throughput_recorder started event failed: %s", exc)
+            return
+        if event is not None:
+            self._fire(self._post_started(event, messages))
+
+    async def _post_started(self, event: dict[str, Any], messages: Any) -> None:
+        try:
+            event["prompt_tokens"] = await asyncio.to_thread(_count_prompt_tokens, messages)
+        except Exception as exc:
+            logger.warning("throughput_recorder prompt token count failed: %s", exc)
+            event["prompt_tokens"] = None
+        await self._post_async(event, WORK_EVENTS_PATH)
+
+    async def _post_ended(self, kwargs, response_obj, start_time, end_time, failed: bool) -> None:
+        try:
+            event = _ended_event(kwargs, response_obj, start_time, end_time, failed)
+        except Exception as exc:
+            logger.warning("throughput_recorder ended event failed: %s", exc)
+            return
+        if event is not None:
+            await self._post_async(event, WORK_EVENTS_PATH)
+
+    async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
+        await self._post_ended(kwargs, response_obj, start_time, end_time, failed=True)
+
+    def log_failure_event(self, kwargs, response_obj, start_time, end_time):
+        self._fire(self._post_ended(kwargs, response_obj, start_time, end_time, failed=True))
+
+    def _fire(self, coroutine) -> None:
+        """Run `coroutine` without waiting for it: on the running loop when there is one (the
+        proxy's case), else on a daemon thread, so a slow dashboard never holds a request."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            threading.Thread(target=asyncio.run, args=(coroutine,), daemon=True).start()
+            return
+        task = loop.create_task(coroutine)
+        # The loop keeps only a weak reference to a task; hold it until it finishes.
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+
+_background_tasks: set[asyncio.Task] = set()
 
 
 # Module-level singleton — referenced from litellm_config.yaml.

@@ -290,3 +290,132 @@ def test_a_stream_without_a_call_id_passes_through_unobserved():
     assert "" not in tc._STREAM_OBSERVATIONS
     kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "completion_start_time": t0}
     assert tc._build_payload(kw, _response(completion_tokens=30), t0, t0 + timedelta(seconds=2)) is None
+
+
+# --- live work events (/api/work/events) ---
+
+SECRET_KEY = "sk-not-a-real-key-0123456789"
+
+
+def _call_kwargs(*, alias: str | None = "agent-key", model_group: str = "local-chat",
+                 api_base: str = "http://llamacpp:8080/v1", original_group: str | None = None,
+                 no_log: bool = False) -> dict:
+    """Request kwargs as LiteLLM 1.100.1 hands them to the pre-call and end hooks
+    (Logging.model_call_details): the router/proxy metadata under litellm_params."""
+    metadata = {"model_group": model_group, "user_api_key_hash": "hash-of-" + SECRET_KEY,
+                "api_base": api_base, "model_info": {"weights_file": GPU_GGUF}}
+    if alias:
+        metadata["user_api_key_alias"] = alias
+    if original_group:
+        metadata["original_model_group"] = original_group
+    params = {"metadata": metadata, "api_base": api_base, "api_key": SECRET_KEY,
+              "proxy_server_request": {"headers": {"user-agent": "python-httpx/0.28", "authorization": SECRET_KEY}}}
+    if no_log:
+        params["no-log"] = True
+    return {"model": f"openai/{model_group}", "litellm_call_id": "call-1", "litellm_params": params,
+            "api_key": SECRET_KEY}
+
+
+def test_started_event_names_the_caller_group_and_engine_but_never_the_key():
+    import json
+
+    event = tc._started_event(_call_kwargs())
+    assert {k: v for k, v in event.items() if k != "started_at"} == {
+        "event": "started", "call_id": "call-1", "caller": "agent-key", "model_group": "local-chat",
+        "model": "Qwen-GPU-Q6_K.gguf", "deployment": "llamacpp", "fallback": False,
+    }
+    assert isinstance(event["started_at"], float)
+    assert SECRET_KEY not in json.dumps(event)
+
+
+def test_a_keyless_caller_is_named_by_its_client():
+    assert tc._started_event(_call_kwargs(alias=None))["caller"] == "python"
+
+
+def test_the_fallback_hop_is_flagged_by_the_gates_test():
+    hop = tc._started_event(_call_kwargs(model_group="qwen-cpu", api_base="http://llamacpp-cpu:8080/v1",
+                                         original_group="local-chat"))
+    assert (hop["fallback"], hop["model_group"], hop["deployment"]) == (True, "qwen-cpu", "llamacpp-cpu")
+    direct = tc._started_event(_call_kwargs(model_group="qwen-cpu", api_base="http://llamacpp-cpu:8080/v1"))
+    assert direct["fallback"] is False
+
+
+def test_health_probes_send_no_events():
+    """LiteLLM skips the end hooks for `no-log` probes, so a start would never end."""
+    assert tc._started_event(_call_kwargs(no_log=True)) is None
+    assert tc._ended_event(_call_kwargs(no_log=True), _response(), datetime.now(), datetime.now(), False) is None
+
+
+def test_ended_event_carries_usage_timing_and_outcome():
+    start = datetime(2026, 10, 17, 12, 0, 0)
+    event = tc._ended_event(_call_kwargs(), _response(completion_tokens=64), start, start + timedelta(seconds=3),
+                            failed=False)
+    assert event["event"] == "ended"
+    assert (event["prompt_tokens"], event["completion_tokens"], event["outcome"]) == (10, 64, "ok")
+    assert event["ended_at"] - event["started_at"] == 3.0
+    assert "error" not in event
+
+
+def test_a_failed_attempt_ends_with_the_error_class():
+    class InternalServerError(Exception):
+        pass
+
+    kwargs = {**_call_kwargs(), "exception": InternalServerError("engine down")}
+    start = datetime(2026, 10, 17, 12, 0, 0)
+    event = tc._ended_event(kwargs, None, start, start + timedelta(seconds=1), failed=True)
+    assert (event["outcome"], event["error"], event["completion_tokens"]) == ("error", "InternalServerError", None)
+
+
+def test_prompt_tokens_count_only_the_text_parts(monkeypatch):
+    counted = []
+    monkeypatch.setattr(tc.litellm, "token_counter", lambda text: counted.append(text) or 42, raising=False)
+    messages = [{"role": "system", "content": "be brief"},
+                {"role": "user", "content": [{"type": "text", "text": "describe"},
+                                             {"type": "image_url", "image_url": {"url": "http://x/y.png"}}]}]
+    assert tc._count_prompt_tokens(messages) == 42
+    assert counted == ["be brief\ndescribe"]
+    assert tc._count_prompt_tokens([]) is None
+
+
+class _FailingClient:
+    """An httpx.AsyncClient whose every POST fails, recording the URL it was asked for."""
+
+    posted: list[str] = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def post(self, url, **kwargs):
+        _FailingClient.posted.append(url)
+        raise tc.httpx.ConnectError("dashboard down")
+
+
+def test_a_failing_dashboard_never_raises_into_the_request(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(tc.httpx, "AsyncClient", _FailingClient)
+    _FailingClient.posted = []
+    recorder = tc.ThroughputRecorder()
+    start = datetime(2026, 10, 17, 12, 0, 0)
+    end = start + timedelta(seconds=2)
+
+    async def one_request():
+        recorder.log_pre_api_call("openai/local-chat", [{"role": "user", "content": "hi"}], _call_kwargs())
+        await asyncio.gather(*tc._background_tasks)
+        await recorder.async_log_success_event(_call_kwargs(), _response(predicted_per_second=30.0), start, end)
+        await recorder.async_log_failure_event({**_call_kwargs(), "exception": ValueError("x")}, None, start, end)
+
+    asyncio.run(one_request())
+    assert [url.rsplit("8080", 1)[-1] for url in _FailingClient.posted] == [
+        "/api/work/events", "/api/work/events", "/api/throughput/record", "/api/work/events"]
+
+
+def test_a_broken_event_never_raises_into_the_request():
+    recorder = tc.ThroughputRecorder()
+    recorder.log_pre_api_call("m", [], {"litellm_call_id": "c", "litellm_params": "not-a-dict"})

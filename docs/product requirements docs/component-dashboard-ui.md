@@ -31,6 +31,8 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/models/switch` | POST | Y | Switch the GPU model: catalog id -> ops-controller `POST /model-config` (renders and recreates what the render changed; `restart_required_on_host` + `host_command` for what only the host can restart); refused while a GPU render lease is held |
 | `/api/models/delete` | POST | Y | Delete a GGUF file; refuses a file any server depends on |
 | `/api/throughput/record` | POST | `X-Throughput-Token` when `THROUGHPUT_RECORD_TOKEN` is set | Record a model call (called by model-gateway) |
+| `/api/work/events` | POST | `X-Throughput-Token` when `THROUGHPUT_RECORD_TOKEN` is set | A model request attempt started or ended (called by model-gateway); kept in memory only |
+| `/api/work` | GET | None | Requests in flight per engine, a five-minute per-caller summary, the CPU fallback's prefill progress (`/slots`) |
 | `/api/throughput/benchmark` | POST | Y | Short generation against `local-chat` |
 | `/api/perf/series` | GET | None | Tokens per second per chat server (Prometheus) |
 | `/api/perf/grafana` | GET | None | Whether Grafana is up + the embed path (Performance page) |
