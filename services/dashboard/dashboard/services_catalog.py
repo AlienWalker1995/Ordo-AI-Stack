@@ -152,7 +152,8 @@ SERVICES = _load_catalog_cards()
 # test_service_catalog_wiring.) Cards without `ops_service` (e.g. couchdb) fall back to
 # their own id at the call sites (OPS_SERVICE_MAP.get(id, id)). NB: Hermes has no entry:
 # its dashboard is an s6 service inside the agent, and the agent is never a lifecycle
-# target (a self-restart mid-tool-call), so its card is probe-only.
+# target (a self-restart mid-tool-call); the card binds to the agent container via
+# `runs_in`, so the table shows one Host-only row with no lifecycle controls.
 OPS_SERVICE_MAP = {s["id"]: s["ops_service"] for s in SERVICES if s.get("ops_service")}
 
 # Dashboard service id -> clean per-service tailnet subdomain label (the tailnet-names

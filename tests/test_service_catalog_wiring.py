@@ -47,10 +47,12 @@ def _rendered_services() -> set[str]:
 
 # ── (a) Hermes ─────────────────────────────────────────────────────────────────
 
-def test_hermes_card_is_probe_only():
+def test_hermes_card_has_no_ops_service_and_probes_through_the_edge():
     """The Hermes dashboard is an s6 service inside the agent container, and the agent is never a
-    lifecycle target, so the card has no compose service. It probes the dashboard through the edge,
-    the route its users take, so a broken route reads red (tests/test_edge_check.py)."""
+    lifecycle target, so the card declares no ops_service of its own (it binds to the agent
+    container via runs_in instead — see test_the_hermes_card_names_the_container_it_runs_in).
+    It probes the dashboard through the edge, the route its users take, so a broken route reads
+    red (tests/test_edge_check.py)."""
     assert "hermes" not in OPS_SERVICE_MAP
     card = next(s for s in SERVICES if s["id"] == "hermes")
     assert card["edge_check"] == "/api/status" and "check" not in card
