@@ -49,8 +49,6 @@ LOCAL_OUTPUT_COST_PER_TOKEN="${LOCAL_OUTPUT_COST_PER_TOKEN:-0}"
 # The pin alias is the weights file without its extension: a GGUF, or a NInfer .ninfer artifact.
 GPU_MODEL_NAME="$(basename "${GPU_WEIGHTS}" | sed -e 's/\.gguf$//' -e 's/\.ninfer$//' | tr '[:upper:]' '[:lower:]')"
 CPU_MODEL_NAME="$(basename "${CPU_WEIGHTS}" .gguf | tr '[:upper:]' '[:lower:]')-cpu"
-# gpu_lease_fallback_gate treats this deployment-named alias as a GPU pin, like local-chat-gpu.
-export GPU_MODEL_NAME
 
 # Vision support is a fact about the deployment (is an mmproj loaded?), not the template.
 # Vision: a llama.cpp model's mmproj, or a NInfer model rendered with its vision encoder on.

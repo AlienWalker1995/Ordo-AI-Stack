@@ -277,17 +277,14 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
 
 **Which engine answered?** While a render holds the GPU lease, the GPU chat model is evicted and
 `local-chat` traffic is served by the always-on CPU fallback inside the gateway; the response
-still says `local-chat`, so the switch is easy to miss. Four surfaces show which engine actually
-answered: Hermes announces a switch in the conversation, with a recovery notice when the primary is
-back, when its own fallback chain does the routing (primary `local-chat-gpu`, first fallback
-`local-chat-cpu` in the brain's `config.yaml`; with `local-chat` as primary the gateway reroutes
-silently and Hermes has nothing to announce; the pin answers 503 at once while the GPU model is
-evicted or down (up to ~3 s on a cold metrics read while the engine hangs); Hermes retries twice,
-then switches to `local-chat-cpu` and says so, and returns to the GPU on its own), the
-`ChatServedByCpuFallback` alert fires to Discord about two minutes after the eviction and sends
-a resolved notification when the GPU model is restored, the dashboard's Overview page shows a
-"Chat is on the CPU fallback" chip with both engines' median speeds, and every gateway response
-carries the `x-litellm-model-name` header naming the deployment that served it.
+still says `local-chat`. The gateway is the one place every client goes through, so it is where the
+answer lives: each request's trace in Langfuse (when the langfuse plugin is enabled) names the
+deployment that served it, every gateway response carries the `x-litellm-model-name` header, the
+Grafana "Ordo performance" dashboard plots throughput per deployment, the dashboard's Overview
+shows which engine answers chat right now, and the `ChatServedByCpuFallback` alert fires to
+Discord about two minutes after an eviction and resolves when the GPU model is back. Clients
+(Hermes included) use `local-chat` and leave the routing to the gateway; `local-chat-gpu` is for
+work that must run on the GPU and accepts an error while it is away.
 
 **Backups:** `ordo backup` saves `out/ordo.yaml`, `out/secrets.env`, `out/images.json` and every stateful
 volume (databases dumped, or copied with their writers stopped) to one owner-only archive outside the

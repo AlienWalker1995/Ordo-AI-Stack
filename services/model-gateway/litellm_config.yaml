@@ -93,9 +93,9 @@ model_list:
       supports_reasoning: true
       description: >-
         Explicit pin of the GPU chat deployment (same backend as local-chat but with NO CPU
-        failover routing — while the GPU model is evicted for a render or down it answers
-        503 at once with the reason in error.message). See weights_file for the exact GGUF;
-        supports_vision reflects whether an mmproj is loaded on the GPU server.
+        failover routing — errors when the GPU model is evicted for a render). See
+        weights_file for the exact GGUF; supports_vision reflects whether an mmproj is
+        loaded on the GPU server.
       weights_file: __GPU_WEIGHTS__
       served_by: llamacpp (__GPU_IMAGE__, RTX 5090)
 
@@ -132,10 +132,9 @@ model_list:
       supports_reasoning: true
       description: >-
         Stable alias for the GPU deployment, for work deliberately pinned to the GPU: the same
-        model as local-chat with NO CPU failover routing, so while the GPU model is evicted
-        for a render or down it answers 503 at once with the reason in error.message instead
-        of silently moving to the CPU. See weights_file for the exact GGUF; supports_vision
-        reflects whether an mmproj is loaded on the GPU server.
+        model as local-chat with NO CPU failover routing, so it errors while the GPU model is
+        evicted for a render instead of silently moving to the CPU. See weights_file for the
+        exact GGUF; supports_vision reflects whether an mmproj is loaded on the GPU server.
       weights_file: __GPU_WEIGHTS__
       served_by: llamacpp (__GPU_IMAGE__, RTX 5090)
 
@@ -291,8 +290,7 @@ litellm_settings:
   json_logs: true
   # throughput_callback posts tok/s + TTFT to the dashboard; prometheus serves /metrics for the
   # monitoring plugin. gpu_lease_fallback_gate logs each local-chat CPU fallback hop with the
-  # GPU lease state it reads from ops-controller's /metrics; it never denies the hop. It also answers
-  # the GPU pins (local-chat-gpu, __GPU_MODEL_NAME__) with a 503 while the GPU model is evicted or down.
+  # GPU lease state it reads from ops-controller's /metrics; it never denies the hop.
   # The endpoint runs unauthenticated (require_auth_for_metrics_endpoint
   # defaults to false) and is internal-network-only ONLY because the edge's SSO-bypassing
   # /llm/* route answers 404 for /metrics and /metrics/* (auth/caddy/Caddyfile). Its labels
