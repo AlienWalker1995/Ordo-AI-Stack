@@ -28,9 +28,6 @@ from collections.abc import Callable, Mapping
 PROJECT_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 # A container name as docker allows it; a path segment never carries a slash.
 CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-# The most log lines one call returns.
-LOG_TAIL_MAX = 2000
-LOG_TAIL_DEFAULT = 100
 # The only fields a project container row carries (the backend builds them from `docker ps`).
 ROW_FIELDS = ("name", "service", "state", "health", "status", "image")
 RESTARTS_PER_WINDOW = 3

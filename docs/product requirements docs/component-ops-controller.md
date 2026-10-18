@@ -40,8 +40,8 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/services` | GET | Compose services + state |
-| `/services/{id}/start`, `/stop`, `/restart`, `/recreate` | POST | Lifecycle verb (`confirm: true` required; `dry_run: true` returns the planned action) |
-| `/services/{id}/logs` | GET | Tail logs (100 lines) |
+| `/services/{id}/start`, `/stop`, `/restart`, `/recreate` | POST | Lifecycle verb (`confirm: true` required; `dry_run: true` returns the planned action). 403 for `agent` and `ops-controller` (cycled from the host), 400 for a name that is not a compose service name |
+| `/services/{id}/logs` | GET | Both streams of the service's container, timestamps removed. `tail` 1-1000 (default 200), `since` an RFC 3339 timestamp or a duration (`10m`); anything else is 400. Answers `logs`, `tail`, `since`, `last_ts` (pass it back as `since` for only the newer lines; a poll that finds nothing new answers the incoming `since` again, so the cursor never goes backwards or null) and `truncated` (the body is capped at 256 KiB, newest lines kept). 404 when the service has no container. The same parameters and fields apply to `/projects/{project}/containers/{name}/logs` |
 | `/containers` | GET | Project containers |
 | `/containers/{name}/logs` | GET | Tail one container's logs |
 | `/containers/{name}/restart` | POST | Restart one container (`confirm: true`) |

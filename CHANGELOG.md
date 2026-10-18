@@ -101,6 +101,13 @@ All notable changes to this project are documented here. The format is loosely b
   on first load a pending step left under the old `ordo.hostSteps` key is adopted once and the
   old key removed, so an upgrade does not clear the queue. Clearing site data while a tab is open
   is not read as a dismissal: the tab keeps its steps and writes them back.
+- **Service logs show stderr, honor `tail` and can be polled.** `GET /services/{id}/logs` dropped
+  its query string, so the dashboard always got 100 lines, and read only the container's stdout, so
+  the drawer stayed empty for services that log to stderr (llama.cpp, caddy, uvicorn). It now merges
+  both streams in time order, takes `tail` (1-1000, default 200) and `since` (RFC 3339 or `10m`),
+  caps the body at 256 KiB and answers `last_ts` for the next poll; the managed-project logs route
+  takes the same parameters. A lifecycle verb on `agent` or `ops-controller` is now 403 instead of
+  500, a malformed service name 400, and logs of a service with no container 404.
 - **Streamed speech starts with the first sentence again.** Hermes asks the TTS endpoint for raw
   `pcm` one sentence at a time (desktop speak-stream and Discord voice), but Chatterbox-TTS-Server
   accepts only wav, opus and mp3: every streamed reply was refused (422) and spoken only after the

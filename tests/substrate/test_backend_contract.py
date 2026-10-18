@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo.control.broker import DockerBackend, MockBackend
+from ordo.control.broker import DockerBackend, MockBackend, NoContainer
 from ordo.control.netns_repair import NetnsRepair
 from ordo.render.changed_set import diff_services
 
@@ -73,7 +73,8 @@ class FakeHarness:
         self.project = project
         self.backend = MockBackend(copy.deepcopy(COMPOSE), project=project)
 
-    def emit(self, service: str, lines: list[str]) -> None:
+    def emit(self, service: str, lines: list[str], fd: int = 1) -> None:
+        # The fake keeps one stream: what it models is that both reach `logs()`, in order.
         self.backend.project_containers[service].output.extend(lines)
 
     def attached(self, service: str) -> bool:
@@ -110,9 +111,9 @@ class DockerHarness:
     def container(self, service: str) -> str:
         return f"{self.project}-{service}-1"
 
-    def emit(self, service: str, lines: list[str]) -> None:
-        # Written to PID 1's stdout, which is what `docker logs` reads.
-        script = 'for line in "$@"; do echo "$line"; done > /proc/1/fd/1'
+    def emit(self, service: str, lines: list[str], fd: int = 1) -> None:
+        # Written to PID 1's stdout (fd 1) or stderr (fd 2), which is what `docker logs` reads.
+        script = f'for line in "$@"; do echo "$line"; done > /proc/1/fd/{fd}'
         subprocess.run(["docker", "exec", self.container(service), "sh", "-c", script, "sh", *lines],
                        check=True, capture_output=True, timeout=30)
 
@@ -428,20 +429,44 @@ def test_stack_state_of_a_fresh_project_has_nothing_to_recreate(unchanged):
     assert diff_services(state.rendered, state.running, compose_version=state.compose_version) == []
 
 
+def _texts(lines: list[tuple[str, str]]) -> list[str]:
+    return [text for _timestamp, text in lines]
+
+
 def test_logs_returns_the_last_lines_of_the_service(harness):
     harness.emit("web", ["one", "two", "three"])
-    assert harness.backend.logs("web", tail=2) == "two\nthree\n"
-    assert harness.backend.logs("web", tail=100) == "one\ntwo\nthree\n"
+    assert _texts(harness.backend.logs("web", tail=2)) == ["two", "three"]
+    lines = harness.backend.logs("web", tail=100)
+    assert _texts(lines) == ["one", "two", "three"]
+    assert all(timestamp.endswith("Z") for timestamp, _text in lines), "docker's UTC RFC 3339 stamp on every line"
 
 
-def test_logs_of_a_service_with_no_container_is_a_message_not_an_error(unchanged):
-    assert unchanged.backend.logs("nope") == "[no container found for service nope]"
+def test_logs_merge_stderr_with_stdout_in_order(harness):
+    """Many services log to stderr only (llama.cpp, caddy): `docker logs` puts that on its own stderr."""
+    harness.emit("web", ["out one"])
+    harness.emit("web", ["err two"], fd=2)
+    harness.emit("web", ["out three"])
+    assert _texts(harness.backend.logs("web")) == ["out one", "err two", "out three"]
+
+
+def test_logs_since_a_timestamp_is_inclusive(harness):
+    """docker's `--since` returns the line stamped exactly `since` (logs.payload drops it)."""
+    harness.emit("web", ["one"])
+    harness.emit("web", ["two"])
+    harness.emit("web", ["three"])
+    two = harness.backend.logs("web")[1][0]
+    assert _texts(harness.backend.logs("web", since=two)) == ["two", "three"]
+
+
+def test_logs_of_a_service_with_no_container_is_no_container(unchanged):
+    with pytest.raises(NoContainer):
+        unchanged.backend.logs("nope")
 
 
 def test_logs_survive_a_restart(harness):
     harness.emit("web", ["before"])
     harness.backend.restart("web")
-    assert harness.backend.logs("web", tail=5) == "before\n"
+    assert _texts(harness.backend.logs("web", tail=5)) == ["before"]
 
 
 def test_container_logs_by_container_name(harness):
@@ -557,7 +582,7 @@ def test_recreate_makes_a_new_running_container(harness):
     backend.recreate_service("web")
     assert _state(backend, "web") == "running"
     assert _container_id(backend, "web") != before
-    assert backend.logs("web") == "", "a recreate is a new container, not a restart"
+    assert backend.logs("web") == [], "a recreate is a new container, not a restart"
 
 
 def test_recreate_starts_a_stopped_service_but_not_its_dependencies(harness):

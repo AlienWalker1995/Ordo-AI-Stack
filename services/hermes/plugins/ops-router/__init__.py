@@ -118,6 +118,9 @@ def _project_containers(args: dict, **kwargs) -> str:
         return _err(f"unexpected error: {exc}")
 
 
+_LOGS_TAIL_MAX = 1000  # ops-controller's cap on /projects/{project}/containers/{name}/logs?tail=
+
+
 def _project_logs(args: dict, **kwargs) -> str:
     project = (args.get("project") or "").strip()
     name = (args.get("name") or "").strip()
@@ -127,6 +130,8 @@ def _project_logs(args: dict, **kwargs) -> str:
         tail = int(args.get("tail") or 100)
     except (TypeError, ValueError):
         return _err("tail must be an integer")
+    # The route answers 400 outside 1..1000; a model asking for more gets the most it can have.
+    tail = min(max(tail, 1), _LOGS_TAIL_MAX)
     try:
         return json.dumps({"ok": True, **_get_client().project_logs(project, name, tail=tail)})
     except OpsClientError as exc:
@@ -341,14 +346,14 @@ PROJECT_LOGS_SCHEMA = {
     "name": "project_logs",
     "description": (
         "Tail the logs of a container in a managed project (ordo.yaml `managed_projects:`). "
-        "At most 2000 lines. Read-only."
+        "At most 1000 lines. Read-only."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "project": {"type": "string", "description": "Compose project name, e.g. 'nas-stack'."},
             "name": {"type": "string", "description": "Container name, e.g. 'janitorr'."},
-            "tail": {"type": "integer", "description": "Trailing lines to return. Default 100, max 2000."},
+            "tail": {"type": "integer", "description": "Trailing lines to return. Default 100, max 1000."},
         },
         "required": ["project", "name"],
     },
