@@ -43,16 +43,15 @@ describe('the status line with drift', () => {
     await screen.findByRole('heading', { name: 'Drift' })
     expect(screen.getByText('1 thing needs you')).toBeTruthy()
     expect(screen.queryByText('All systems normal')).toBeNull()
-    // The attention panel points at the callout instead of saying nothing needs you.
-    expect(screen.getByText('Nothing else needs you. See Drift above.')).toBeTruthy()
-    expect(screen.queryByText('Nothing needs you.')).toBeNull()
+    // The promoted attention block is absent when nothing needs attention; the status line says so.
+    expect(screen.queryByRole('heading', { name: 'Needs attention' })).toBeNull()
   })
 
   it('adds drift findings to the attention count', async () => {
     mockApi()
     renderInShell(<OverviewPage />)
     await screen.findByRole('heading', { name: 'Drift' })
-    expect(screen.getByText('2 things need you')).toBeTruthy()
+    expect(screen.getByText('3 things need you')).toBeTruthy()
   })
 
   it('keeps the unread-host-list note when drift rebuilds the count', async () => {
@@ -61,7 +60,7 @@ describe('the status line with drift', () => {
     mockApi({ 'GET /api/overview': () => ({ ...fixture('/api/overview'), host_containers: 'down' }) })
     renderInShell(<OverviewPage />)
     await screen.findByRole('heading', { name: 'Drift' })
-    expect(screen.getByText('2 things need you · host containers unread')).toBeTruthy()
+    expect(screen.getByText('3 things need you · host containers unread')).toBeTruthy()
   })
 
   it('keeps the unread-host-list note when only drift needs attention', async () => {

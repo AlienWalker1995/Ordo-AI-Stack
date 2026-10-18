@@ -1,10 +1,10 @@
 {
   "status": {
-    "level": "warning",
-    "text": "1 thing needs you"
+    "level": "critical",
+    "text": "2 things need you"
   },
   "services": {
-    "up": 4,
+    "up": 3,
     "total": 5,
     "by_project": {
       "ordo": {
@@ -15,8 +15,8 @@
       },
       "media-stack": {
         "total": 1,
-        "up": 1,
-        "failed": 0,
+        "up": 0,
+        "failed": 1,
         "unhealthy": 0
       },
       "web-site": {
@@ -77,6 +77,12 @@
     }
   },
   "attention": [
+    {
+      "severity": "critical",
+      "title": "media-server exited with an error",
+      "detail": "media-stack: Exited (1) 2 days ago",
+      "service": "media-server"
+    },
     {
       "severity": "warning",
       "title": "Disk 82% full",

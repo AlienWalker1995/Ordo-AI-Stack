@@ -130,9 +130,29 @@ export function Median({ value, n = 0, provisional = false, unit = 'tok/s', titl
   )
 }
 
+// One number from the KPI band: label, value, unit, context line, optional sparkline. Tone
+// colours the VALUE only (text-warning / text-danger at thresholds); everything else stays
+// muted, so a band of six tiles reads as numbers first. `title` carries the data source.
+/** @param {{ label: string, value: import('react').ReactNode, unit?: string, sub?: string, tone?: string, title?: string, sparkline?: [number, number][] }} props */
+export function StatTile({ label, value, unit, sub, tone = 'fg', title, sparkline }) {
+  const toneClass = { fg: 'text-fg', warning: 'text-warning', danger: 'text-danger', success: 'text-success' }[tone] || 'text-fg'
+  return (
+    <div title={title} className="grid content-start gap-1 rounded-md border border-border-subtle bg-bg-elevated p-3">
+      <span className="truncate text-caption text-muted">{label}</span>
+      <span className={'text-title tabular-nums ' + toneClass}>
+        {value}
+        {unit && <span className="ml-1 text-caption font-normal text-muted">{unit}</span>}
+      </span>
+      {sub && <span className="truncate text-micro text-muted" title={sub}>{sub}</span>}
+      {sparkline && <Sparkline points={sparkline} height={24} label={label} />}
+    </div>
+  )
+}
+
 // Sparkline of [[epochSeconds, value], ...]: area fill, emphasised endpoint, scaled to its own max.
 // `domain` ([startEpoch, endEpoch]) pins the time axis, so a series that began an hour ago is
 // drawn in the last hour of the window instead of stretched across all of it.
+/** @param {{ points: [number, number][], tone?: string, label: string, height?: number, domain?: [number, number] }} props */
 export function Sparkline({ points, tone = 'accent', label, height = 32, domain }) {
   const stroke = { accent: 'text-accent', warning: 'text-warning', success: 'text-success' }[tone] || 'text-accent'
   if (!points || points.length < 2) {

@@ -5,8 +5,9 @@
 //   GET /api/perf/series     tokens generated per second by each chat server, last 24 h
 import { usePolling } from '../api.js'
 import { api } from '../api.js'
-import { Banner, Chip, Dot, Median, Meter, Panel, Skeleton, Sparkline, Unavailable } from '../components/ui.jsx'
+import { Banner, Chip, Dot, Median, Meter, Panel, Skeleton, Sparkline, StatTile, Unavailable } from '../components/ui.jsx'
 import { clock, formatGb, pct, timeAgo } from '../lib/format.js'
+import { kpiTiles } from './overviewModel.js'
 
 const LEVEL_TONE = { ok: 'ok', warning: 'warning', critical: 'critical', unknown: 'unknown' }
 
@@ -95,6 +96,7 @@ function GpuCard({ gpu }) {
 }
 
 // Both chat servers share one time axis so their histories line up.
+/** @returns {[number, number] | undefined} */
 function seriesDomain(series) {
   const stamps = [...(series?.gpu || []), ...(series?.cpu || [])].map((p) => p[0])
   return stamps.length ? [Math.min(...stamps), Math.max(...stamps)] : undefined
@@ -153,22 +155,43 @@ function ChatEngine({ chat, series }) {
 
 const SEVERITY_TONE = { critical: 'critical', warning: 'warning' }
 
-function Attention({ items, driftCount }) {
-  if (!items.length) {
-    return <p className="text-body text-muted">{driftCount ? 'Nothing else needs you. See Drift above.' : 'Nothing needs you.'}</p>
-  }
+// Promoted to full width directly under the status line: what needs a person, most severe first.
+// Rendered only when non-empty; when nothing needs attention the status line already says so.
+// A container item links to Services, where its row carries the project filter.
+function AttentionStrip({ items }) {
+  if (!items.length) return null
   return (
-    <ul className="grid gap-2">
+    <section aria-labelledby="attention-heading" className="grid gap-2 rounded-md border border-border-subtle bg-bg-elevated p-4">
+      <h2 id="attention-heading" className="sr-only">Needs attention</h2>
       {items.map((a) => (
-        <li key={a.title} className="grid grid-cols-[auto_1fr] items-baseline gap-x-2.5">
+        <div key={a.title} className="grid grid-cols-[auto_1fr_auto] items-baseline gap-x-2.5">
           <Dot tone={SEVERITY_TONE[a.severity] || 'warning'} label={a.severity} />
-          <span className="text-body text-fg">
+          <span className="min-w-0 break-words text-body text-fg">
             {a.title}
             {a.detail && <span className="ml-2 text-caption text-muted">{a.detail}</span>}
           </span>
-        </li>
+          {a.service && (
+            <a href="#services" className="shrink-0 text-caption font-semibold text-accent-soft hover:text-accent">View in Services</a>
+          )}
+        </div>
       ))}
-    </ul>
+    </section>
+  )
+}
+
+// The six-tile band: one row on desktop, two columns on a phone. Tiles whose source is missing
+// are simply absent (overviewModel omits them), so the band never shows placeholder zeros.
+function KpiBand({ tiles }) {
+  if (!tiles.length) return null
+  return (
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      {tiles.map((t) => (
+        <StatTile key={t.key} label={t.label} unit={t.unit} sub={t.sub} tone={t.tone} title={t.title} sparkline={t.sparkline}
+                  value={t.median
+                    ? <Median value={t.median.value} n={t.median.n} provisional={t.median.provisional} unit="tok/s" title={t.median.title} />
+                    : t.value} />
+      ))}
+    </div>
   )
 }
 
@@ -228,7 +251,9 @@ export default function OverviewPage() {
   return (
     <div className="grid gap-4 [&>*]:min-w-0">
       <StatusLine overview={o} driftCount={driftCount} lastUpdated={overview.lastUpdated} />
+      <AttentionStrip items={o.attention} />
       <Drift drift={drift.data} />
+      <KpiBand tiles={kpiTiles(o, series.data)} />
       <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr] [&>*]:min-w-0">
         <Panel title="GPUs right now">
           <div className="grid gap-4">
@@ -240,7 +265,6 @@ export default function OverviewPage() {
           </div>
         </Panel>
         <div className="grid content-start gap-4">
-          <Panel title="Needs attention"><Attention items={o.attention} driftCount={driftCount} /></Panel>
           <Panel title="Recent activity">
             {activity.data ? <Activity items={activity.data.items.slice(0, 8)} />
               : activity.error ? <Unavailable>Activity is unavailable.</Unavailable>
