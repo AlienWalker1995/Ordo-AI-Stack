@@ -213,6 +213,15 @@ describe('groupActivity', () => {
     expect(group).toMatchObject({ holder: 'ComfyUI', duration_s: 180, evicted_chat: true })
   })
 
+  it('adds up a run of leases: GPU time in all, evicted when any member was', () => {
+    const [group] = groupActivity([
+      { ts: 900, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok', duration_s: 120, evicted_chat: false },
+      { ts: 600, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok', duration_s: 180, evicted_chat: true },
+      { ts: 300, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok', duration_s: null, evicted_chat: false },
+    ])
+    expect(group).toMatchObject({ count: 3, duration_s: 300, evicted_chat: true, ts: 900, oldestTs: 300 })
+  })
+
   it('splits a run when the gap between members exceeds the six hour window', () => {
     const apart = [
       { ts: 6 * 3600 + 1, kind: 'action', title: 'Restarted comfyui', severity: 'info' },

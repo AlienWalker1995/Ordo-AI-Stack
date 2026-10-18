@@ -127,9 +127,10 @@ function medianEvidence(m) {
 // Consecutive identical events (same title) collapse into one row with a count and the span
 // they cover, while the gap between two members stays inside the grouping window: the same
 // restart twice a day apart is two rows, not one x2. The feed arrives newest first, so a group
-// keeps the NEWEST member's time, kind and lease facts (the row is about what happened last),
-// and the worst severity of its members (a failed restart inside a run of good ones must not
-// read as all fine).
+// keeps the NEWEST member's time and kind (the row is about what happened last), and the worst
+// severity of its members (a failed restart inside a run of good ones must not read as all
+// fine). A run of leases adds up: its duration is the GPU time lent across the run, and it says
+// the chat model was out when any member says so.
 const GROUP_WINDOW_S = 6 * 3600
 const SEVERITY_RANK = { info: 0, ok: 0, warning: 1, critical: 2 }
 
@@ -144,6 +145,8 @@ export function groupActivity(items) {
       if ((SEVERITY_RANK[item.severity] ?? 0) > (SEVERITY_RANK[last.severity] ?? 0)) {
         last.severity = item.severity
       }
+      if (typeof item.duration_s === 'number') last.duration_s = (last.duration_s ?? 0) + item.duration_s
+      if (item.evicted_chat) last.evicted_chat = true
     } else {
       groups.push({ ...item, count: 1, oldestTs: item.ts })
     }

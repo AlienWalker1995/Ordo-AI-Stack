@@ -231,11 +231,11 @@ function Capacity({ gpus, host, knowledge }) {
           : <Unavailable>No GPUs reported.</Unavailable>}
       </div>
       <HostMeters host={host} />
-      <p className="text-caption">
-        <span className="text-muted">Knowledge</span>{' '}
-        <span className="font-mono tabular-nums text-fg">
-          {knowledge.documents != null ? `${knowledge.documents.toLocaleString()} documents indexed` : 'unavailable'}
-        </span>
+      <p className="text-caption text-muted">
+        Knowledge{' '}
+        {knowledge.documents != null
+          ? <><span className="font-mono tabular-nums text-fg">{knowledge.documents.toLocaleString()}</span> documents indexed</>
+          : 'unavailable'}
       </p>
     </div>
   )
@@ -285,29 +285,33 @@ function KpiBand({ tiles }) {
 }
 
 const FEED_TONE = { ok: 'ok', critical: 'critical', warning: 'warning', info: 'info' }
+const ACTIVITY_FIRST_LIMIT = 25
 const CATEGORY_LABEL = { all: 'All', render: 'Renders', gpu: 'GPU leases', service: 'Service changes', model: 'Model changes' }
 
 // One row of the grouped feed: the newest member's time and facts, the run's count and span, and
-// the lease's duration and eviction note when the row is a GPU lease. A lease's own start to end
-// rides in the tooltip: the row's clock is the event's stamp, and the span says how long the GPU
-// was out.
+// the lease's duration and eviction note when the row is a GPU lease (a run of leases reads its
+// GPU time in all). A single lease's own start to end rides in the tooltip: the row's clock is the
+// event's stamp, and the duration says how long the GPU was out.
 /** @param {{ g: { ts: number, oldestTs: number, count: number, kind: string, title: string, severity: string, holder?: string | null, started?: number | null, ended?: number | null, duration_s?: number | null, evicted_chat?: boolean } }} props */
 function ActivityRow({ g }) {
+  const lease = g.kind === 'gpu'
+  const duration = lease && g.duration_s != null
+    ? `${formatDuration(g.duration_s)}${g.count > 1 ? ' in all' : ''}` : ''
+  const leaseSpan = lease && g.count === 1 && g.started != null && g.ended != null
+    ? `${clock(g.started)} to ${clock(g.ended)}` : ''
+  const runSpan = g.count > 1 ? `${clock(g.oldestTs)} to ${clock(g.ts)}` : ''
+  const tooltip = [g.title, g.count > 1 ? `${g.count} times` : '', leaseSpan || runSpan, duration,
+    g.evicted_chat ? 'chat model evicted' : ''].filter(Boolean).join(' · ')
   return (
     <li className="grid grid-cols-[3.25rem_auto_minmax(0,1fr)] items-center gap-2.5">
       <time className="font-mono text-caption tabular-nums text-muted" title={timeAgo(g.ts)}>{clock(g.ts)}</time>
       <Dot tone={FEED_TONE[g.severity] || 'info'} />
-      <span className="min-w-0 truncate text-body text-fg"
-            title={[g.title,
-                   g.kind === 'gpu' && g.started != null && g.ended != null ? `${clock(g.started)} to ${clock(g.ended)}` : '',
-                   g.count > 1 ? `${g.count} times, ${clock(g.oldestTs)} to ${clock(g.ts)}` : '',
-                   g.kind === 'gpu' && g.duration_s != null ? formatDuration(g.duration_s) : '',
-                   g.evicted_chat ? 'chat model evicted' : ''].filter(Boolean).join(' · ')}>
+      <span className="min-w-0 truncate text-body text-fg" title={tooltip}>
         {g.title}
         {g.count > 1 && <span className="text-caption text-muted"> ×{g.count}</span>}
-        {g.kind === 'gpu' && g.duration_s != null && <span className="text-caption text-muted"> · {formatDuration(g.duration_s)}</span>}
+        {duration && <span className="text-caption text-muted"> · {duration}</span>}
         {g.evicted_chat && <span className="text-caption text-warning"> · chat model evicted</span>}
-        {g.count > 1 && <span className="text-caption text-muted"> · {clock(g.oldestTs)} to {clock(g.ts)}</span>}
+        {runSpan && <span className="text-caption text-muted"> · {runSpan}</span>}
       </span>
     </li>
   )
@@ -315,6 +319,8 @@ function ActivityRow({ g }) {
 
 // The grouped feed: consecutive identical events collapsed (overviewModel.groupActivity), the
 // kind chips behind it, ten groups until "Show more" widens the request to the endpoint's cap.
+// The button also shows while the first answer came back full: groups can collapse 25 items into
+// a handful, and the older ones are still on the server.
 /** @param {{ items: Array<object>, expanded: boolean, onShowMore: () => void }} props */
 function ActivityFeed({ items, expanded, onShowMore }) {
   const [category, setCategory] = useState('all')
@@ -339,8 +345,8 @@ function ActivityFeed({ items, expanded, onShowMore }) {
       ) : (
         <p className="text-body text-muted">No {CATEGORY_LABEL[category].toLowerCase()} in the feed.</p>
       )}
-      {!expanded && groups.length > 10 && (
-        <button type="button" className={BTN} onClick={onShowMore}>Show more</button>
+      {!expanded && (groups.length > 10 || items.length >= ACTIVITY_FIRST_LIMIT) && (
+        <button type="button" className={BTN + ' justify-self-start'} onClick={onShowMore}>Show more</button>
       )}
     </div>
   )
@@ -351,7 +357,7 @@ export default function OverviewPage() {
   // The feed starts at the endpoint's default (25 items); "Show more" widens it to the cap (100)
   // and refetches at once. The limit rides in a ref so the poll's fetcher always sends the
   // current one without restarting the interval.
-  const activityLimit = useRef(25)
+  const activityLimit = useRef(ACTIVITY_FIRST_LIMIT)
   const [activityExpanded, setActivityExpanded] = useState(false)
   const activity = usePolling(() => api.get(`/api/activity?limit=${activityLimit.current}`), 15000)
   const series = usePolling(() => api.get('/api/perf/series'), 60000)

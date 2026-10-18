@@ -255,14 +255,16 @@ def test_activity_merges_sources_newest_first_and_drops_read_only_noise():
         {"ts": 1790171500.0, "caller": "dashboard", "action": "restart", "target": "n8n", "result": "ok"},
         {"ts": 1790171600.0, "caller": "hermes", "action": "containers.list", "target": "*", "result": "ok"},
         {"ts": 1790171700.0, "caller": "hermes", "action": "diagnostics.dstate", "target": "", "result": "ok"},
+        # Reading another project's logs is audited, but it changes nothing.
+        {"ts": 1790171750.0, "caller": "dashboard", "action": "project.logs", "target": "media/web", "result": "ok"},
     ]
     items = console.merge_activity(leases, audit, console.summarise_renders(HISTORY, 10), limit=10)
     titles = [i["title"] for i in items]
     assert titles[0].startswith("Render failed")
     assert any(t == "Restarted n8n" for t in titles)
     assert any("train-lora" in t for t in titles)
-    assert not any("containers.list" in t or "dstate" in t for t in titles)
-    assert not any(t.startswith("ComfyUI") for t in titles)  # gate leases are the renders themselves
+    assert not any("containers.list" in t or "dstate" in t or "project.logs" in t for t in titles)
+    assert "GPU lent to ComfyUI" in titles
     assert [i["ts"] for i in items] == sorted((i["ts"] for i in items), reverse=True)
 
 
@@ -350,22 +352,20 @@ def test_every_activity_item_carries_the_lease_fields():
     assert item["evicted_chat"] is False
 
 
-@pytest.mark.parametrize("entry, evicted", [
-    ({**_audit("restart", "llamacpp"), "ts": 1790171300.0}, True),      # restored right after
-    ({**_audit("start", "llamacpp"), "ts": 1790172100.0}, True),        # at the window's edge
-    ({**_audit("recreate", "llamacpp"), "ts": 1790171200.0}, True),
-    ({**_audit("restart", "llamacpp"), "ts": 1790172200.0}, False),     # past the 15 min window
-    ({**_audit("restart", "llamacpp"), "ts": 1790171100.0}, False),     # before the lease ended
-    ({**_audit("restart", "comfyui"), "ts": 1790171300.0}, False),      # a different service
-    ({**_audit("restart", "llamacpp", result="error"), "ts": 1790171300.0}, False),
+@pytest.mark.parametrize("record, evicted", [
+    ({"evicted": ["llamacpp"]}, True),               # the broker put the chat model away for it
+    ({"evicted": ["llamacpp", "whisper"]}, True),
+    ({"evicted": ["whisper"]}, False),               # another resident, the chat model stayed
+    ({"evicted": []}, False),
+    ({}, False),                                     # a record from before the broker kept this
 ])
-def test_lease_flags_the_chat_model_eviction_from_the_restore_event(entry, evicted):
-    # The broker's own restore is not audited; a recorded restart of the GPU chat service right
-    # after the lease ended is the evidence the activity route can read. The restore stands in
-    # the feed beside the lease as its own item.
+def test_lease_says_whether_the_chat_model_was_out_from_its_own_record(record, evicted):
+    # The broker records which residents were out of the GPU as the lease started; the feed
+    # reads that, never a guess from nearby restarts.
     leases = [{"id": "gate-comfyui", "kind": "media", "started": 1790171000.0,
-               "ended": 1790171200.0, "outcome": "completed"}]
-    items = console.merge_activity(leases, [entry], [], limit=10)
+               "ended": 1790171200.0, "outcome": "completed", **record}]
+    restart_after = {**_audit("restart", "llamacpp"), "ts": 1790171300.0}
+    items = console.merge_activity(leases, [restart_after], [], limit=10)
     [item] = [i for i in items if i["kind"] == "gpu"]
     assert item["evicted_chat"] is evicted
 

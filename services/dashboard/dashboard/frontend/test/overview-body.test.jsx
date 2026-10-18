@@ -1,6 +1,6 @@
 // The Overview body below the KPI band: the Model usage and Capacity panels, and the grouped
 // activity feed with its kind chips, counted rows and GPU lease rows.
-import { fireEvent, screen, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import OverviewPage from '../src/pages/OverviewPage.jsx'
 import { fixture, mockApi } from './mockApi.js'
@@ -24,7 +24,7 @@ describe('the body panels', () => {
     expect(within(capacity).getByText('GTX 1070')).toBeTruthy()
     expect(within(capacity).getByText('46.8 / 109.7 GB')).toBeTruthy()
     expect(within(capacity).getByText('1,640.3 / 1,999.8 GB')).toBeTruthy()
-    expect(within(capacity).getByText('2,483 documents indexed')).toBeTruthy()
+    expect(within(capacity).getByText('2,483').parentElement.textContent).toBe('Knowledge 2,483 documents indexed')
   })
 
   it('reads the Model usage sources as unavailable when they are', async () => {
@@ -67,6 +67,33 @@ describe('the grouped activity feed', () => {
     renderInShell(<OverviewPage />)
     const row = await screen.findByText('Restarted comfyui')
     expect(row.closest('li').textContent).toContain('×8')
+  })
+
+  it('reads a run of leases as GPU time in all', async () => {
+    const leases = [0, 1, 2].map((i) => ({
+      ts: 1790680000 - i * 600, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok',
+      holder: 'ComfyUI', started: 1790679820 - i * 600, ended: 1790680000 - i * 600, duration_s: 180,
+      evicted_chat: i === 2,
+    }))
+    mockApi({ 'GET /api/activity': { items: leases } })
+    renderInShell(<OverviewPage />)
+    const row = (await screen.findByText('GPU lent to ComfyUI')).closest('li')
+    expect(row.textContent).toContain('×3')
+    expect(row.textContent).toContain('· 9 m in all')
+    expect(row.textContent).toContain('chat model evicted')
+  })
+
+  it('offers Show more while the first answer came back full, however few groups it makes', async () => {
+    const repeats = Array.from({ length: 25 }, (_, i) => ({
+      ts: 1790680000 - i * 60, kind: 'action', title: 'Restarted comfyui', severity: 'info',
+      holder: null, started: null, ended: null, duration_s: null, evicted_chat: false,
+    }))
+    const api = mockApi({ 'GET /api/activity': { items: repeats } })
+    renderInShell(<OverviewPage />)
+    const feed = (await screen.findByRole('heading', { name: 'Activity' })).closest('section')
+    expect(within(feed).getAllByRole('listitem')).toHaveLength(1)
+    fireEvent.click(within(feed).getByRole('button', { name: 'Show more' }))
+    await waitFor(() => expect(api.sent('GET', '/api/activity').at(-1).query.limit).toBe('100'))
   })
 
   it('filters the feed by kind behind the chips', async () => {

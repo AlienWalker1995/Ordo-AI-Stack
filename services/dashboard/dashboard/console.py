@@ -30,7 +30,7 @@ _TENANT_LABELS = {
 # Audit actions that only read state. They are most of the log (Hermes polls) and none of them
 # is something a person would want in an activity feed.
 _READ_ONLY_ACTIONS = frozenset({
-    "containers.list", "container.logs", "diagnostics.dstate", "logs",
+    "containers.list", "container.logs", "diagnostics.dstate", "logs", "project.logs",
 })
 # GPU lease calls. The lease history already shows each lease once; its request, heartbeat and
 # release calls would repeat it several times over.
@@ -329,45 +329,17 @@ def summarise_renders(history: dict, limit: int) -> list[dict]:
 # The GPU chat service, by its compose id: the resident a lease evicts when its VRAM demand
 # cannot share the card.
 _CHAT_SERVICE = "llamacpp"
-# How long after a lease ends its restore still counts as evidence of that lease's eviction:
-# the broker restores on its next sweep tick, and an operator restarting the model by hand
-# within the window says the same thing.
-_RESTORE_WINDOW_S = 900
-_RESTORE_ACTIONS = frozenset({"restart", "start", "recreate"})
-
-
-def _lease_evicted_chat(ended, audit: list[dict]) -> bool:
-    """Whether a lease evicted the chat model, from what the activity route already reads.
-
-    The broker's own restore is not audited, so the evidence is a recorded restart/start/recreate
-    of the GPU chat service right after the lease ended: the model came back because the lease
-    put it away. Nothing earlier than the lease's end counts (a restart before it did not answer
-    this lease), and nothing later than the window (the model was up all along, or someone got to
-    it much later).
-    """
-    if not isinstance(ended, int | float):
-        return False
-    for entry in audit or []:
-        if entry.get("action") not in _RESTORE_ACTIONS:
-            continue
-        if (entry.get("target") or "") != _CHAT_SERVICE:
-            continue
-        if entry.get("result") not in ("ok", None):
-            continue
-        ts = entry.get("ts")
-        if isinstance(ts, int | float) and ended <= ts <= ended + _RESTORE_WINDOW_S:
-            return True
-    return False
 
 
 def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], limit: int) -> list[dict]:
     """Renders, GPU leases and operator actions in one newest-first feed.
 
     Every item carries the same keys; the lease fields (holder, started, ended, duration_s,
-    evicted_chat) are null/false on non-lease items. Gate leases are no longer dropped: the
-    render they admitted stands beside them as its own item, and the lease says who held the
-    GPU, for how long, and whether the chat model was evicted. Read-only audit entries are
-    dropped.
+    evicted_chat) are null/false on non-lease items. Gate leases are kept: the render they
+    admitted stands beside them as its own item, and the lease says who held the GPU, for how
+    long, and whether the chat model was out of the GPU while it ran (the broker records the
+    evicted residents on the lease as it starts; an older record without them reads false).
+    Read-only audit entries are dropped.
     """
     items: list[dict] = []
     for r in renders or []:
@@ -395,7 +367,7 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
         items.append({"ts": float(ts), "kind": "gpu", "title": title,
                       "severity": "ok" if outcome == "completed" else "warning",
                       "holder": holder, "started": started, "ended": ended, "duration_s": duration,
-                      "evicted_chat": _lease_evicted_chat(ended, audit)})
+                      "evicted_chat": _CHAT_SERVICE in (lease.get("evicted") or [])})
     for entry in audit or []:
         action = entry.get("action", "")
         if action in _READ_ONLY_ACTIONS or action in _LEASE_ACTIONS or entry.get("ts") is None:

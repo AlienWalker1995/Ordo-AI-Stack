@@ -28,6 +28,7 @@ def test_full_lifecycle_records_completed(tmp_path):
     assert rec["id"] == "train" and rec["kind"] == "training" and rec["vram_gb"] == 30.0
     assert rec["submitted"] == 1000.0 and rec["started"] == 1010.0 and rec["ended"] == 1300.0
     assert rec["outcome"] == "completed"
+    assert rec["evicted"] == []                 # nothing displaced unless the broker says so
 
 
 def test_rejected_and_swept_outcomes(tmp_path):
