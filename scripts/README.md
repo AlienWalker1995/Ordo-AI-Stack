@@ -9,7 +9,7 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 | Script | Role |
 | --- | --- |
 | `llamacpp/run-llama-server.sh` | **Bind-mounted entrypoint** of the inference-engine-gpu container (`${BASE_PATH}/scripts/llamacpp:/llamacpp-scripts:ro` in the rendered compose). Deleting it takes the LLM down on next restart. |
-| `inference-engine-gpu/run-ninfer-serve.sh` | The same GPU chat service's entrypoint when the active catalog model has `backend: ninfer`: the render picks it over `run-llama-server.sh` and it turns the rendered `LLAMACPP_*` env into the `ninfer-serve` argv. |
+| `llamacpp/run-ninfer-serve.sh` | The same GPU chat service's entrypoint when the active catalog model has `backend: ninfer`: the render picks it over `run-llama-server.sh` and it turns the rendered `LLAMACPP_*` env into the `ninfer-serve` argv. |
 | `stack_monitor.py` | Weekly image/pin audit and upstream new-feature digest (extra compose stacks via `STACK_AUDIT_SOURCES`) — invoked by Hermes cron via the `/c/dev` mirror mount; tested by `tests/test_stack_monitor_*.py`. |
 | `storage_purge.py` | Weekly storage purge — invoked by Hermes cron (`cd /c/dev/ordo-ai-stack && python3 scripts/storage_purge.py`); tested by `tests/test_storage_purge.py`. |
 | `secrets/audit-git-history.sh` | Scans this public repo's history for plaintext secrets. Everything else in the secrets flow is `ordo secrets` (`docs/runbooks/secrets.md`). |
