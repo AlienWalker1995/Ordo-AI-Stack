@@ -13,7 +13,7 @@ depends_on: [searxng-web]   # the MCP queries the self-hosted SearXNG service (s
 mcp:
   # Upstream isokoliuk/mcp-searxng, pinned by tag + digest (the live multi-arch index digest).
   # Bump deliberately.
-  image: isokoliuk/mcp-searxng:2.5.0@sha256:13939bb5076f2e93f7dbef41e6623592e4c70f3f8efac8951599ad1e80b4606e
+  image: isokoliuk/mcp-searxng:2.6.0@sha256:9389eed474a62bc35aafbf4d819b77ee54ecc25b5a1d1310ad0d45db2a056e0f
   transport: http
   port: 8080
   network: stack           # reaches searxng:8080 (the searxng-web plugin)

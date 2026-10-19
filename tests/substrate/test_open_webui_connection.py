@@ -30,10 +30,11 @@ HARDWARE = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_c
 SITE = {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data"}
 # The image whose PersistentConfig semantics this contract was verified against. A bump must re-check
 # open_webui/models/config.py (Config.persistent_enabled_for) before this pin moves.
-# v0.11.4: models/config.py is byte-identical to v0.11.3 and config.py's ENABLE_PERSISTENT_CONFIG
-# switch is unchanged (re-checked 2026-10-03).
-VERIFIED_IMAGE = ("ghcr.io/open-webui/open-webui:v0.11.4"
-                  "@sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f")
+# v0.12.3: ENABLE_PERSISTENT_CONFIG and persistent_enabled_for are unchanged from v0.11.4; config.py
+# gains only a DICT_CONFIG_KEY_ALIASES entry for audio.realtime and a transactional upsert() refactor
+# (re-checked 2026-10-19).
+VERIFIED_IMAGE = ("ghcr.io/open-webui/open-webui:v0.12.3"
+                  "@sha256:a537bbe1e6b428820f52ed4a029d7fff97062e24d5cf32c365fba36fd0542def")
 
 
 def _render(plugins: list[str]):

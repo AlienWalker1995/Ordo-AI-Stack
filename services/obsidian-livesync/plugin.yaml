@@ -36,7 +36,7 @@ services:
     # through the edge at :443/couchdb. Reads COUCHDB_USER (.env) + COUCHDB_PASSWORD (secrets.env)
     # to create its admin; the bridge then sets require_valid_user + Obsidian CORS via the _config
     # API (a bind-mounted ini crashes this image's chown-under-set-e entrypoint on Docker Desktop).
-    image: couchdb:3.5.2@sha256:8cf5f8442585c346d2717ff0ad95605731d2f19f67b8367840baa8d3b24ebc31
+    image: couchdb:3.5.3-nouveau@sha256:a39587ed1b8cb1165ff26324d1aaf800841b0c200d4db32afa57b676d7e7272e
     # The entrypoint recreates the admin from COUCHDB_USER (.env) + COUCHDB_PASSWORD on every start.
     secrets: [COUCHDB_PASSWORD]
     derived_env: [COUCHDB_USER]

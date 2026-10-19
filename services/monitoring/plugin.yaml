@@ -53,7 +53,7 @@ services:
       retries: 3
       start_period: 30s
   - name: prometheus
-    image: prom/prometheus:v3.13.4@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -100,7 +100,7 @@ services:
       retries: 3
       start_period: 20s
   - name: grafana
-    image: grafana/grafana:11.6.16@sha256:d67af92050b8d93b393dc741864752a69c9da1ffa39c1bb9af49ad5d9e47d2c3
+    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
     depends_on: [prometheus]
     # Served under /grafana/ behind Caddy (subpath rewrite); anonymous Viewer so the embed needs
     # no second login (SSO at Caddy is the real gate); embedding allowed for the dashboard iframe.
