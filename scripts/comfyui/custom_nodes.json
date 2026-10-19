@@ -8,6 +8,12 @@
       "note": "2026-10-14 master. The May 2026 copy failed to import on ComfyUI 0.41 (interleaved_freqs_cis removed from core); this ref ships the LTX-2.5 graphs, IC-LoRA guides, inpaint preprocess and the looping sampler."
     },
     {
+      "name": "VibeVoice-ComfyUI",
+      "url": "https://github.com/Enemyx-net/VibeVoice-ComfyUI.git",
+      "ref": "b0a8efc23c9d902d7ebd8fe3f79515a23d343bc2",
+      "note": "2026-10-19 v1.8.1 @ b0a8efc. Restored after the 2026-10-16/17 Chatterbox swap dropped it: the dialogue-reel renderer (render_reel_dialogue.py) still posts VibeVoiceSingleSpeakerNode workflows tuned for VibeVoice-Large (seed-11042 pin + pace gate), so both packs coexist — Chatterbox serves dark-patterns-reel narration. Weights: microsoft/VibeVoice-Large bf16 (~18GB) at models/vibevoice/VibeVoice-Large."
+    },
+    {
       "name": "ComfyUI-Chatterbox",
       "url": "https://github.com/wildminder/ComfyUI-Chatterbox.git",
       "ref": "4597af8f59d4460d441e13533eae24b092e40952",
