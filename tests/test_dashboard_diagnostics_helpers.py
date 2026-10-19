@@ -211,6 +211,20 @@ def test_a_per_target_dependency_refuses_a_status_without_a_target():
         diagnostics.mark_ok("PROBE")
 
 
+def test_get_json_requires_an_explicit_dep():
+    # The old dep="PROBE" default made the success path raise ValueError from
+    # diagnostics._status_key (mark_ok without a target) instead of degrading to
+    # None — a 500 on both paths for a caller that omitted dep; naming the dep
+    # makes a missing one fail at call time, where the caller sees it.
+    from dashboard import routes_console
+
+    client = MagicMock()
+    client.get = AsyncMock(return_value=MagicMock(status_code=200, json=lambda: {"ok": True}))
+    with patch("dashboard.app._get_http_client", return_value=client):
+        with pytest.raises(TypeError):
+            asyncio.run(routes_console._get_json("http://prometheus:9090/api/v1/query"))
+
+
 # --- a recorded failure that becomes an HTTP error carries its DEP code -------------
 
 
