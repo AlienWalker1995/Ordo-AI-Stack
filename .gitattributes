@@ -30,6 +30,11 @@ assets/* text eol=lf
 # as add+delete) until manually converted. `text eol=lf` normalizes checkin AND checkout.
 *.json text eol=lf
 
+# Frontend test JS/JSX hit the same class on the #415 approval (two test files committed CRLF
+# from a Windows-side edit, showing as whole-file rewrites); normalize them like the other text.
+*.js text eol=lf
+*.jsx text eol=lf
+
 # Patch files are COPYed into Linux image builds and fed to `git apply` — a CRLF
 # checkout on Windows (autocrlf=true) hands the builder a patch whose hunks no
 # longer byte-match the LF upstream sources. Keep them LF on both directions.
