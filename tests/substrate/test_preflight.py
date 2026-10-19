@@ -73,7 +73,7 @@ def test_required_images_include_core_and_ops():
     assert "ordo/llamacpp-patched:current" in imgs
 
 
-def test_patched_llamacpp_is_buildable_not_pullable():
+def test_patched_build_is_buildable_not_pullable():
     # a missing patched image must be 'build first' (blocking), never 'Docker will pull'
     rc = render(GPU, CATALOG, REGISTRY)
     needed = preflight.required_images(rc)
@@ -92,7 +92,7 @@ def test_patched_llamacpp_is_buildable_not_pullable():
 
 
 def test_all_project_images_get_a_generic_build_from_hint():
-    # Every missing PROJECT image (not just llamacpp) gets a "build from <context>" pointer derived
+    # Every missing PROJECT image (not just inference-engine-gpu) gets a "build from <context>" pointer derived
     # from the single resolver — the whole point of deleting the one-image special-case. Folder-id ≠
     # image-name (e.g. ordo/rag-ingestion -> services/rag) resolves to the real folder.
     rc = render(GPU, CATALOG, REGISTRY)

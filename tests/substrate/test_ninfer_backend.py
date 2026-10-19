@@ -1,5 +1,5 @@
 """The NInfer backend: a catalog model whose `backend: ninfer` the render serves from the same single GPU
-chat service (`llamacpp`) as every llama.cpp model, so the gateway, the scheduler, the dashboard and
+chat service (`inference-engine-gpu`) as every llama.cpp model, so the gateway, the scheduler, the dashboard and
 Hermes keep one contract. What changes with the backend is only what the service runs: the image, the
 launcher and the flags. Rolling back is a one-line `model:` change."""
 from __future__ import annotations
@@ -71,14 +71,14 @@ def test_the_ninfer_entry_pins_the_official_v3_artifact():
 
 def test_ninfer_renders_the_same_gpu_chat_service_with_its_own_launcher():
     rc = _render(NINFER)
-    llamacpp = rc.compose_dict()["services"]["llamacpp"]
-    assert llamacpp["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
-    assert "command" not in llamacpp                      # no llama.cpp --metrics flag
-    assert llamacpp["image"].startswith("ordo/ninfer")
+    svc = rc.compose_dict()["services"]["inference-engine-gpu"]
+    assert svc["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
+    assert "command" not in svc                      # no llama.cpp --metrics flag
+    assert svc["image"].startswith("ordo/ninfer")
     # still pinned to the primary card, still the bind-config-labelled launcher directory
-    assert any("/llamacpp-scripts" in v for v in llamacpp["volumes"])
-    assert "models-gguf:/models:ro" in llamacpp["volumes"]
-    assert llamacpp["environment"]["CUDA_VISIBLE_DEVICES"] == "GPU-aaaa"
+    assert any("/llamacpp-scripts" in v for v in svc["volumes"])
+    assert "models-gguf:/models:ro" in svc["volumes"]
+    assert svc["environment"]["CUDA_VISIBLE_DEVICES"] == "GPU-aaaa"
 
 
 def test_ninfer_sizes_the_full_262144_window():
@@ -98,26 +98,26 @@ def test_the_scheduler_footprint_leaves_room_for_the_embedder():
 
 
 def test_vision_is_an_explicit_override_that_costs_context():
-    rc = _render(NINFER, overrides={"llamacpp": {"vision": True}})
+    rc = _render(NINFER, overrides={"inference-engine-gpu": {"vision": True}})
     assert rc.env["LLAMACPP_VISION"] == "1"
     assert rc.ctx_size == 200000 and rc.env["LLAMACPP_CTX_SIZE"] == "200000"
 
 
-def test_vision_override_on_a_llamacpp_model_is_a_render_error():
+def test_vision_override_on_a_llama_cpp_model_is_a_render_error():
     with pytest.raises(ValueError, match="vision"):
-        _render(TURBO, overrides={"llamacpp": {"vision": True}})
+        _render(TURBO, overrides={"inference-engine-gpu": {"vision": True}})
 
 
-def test_llamacpp_models_keep_their_launcher_and_metrics():
-    llamacpp = _render(SWIFT).compose_dict()["services"]["llamacpp"]
-    assert llamacpp["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-llama-server.sh"]
-    assert llamacpp["command"] == [compose_mod.LLAMACPP_METRICS_ARG]
+def test_llama_cpp_models_keep_their_launcher_and_metrics():
+    svc = _render(SWIFT).compose_dict()["services"]["inference-engine-gpu"]
+    assert svc["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-llama-server.sh"]
+    assert svc["command"] == [compose_mod.LLAMACPP_METRICS_ARG]
 
 
 def test_the_ninfer_artifact_is_required_in_the_models_volume():
     from ordo.render.models_volume import required_model_files
     rc = _render(NINFER)
-    files = {n.file for n in required_model_files(rc.compose_dict(), rc.env, ["llamacpp"]) if not n.optional}
+    files = {n.file for n in required_model_files(rc.compose_dict(), rc.env, ["inference-engine-gpu"]) if not n.optional}
     assert "qwen3_8_27b_nvfp4.ninfer" in files
 
 
@@ -135,9 +135,9 @@ HERETIC = "qwen3.8-27b-heretic-ara-ninfer"
 
 def test_the_heretic_entry_serves_on_the_same_ninfer_service():
     rc = _render(HERETIC)
-    llamacpp = rc.compose_dict()["services"]["llamacpp"]
-    assert llamacpp["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
-    assert llamacpp["image"].startswith("ordo/ninfer")
+    svc = rc.compose_dict()["services"]["inference-engine-gpu"]
+    assert svc["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
+    assert svc["image"].startswith("ordo/ninfer")
     assert rc.env["LLAMACPP_MODEL"] == "qwen3_8_27b_heretic_ara.ninfer"
     assert rc.ctx_size == 262144
     assert rc.env["LLAMACPP_VISION"] == "1"               # vision on by default, full window kept
@@ -163,7 +163,7 @@ def test_heretic_vision_keeps_the_full_window():
 
 
 def test_heretic_vision_can_still_be_turned_off():
-    rc = _render(HERETIC, overrides={"llamacpp": {"vision": False}})
+    rc = _render(HERETIC, overrides={"inference-engine-gpu": {"vision": False}})
     assert "LLAMACPP_VISION" not in rc.env
     assert rc.ctx_size == 262144
 
@@ -173,8 +173,8 @@ HERETIC_NVFP4 = "qwen3.8-27b-heretic-ara-nvfp4-ninfer"
 
 def test_the_heretic_nvfp4_entry_serves_on_the_same_ninfer_service():
     rc = _render(HERETIC_NVFP4)
-    llamacpp = rc.compose_dict()["services"]["llamacpp"]
-    assert llamacpp["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
+    svc = rc.compose_dict()["services"]["inference-engine-gpu"]
+    assert svc["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
     assert rc.env["LLAMACPP_MODEL"] == "qwen3_8_27b_heretic_ara_nvfp4.ninfer"
     assert rc.ctx_size == 262144
     assert rc.env["GATEWAY_DROP_TOOL_STRICT"] == "true"
@@ -189,8 +189,8 @@ HUIHUI_NVFP4 = "qwen3.8-27b-huihui-abliterated-nvfp4-ninfer"
 
 def test_the_huihui_nvfp4_entry_serves_with_vision_on_the_ninfer_service():
     rc = _render(HUIHUI_NVFP4)
-    llamacpp = rc.compose_dict()["services"]["llamacpp"]
-    assert llamacpp["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
+    svc = rc.compose_dict()["services"]["inference-engine-gpu"]
+    assert svc["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
     assert rc.env["LLAMACPP_MODEL"] == "qwen3_8_27b_huihui_abliterated_nvfp4.ninfer"
     assert rc.env["LLAMACPP_VISION"] == "1"
     # NVFP4 weights plus the vision encoder leave room for 200,000 tokens beside the embedder

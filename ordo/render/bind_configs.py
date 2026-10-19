@@ -28,8 +28,8 @@ checkout edit never makes it recreate a service. Precisely:
     rest of out/ it writes; the next apply of out/, host or control plane, deploys them.
   - A bind is live: a service the control plane recreates for its own reason mounts the checkout as
     it is now, while its label keeps the host's digest. So when a declared file changed since the
-    host's last apply, a model switch (which recreates llamacpp) starts llamacpp on the edited
-    /llamacpp-scripts, and the next `ordo apply` recreates llamacpp once more to record the digest.
+    host's last apply, a model switch (which recreates inference-engine-gpu) starts inference-engine-gpu on the edited
+    /llamacpp-scripts, and the next `ordo apply` recreates inference-engine-gpu once more to record the digest.
 A file's digest is of its bytes; a directory's is of each file's relative path and bytes, skipping
 Python caches. A source that does not exist is labelled ABSENT, so its arrival is a change too.
 """

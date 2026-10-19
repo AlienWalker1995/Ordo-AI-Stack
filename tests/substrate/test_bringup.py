@@ -21,8 +21,8 @@ from ordo.render import stack
 
 COMPOSE = {
     "services": {
-        "llamacpp": {"image": "x"},
-        "model-gateway": {"image": "x", "depends_on": {"llamacpp": {"condition": "service_started"}}},
+        "inference-engine-gpu": {"image": "x"},
+        "model-gateway": {"image": "x", "depends_on": {"inference-engine-gpu": {"condition": "service_started"}}},
         "open-webui": {"image": "x", "profiles": ["webui"], "depends_on": ["model-gateway", "qdrant"]},
         "qdrant": {"image": "x", "profiles": ["rag"]},
         "ops-controller": {"image": "x"},
@@ -40,7 +40,7 @@ LEASED = {
     "leased": True,
     "running": [{"id": "gate-comfyui", "kind": "media"}],
     "queued": [],
-    "evicted_residents": {"llamacpp": 27.5},
+    "evicted_residents": {"inference-engine-gpu": 27.5},
 }
 # An ops-controller image older than the `leased` field: only the raw lists.
 LEASED_OLD_IMAGE = {k: v for k, v in LEASED.items() if k != "leased"}
@@ -176,7 +176,7 @@ def test_core_is_a_whole_stack_up_with_no_profiles(monkeypatch, out_dir, recorde
 
 def test_caddy_takes_its_netns_members_by_name_and_stays_no_deps(monkeypatch, out_dir, recorded):
     """The members are named, so compose recreates them after caddy; `--no-deps` keeps caddy's own
-    dependencies (oauth2-proxy here, ops-controller and llamacpp live) out of the recreate."""
+    dependencies (oauth2-proxy here, ops-controller and inference-engine-gpu live) out of the recreate."""
     _status(monkeypatch, IDLE)
     assert cli.main(["recreate", "caddy", "--out", str(out_dir)]) == 0
     tail = _tail(recorded[-1])
@@ -258,9 +258,9 @@ def test_ops_controller_is_recreatable_during_a_lease_with_persisted_state(
 
 def test_persisted_state_does_not_unlock_an_evicted_resident(monkeypatch, persisting_out_dir, recorded, capsys):
     _status(monkeypatch, LEASED_PERSISTED)
-    assert cli.main(["recreate", "ops-controller", "llamacpp", "--out", str(persisting_out_dir)]) == 2
+    assert cli.main(["recreate", "ops-controller", "inference-engine-gpu", "--out", str(persisting_out_dir)]) == 2
     assert recorded == []
-    assert "llamacpp" in capsys.readouterr().err
+    assert "inference-engine-gpu" in capsys.readouterr().err
 
 
 def test_persisted_state_does_not_unlock_a_whole_stack_up(monkeypatch, persisting_out_dir, recorded):
@@ -277,10 +277,10 @@ def test_ops_controller_is_recreatable_when_idle(monkeypatch, out_dir, recorded)
 
 def test_a_caddy_recreate_is_allowed_during_a_lease(monkeypatch, out_dir, recorded):
     """caddy has nothing to do with the card. Its dependency closure reaches ops-controller and
-    the evicted llamacpp, but `--no-deps` starts only caddy and its named members, so neither the
+    the evicted inference-engine-gpu, but `--no-deps` starts only caddy and its named members, so neither the
     evicted resident nor the lease holder's control plane is touched."""
     compose = yaml.safe_load((out_dir / "docker-compose.yml").read_text(encoding="utf-8"))
-    compose["services"]["oauth2-proxy"]["depends_on"] = ["llamacpp", "ops-controller"]
+    compose["services"]["oauth2-proxy"]["depends_on"] = ["inference-engine-gpu", "ops-controller"]
     (out_dir / "docker-compose.yml").write_text(yaml.safe_dump(compose), encoding="utf-8")
     _status(monkeypatch, LEASED)
     assert cli.main(["recreate", "caddy", "--out", str(out_dir)]) == 0

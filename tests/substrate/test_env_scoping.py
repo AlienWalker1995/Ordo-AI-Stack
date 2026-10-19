@@ -50,14 +50,14 @@ HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
 # NInfer needs a Blackwell card (catalog min_compute_cap 12.0).
 NINFER_HW = {**HW, "gpus": [{**HW["gpus"][0], "compute_cap": "12.0"}, HW["gpus"][1]]}
 # The operator's plugin set, so every service renders.
-PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "llamacpp-cpu", "open-webui",
+PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "inference-engine-cpu", "open-webui",
            "searxng-web", "searxng", "codebase-memory-ui", "codebase-memory", "comfyui-mcp",
            "orchestration", "hermes-dashboard", "monitoring", "memory-vault", "edge", "tailnet-names",
            "obsidian-livesync", "langfuse", "evals"]
 
 SPEC: dict[str, set[str]] = {
     # scripts/llamacpp/run-llama-server.sh builds the llama-server argv from these.
-    "llamacpp": {"LLAMACPP_MODEL", "LLAMACPP_CTX_SIZE", "LLAMACPP_PARALLEL", "LLAMACPP_ROPE_SCALING",
+    "inference-engine-gpu": {"LLAMACPP_MODEL", "LLAMACPP_CTX_SIZE", "LLAMACPP_PARALLEL", "LLAMACPP_ROPE_SCALING",
                  "LLAMACPP_ROPE_SCALE", "LLAMACPP_YARN_ORIG_CTX", "LLAMACPP_GPU_LAYERS", "LLAMACPP_FLASH_ATTN",
                  "LLAMACPP_N_PREDICT", "LLAMACPP_REASONING_BUDGET", "LLAMACPP_MMPROJ",
                  "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION", "LLAMACPP_KV_CACHE_TYPE_K", "LLAMACPP_KV_CACHE_TYPE_V",
@@ -86,7 +86,7 @@ SPEC: dict[str, set[str]] = {
 @pytest.fixture(scope="module")
 def rendered():
     rc = render(Source.from_dict({"hardware": HW, "model": "auto", "plugins": PLUGINS, "site": SITE,
-                                  "overrides": {"llamacpp": PLACEMENT}}),
+                                  "overrides": {"inference-engine-gpu": PLACEMENT}}),
                 GATEWAY_CATALOG, REGISTRY)
     return rc, rc.compose_dict()["services"]
 
@@ -120,7 +120,7 @@ def test_every_env_name_is_declared(rendered):
     agent = AgentRegistry.load(ROOT / "services").default_agent()
     dashboard = DashboardRegistry.load(ROOT / "services").default_dashboard()
     declared: dict[str, set[str]] = {
-        "llamacpp": set(compose_mod.LLAMACPP_DERIVED_ENV),
+        "inference-engine-gpu": set(compose_mod.LLAMACPP_DERIVED_ENV),
         "model-gateway": set(compose_mod.MODEL_GATEWAY_DERIVED_ENV),
         "agent": (set(agent.environment) | set(agent.derived_env) | set(agent.secrets)
                   | {ref.env for ref in agent.secret_files}),
@@ -142,7 +142,7 @@ def test_every_env_name_is_declared(rendered):
             refs = {k for k, v in (svc.get("environment") or {}).items()
                     if k in rc.env and re.fullmatch(rf"\$\{{{k}\?[^}}]*\}}", str(v))}
             assert not refs, f"{name} receives derived keys {sorted(refs)} it never declared"
-        if name in declared and name not in ("llamacpp", "model-gateway"):
+        if name in declared and name not in ("inference-engine-gpu", "model-gateway"):
             undeclared_secrets = {k for k in env_names & secret_names if k not in declared[name]}
             assert not undeclared_secrets, f"{name}: {sorted(undeclared_secrets)}"
 
@@ -153,7 +153,7 @@ def test_declared_derived_keys_are_real(rendered):
     rc, _ = rendered
     agent = AgentRegistry.load(ROOT / "services").default_agent()
     dashboard = DashboardRegistry.load(ROOT / "services").default_dashboard()
-    declared = {("core", "llamacpp"): set(compose_mod.LLAMACPP_DERIVED_ENV),
+    declared = {("core", "inference-engine-gpu"): set(compose_mod.LLAMACPP_DERIVED_ENV),
                 ("core", "model-gateway"): set(compose_mod.MODEL_GATEWAY_DERIVED_ENV),
                 ("agent", agent.id): set(agent.derived_env),
                 ("dashboard", dashboard.id): set(dashboard.derived_env)}
@@ -164,7 +164,7 @@ def test_declared_derived_keys_are_real(rendered):
     # GGUF model cannot be, so that render supplies it.
     ninfer_vision = render(Source.from_dict({"hardware": NINFER_HW, "model": "qwen3.8-27b-nvfp4-ninfer",
                                              "plugins": PLUGINS, "site": SITE,
-                                             "overrides": {"llamacpp": {"vision": True}}}),
+                                             "overrides": {"inference-engine-gpu": {"vision": True}}}),
                            CATALOG, REGISTRY)
     known = set(rc.env) | set(ninfer_vision.env)
     for where, names in declared.items():
@@ -203,7 +203,7 @@ def test_ops_controller_holds_no_derived_key(rendered):
 
 def test_derived_refs_fail_loud_but_allow_empty(rendered):
     _, services = rendered
-    assert services["llamacpp"]["environment"]["LLAMACPP_MMPROJ"] == \
+    assert services["inference-engine-gpu"]["environment"]["LLAMACPP_MMPROJ"] == \
         "${LLAMACPP_MMPROJ?LLAMACPP_MMPROJ is missing from the rendered .env}"
 
 

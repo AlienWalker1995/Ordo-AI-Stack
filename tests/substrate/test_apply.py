@@ -30,7 +30,7 @@ DOC = {
     "services": {
         "ops-controller": {"image": "ordo/ops-controller:new", "restart": "unless-stopped",
                            "environment": {bringup.SCHEDULER_STATE_KEY: "/data/scheduler-state.json"}},
-        "llamacpp": {"image": "ordo/llamacpp-patched:abc", "restart": "unless-stopped"},
+        "inference-engine-gpu": {"image": "ordo/llamacpp-patched:abc", "restart": "unless-stopped"},
         "dashboard": {"image": "ordo/dashboard:new", "restart": "unless-stopped"},
         "caddy": {"image": "caddy:2", "restart": "unless-stopped", "profiles": ["edge"]},
         "tailnet-chat": {"image": "tailscale/tailscale:1", "restart": "unless-stopped",
@@ -41,7 +41,7 @@ DOC = {
 
 IDLE = {"state": "idle", "leased": False, "running": [], "queued": [], "evicted_residents": {}}
 LEASED = {"state": "busy", "leased": True, "running": [{"id": "gate-comfyui", "kind": "media"}],
-          "queued": [], "evicted_residents": {"llamacpp": 27.5}, "state_persisted": True}
+          "queued": [], "evicted_residents": {"inference-engine-gpu": 27.5}, "state_persisted": True}
 
 
 def rendered(name: str, config_hash: str = "h", image_id: str | None = "sha256:img", *,
@@ -592,14 +592,14 @@ def test_dry_run_prints_the_plan_and_changes_nothing(capsys):
 
 
 def test_a_lease_that_would_be_violated_refuses_before_any_recreate(capsys):
-    host = FakeHost(gpu=LEASED, want=_changed("llamacpp", "dashboard"))
+    host = FakeHost(gpu=LEASED, want=_changed("inference-engine-gpu", "dashboard"))
     assert apply.run(host, only=None, dry_run=False) == 2
     assert not any(c[0] in ("bring_up", "preflight") for c in host.calls)
-    assert "llamacpp" in capsys.readouterr().err
+    assert "inference-engine-gpu" in capsys.readouterr().err
 
 
 def test_a_lease_refusal_propagates_in_a_dry_run_too():
-    host = FakeHost(gpu=LEASED, want=_changed("llamacpp"))
+    host = FakeHost(gpu=LEASED, want=_changed("inference-engine-gpu"))
     assert apply.run(host, only=None, dry_run=True) == 2
     assert host.mutations() == []
 
@@ -838,7 +838,7 @@ RESTORED = ("restore_bind_configs", "BEFORE")
 
 
 def test_a_lease_refusal_puts_the_previous_bind_config_digests_back():
-    host = FakeHost(gpu=LEASED, want=_changed("llamacpp"))
+    host = FakeHost(gpu=LEASED, want=_changed("inference-engine-gpu"))
     assert apply.run(host, only=None, dry_run=False) == 2
     assert host.calls.index(("read_bind_configs",)) < host.calls.index(("staged_render", False))
     assert RESTORED in host.calls
@@ -877,6 +877,6 @@ def test_a_recreate_that_ran_keeps_the_new_bind_config_digests():
 
 
 def test_a_dry_run_never_touches_the_bind_config_digests():
-    host = FakeHost(gpu=LEASED, want=_changed("llamacpp"))
+    host = FakeHost(gpu=LEASED, want=_changed("inference-engine-gpu"))
     apply.run(host, only=None, dry_run=True)
     assert not any(c[0] in ("read_bind_configs", "restore_bind_configs") for c in host.calls)

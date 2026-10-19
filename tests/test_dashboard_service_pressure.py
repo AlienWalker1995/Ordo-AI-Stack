@@ -37,7 +37,7 @@ def test_service_pressure_no_auth_required(monkeypatch):
     assert r.status_code == 200
     d = r.json()
     ids = {s["id"] for s in d["services"]}
-    assert {"llamacpp", "comfyui", "webui", "qdrant", "model-gateway"} <= ids
+    assert {"inference-engine-gpu", "comfyui", "webui", "qdrant", "model-gateway"} <= ids
     assert d["services"][0]["id"] == "comfyui"
     assert d["services"][0]["has_gpu"] is True
     # ops-controller does not measure per-container VRAM yet (it sends 0.0): not a measured zero.

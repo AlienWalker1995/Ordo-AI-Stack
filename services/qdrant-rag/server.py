@@ -2,13 +2,13 @@
 """MCP server: semantic search over the stack's Qdrant RAG collection.
 
 Embeds the query with the SAME local embedder used by rag-ingestion
-(llamacpp-embed, EmbeddingGemma 2, 768-dim) so query vectors live in the same
+(inference-engine-embed, EmbeddingGemma 2, 768-dim) so query vectors live in the same
 space as the stored chunks, then runs a Qdrant similarity search. The query
 gets the model's query prompt (EMBED_QUERY_PREFIX); rag-ingestion gives each
 chunk the matching document prompt. Exposed to
 Hermes through the LiteLLM MCP gateway as qdrant-rag-qdrant_search.
 
-Why embed via llamacpp-embed directly (not model-gateway/litellm): litellm's
+Why embed via inference-engine-embed directly (not model-gateway/litellm): litellm's
 /v1/embeddings route currently 500s for the local embed model; the raw
 llama.cpp embedding server works and ignores the model field.
 """
@@ -21,7 +21,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333").rstrip("/")
-EMBED_URL = os.environ.get("EMBED_URL", "http://llamacpp-embed:8080").rstrip("/")
+EMBED_URL = os.environ.get("EMBED_URL", "http://inference-engine-embed:8080").rstrip("/")
 COLLECTION = os.environ.get("RAG_COLLECTION", "documents").strip()
 EMBED_QUERY_PREFIX = os.environ.get("EMBED_QUERY_PREFIX", "")
 

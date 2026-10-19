@@ -9,10 +9,10 @@ entrypoint that templates the config placeholders at startup.
 
 | id | mode | backend | notes |
 |----|------|---------|-------|
-| `local-chat` | chat | `llamacpp` (GPU) | Canonical auto-routing alias; fails over to the CPU pin on GPU eviction. |
-| *\<gpu model\>* | chat | `llamacpp` (GPU) | Explicit pin of the GPU deployment — no failover. Name derived from `LLAMACPP_MODEL` (basename, lowercased; e.g. `qwen3.8-27b-q6_k`). |
-| *\<cpu model\>*`-cpu` | chat | `llamacpp-cpu` | Always-on CPU fallback (opt-in `cpu-fallback` profile). Name derived from `LLAMACPP_CPU_MODEL`. |
-| `local-embed` | embedding | `llamacpp-embed` | EmbeddingGemma 2, 768-dim, ctx 8192. |
+| `local-chat` | chat | `inference-engine-gpu` (GPU) | Canonical auto-routing alias; fails over to the CPU pin on GPU eviction. |
+| *\<gpu model\>* | chat | `inference-engine-gpu` (GPU) | Explicit pin of the GPU deployment — no failover. Name derived from `LLAMACPP_MODEL` (basename, lowercased; e.g. `qwen3.8-27b-q6_k`). |
+| *\<cpu model\>*`-cpu` | chat | `inference-engine-cpu` | Always-on CPU fallback (opt-in `cpu-fallback` profile). Name derived from `LLAMACPP_CPU_MODEL`. |
+| `local-embed` | embedding | `inference-engine-embed` | EmbeddingGemma 2, 768-dim, ctx 8192. |
 
 Every local model's `input_cost_per_token` / `output_cost_per_token` (in both `litellm_params`,
 what LiteLLM actually bills against, and `model_info`, what `/model/info` and the UI display) is

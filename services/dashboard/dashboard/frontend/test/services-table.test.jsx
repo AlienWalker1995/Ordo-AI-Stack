@@ -83,7 +83,7 @@ describe('Services: one flat list', () => {
   it('names every state in words beside its dot', async () => {
     const table = fixture('/api/services/table')
     Object.assign(table.rows.find((r) => r.id === 'ordo:evals'), { verdict: 'unknown', actions: [] })
-    Object.assign(table.rows.find((r) => r.id === 'ordo:llamacpp'), { verdict: 'stopped', lent: true, actions: [] })
+    Object.assign(table.rows.find((r) => r.id === 'ordo:inference-engine-gpu'), { verdict: 'stopped', lent: true, actions: [] })
     mockApi({ 'GET /api/services/table': table })
     renderInShell(<ServicesPage />)
     const rows = await tableRows()

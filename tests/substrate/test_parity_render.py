@@ -29,7 +29,7 @@ EXPECTED_SERVICE_PLUGINS = {
     "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
     "ltx-trainer",                                        # LoRA trainer (sole trainer since 2026-07-24)
     "obsidian-livesync",                                 # cross-device Obsidian notes sync (CouchDB LiveSync + bridge)
-    "llamacpp-cpu",                                      # CPU LLM fallback (needs 24GB RAM, no GPU); dormant behind the cpu-fallback profile
+    "inference-engine-cpu",                                      # CPU LLM fallback (needs 24GB RAM, no GPU); dormant behind the cpu-fallback profile
 }
 # memory-vault is a post-parity add (file-based markdown-memory MCP). codebase-memory / comfyui /
 # orchestration are the RESTORED V1 roster (the V1→V2 migration had silently dropped them);
@@ -53,12 +53,12 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 def test_parity_matrix_counts():
     # 18 kind=service plugins are REGISTERED (10 parity set + ltx-trainer + tailnet-names +
-    # obsidian-livesync + obsidian-livesync-funnel + llamacpp-cpu + langfuse + evals + html-video) and 6 kind=mcp
+    # obsidian-livesync + obsidian-livesync-funnel + inference-engine-cpu + langfuse + evals + html-video) and 6 kind=mcp
     # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp /
     # orchestration). 13 of the service plugins ENABLE on the full host: langfuse, evals, html-video, the public
     # Funnel and the tailnet-name sidecars are opt-in (`default: false`), so `plugins: auto`
     # deliberately leaves them out. (The media "worker"
-    # plugin was retired, dropping the parity set from 12 to 11; llamacpp-cpu - the CPU LLM
+    # plugin was retired, dropping the parity set from 12 to 11; inference-engine-cpu - the CPU LLM
     # fallback - was added post-parity; n8n (`automation`) was removed 2026-10-10.)
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]

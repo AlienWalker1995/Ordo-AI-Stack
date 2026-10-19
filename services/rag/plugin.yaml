@@ -1,5 +1,5 @@
 # Plugin manifest (data-only) — the RAG stack: vector DB + embedding server + folder-watch ingester.
-# Groups the three V1 services that form retrieval: qdrant (store), llamacpp-embed (768-dim
+# Groups the three V1 services that form retrieval: qdrant (store), inference-engine-embed (768-dim
 # EmbeddingGemma 2 embeddings), rag-ingestion (watches a folder → chunks → embeds → upserts). The qdrant-rag MCP
 # plugin depends on this so the agent's qdrant_search only registers when the store is running.
 id: rag
@@ -29,7 +29,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-  - name: llamacpp-embed
+  - name: inference-engine-embed
     # Embedding server — same upstream llama.cpp build as the chat backend, run in --embeddings mode
     # on EmbeddingGemma 2 (text). rag-ingestion + the qdrant-rag MCP both embed against THIS so ingest and
     # query share the same 768-dim space. Stock upstream server image (Docker pulls it).
@@ -68,10 +68,10 @@ services:
   - name: rag-ingestion
     # Folder-watch ingester — LOCALLY-BUILT in V1 (./rag-ingestion). V2 pins it as a project
     # buildable image (build context services/rag). Embeds directly against
-    # llamacpp-embed (litellm's /v1/embeddings 500s for the local embed model).
+    # inference-engine-embed (litellm's /v1/embeddings 500s for the local embed model).
     image: ordo/rag-ingestion
     env:
-      MODEL_GATEWAY_URL: http://llamacpp-embed:8080
+      MODEL_GATEWAY_URL: http://inference-engine-embed:8080
       EMBED_MODEL: ${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-embeddinggemma-2-Q8_0.gguf}}
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: ${RAG_COLLECTION:-documents}
@@ -94,7 +94,7 @@ services:
       # zero ingester config — making the stack's own docs semantically searchable by Hermes and any
       # other qdrant_search client. ${BASE_PATH} is the host repo root (must be a host path).
       - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/docs:/watch/stack-docs:ro
-    depends_on: [llamacpp-embed, qdrant]
+    depends_on: [inference-engine-embed, qdrant]
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/rag-ingestion.heartbeat"]
       start_period: 60s

@@ -63,7 +63,7 @@ def test_wizard_written_source_loads(tmp_path):
         "hardware": {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 64, "cpu_cores": 16,
                      "platform": "Linux"},
         "tier": "high", "model": "auto", "plugins": ["comfyui"],
-        "overrides": {"llamacpp": {"ctx_size": 131072}},
+        "overrides": {"inference-engine-gpu": {"ctx_size": 131072}},
         "site": {"DATA_PATH": "/srv/ordo/data", "BASE_PATH": "/srv/ordo",
                  "CADDY_TAILNET_HOSTNAME": "ordo.tail1234.ts.net", "CADDY_BIND": "0.0.0.0"},
     })

@@ -22,7 +22,7 @@ HELPER_IMAGE = ("curlimages/curl:8.22.0"
                 "@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777")
 MODEL_VOLUME = "models-gguf"            # the compose volume the llama.cpp services mount
 VOLUME_MOUNT = "/models"                # where the helper mounts it
-CHAT_SERVICE = "llamacpp"               # its launcher reads LLAMACPP_MODEL / LLAMACPP_MMPROJ from .env
+CHAT_SERVICE = "inference-engine-gpu"               # its launcher reads LLAMACPP_MODEL / LLAMACPP_MMPROJ from .env
 # The label on a listing helper container (the download helper carries fetch.FETCH_MARKER).
 LIST_MARKER = "ordo.model-fetch=list"
 

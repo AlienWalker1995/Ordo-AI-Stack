@@ -116,7 +116,7 @@ def _apply_overrides(derived: dict[str, dict[str, Any]], overrides: dict[str, An
     """Apply the source's `overrides:` onto the derived values (overrides win, survive regeneration).
 
     Only the keys already in `derived` are honoured, because they are the only ones the render
-    reads: today that is `overrides.llamacpp.<tuning key>` and `overrides.llamacpp-cpu.threads`.
+    reads: today that is `overrides.inference-engine-gpu.<tuning key>` and `overrides.inference-engine-cpu.threads`.
     Anything else (another service, or a container option such as `environment` or `cap_add`) would
     be silently ignored, so it is a ValueError naming the key, the service and the supported keys.
     """
@@ -142,9 +142,9 @@ def _apply_overrides(derived: dict[str, dict[str, Any]], overrides: dict[str, An
     return out
 
 
-# The CPU fallback (services/llamacpp-cpu) serves chat while a render holds the GPU. Unbounded,
+# The CPU fallback (services/inference-engine-cpu) serves chat while a render holds the GPU. Unbounded,
 # llama.cpp takes about half the host's threads and pushes the host's power draw past what its UPS
-# carries on top of the render. It gets a declared budget: `overrides.llamacpp-cpu.threads`, by
+# carries on top of the render. It gets a declared budget: `overrides.inference-engine-cpu.threads`, by
 # default half the detected logical CPUs and never more than this many.
 CPU_FALLBACK_DEFAULT_MAX_THREADS = 12
 
@@ -155,9 +155,9 @@ def default_cpu_fallback_threads(cpu_cores: int) -> int:
 
 
 def _validated_cpu_fallback_threads(threads: Any, cpu_cores: int) -> int:
-    """`overrides.llamacpp-cpu.threads` must be a whole number from 1 to the detected logical CPUs."""
+    """`overrides.inference-engine-cpu.threads` must be a whole number from 1 to the detected logical CPUs."""
     if isinstance(threads, bool) or not isinstance(threads, int) or not 1 <= threads <= cpu_cores:
-        raise ValueError(f"ordo.yaml overrides: llamacpp-cpu.threads must be an integer from 1 to the "
+        raise ValueError(f"ordo.yaml overrides: inference-engine-cpu.threads must be an integer from 1 to the "
                          f"{cpu_cores} logical CPUs detected, got {threads!r}")
     return threads
 
@@ -279,9 +279,9 @@ def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
     return keys
 
 
-# The CPU fallback (services/llamacpp-cpu) and the weights it loads when `site:` names none. The same
+# The CPU fallback (services/inference-engine-cpu) and the weights it loads when `site:` names none. The same
 # default is in its manifest and in model-gateway's entrypoint (tests/substrate/test_cpu_fallback_window.py).
-CPU_FALLBACK_PLUGIN = "llamacpp-cpu"
+CPU_FALLBACK_PLUGIN = "inference-engine-cpu"
 CPU_FALLBACK_DEFAULT_FILE = "Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf"
 _GIB = 1024 ** 3
 
@@ -309,7 +309,7 @@ def _cpu_fallback_window(catalog: Catalog, env: dict[str, str], window: int,
             f"the chat window ({window:,} tokens) is larger than the CPU fallback's trained window "
             f"({entry.ctx_default:,} tokens, {entry.id}). The fallback serves the same window as the GPU "
             f"model, so it would reject the conversations the GPU accepts. Set "
-            f"overrides.llamacpp.ctx_size to {entry.ctx_default} or less, or disable {CPU_FALLBACK_PLUGIN}.")
+            f"overrides.inference-engine-gpu.ctx_size to {entry.ctx_default} or less, or disable {CPU_FALLBACK_PLUGIN}.")
     kv_gb = window * entry.kv_kb_per_token * 1024 / _GIB if entry.kv_kb_per_token else None
     weights_gb = entry.size_bytes / _GIB if entry.size_bytes else None
     return ({"model": entry.id, "file": file, "ctx_size": window, "trained_ctx": entry.ctx_default,
@@ -528,7 +528,7 @@ class RenderedConfig:
             agent_healthcheck=self.hermes.get("agent_healthcheck") or None,
             dashboard=self.dashboard,
             llamacpp_backend=self.llamacpp_backend,
-            llamacpp_image=self.env["LLAMACPP_IMAGE"],
+            inference_engine_gpu_image=self.env["LLAMACPP_IMAGE"],
             chat_backend=self.model.backend,
             plugin_services=self.plugin_services,
             primary_gpu_uuid=(pri.uuid if pri else None),
@@ -665,7 +665,7 @@ def _refuse_shared_edge_ports(sites: dict[str, EdgeSite]) -> None:
 # How the dashboard names each chat engine a catalog `backend:` can select.
 _GPU_ENGINE_LABELS = {"llama.cpp": "llama.cpp", "ninfer": "NInfer"}
 # The core card for the GPU chat service, whichever engine serves it.
-GPU_CHAT_CARD = "llamacpp"
+GPU_CHAT_CARD = "inference-engine-gpu"
 
 
 def gpu_engine_label(backend: str) -> str:
@@ -816,7 +816,7 @@ def render(source: Source, catalog: Catalog,
 
     # --- one source value → every consumer (this is the whole point) ---
     derived: dict[str, Any] = {
-        "llamacpp": {
+        "inference-engine-gpu": {
             "ctx_size": ctx,
             "model": model.file,
             "gpu_layers": -1 if backend.accelerated else 0,
@@ -842,34 +842,34 @@ def render(source: Source, catalog: Catalog,
             "image": model.backend_image or backend.image,
         },
         # The CPU fallback's thread budget: its --threads, --threads-batch and compose cpus limit.
-        "llamacpp-cpu": {
+        "inference-engine-cpu": {
             "threads": default_cpu_fallback_threads(hw.cpu_cores),
         },
     }
     # `overrides:` survive regeneration; everything else is recomputed each render.
     derived = _apply_overrides(derived, source.overrides)
-    lc = derived["llamacpp"]
+    lc = derived["inference-engine-gpu"]
     vision = bool(lc["vision"])
     if vision and model.backend != "ninfer":
-        raise ValueError(f"overrides.llamacpp.vision applies to a ninfer model; '{model.id}' is a llama.cpp "
+        raise ValueError(f"overrides.inference-engine-gpu.vision applies to a ninfer model; '{model.id}' is a llama.cpp "
                          "model, whose vision is its catalog mmproj")
     if vision and model.vision_max_context and int(lc["ctx_size"]) > model.vision_max_context:
         # The vision encoder takes VRAM the KV pool would otherwise have: the measured window shrinks.
         lc["ctx_size"] = model.vision_max_context
     ctx = int(lc["ctx_size"])  # re-read in case an override pinned it
-    cpu_fallback_threads = _validated_cpu_fallback_threads(derived["llamacpp-cpu"]["threads"], hw.cpu_cores)
+    cpu_fallback_threads = _validated_cpu_fallback_threads(derived["inference-engine-cpu"]["threads"], hw.cpu_cores)
 
     env = {
         "LLAMACPP_MODEL": str(lc["model"]),
         "LLAMACPP_CTX_SIZE": str(ctx),
         # The CPU failover window is the SAME resolved window, by construction. LiteLLM fails
-        # `local-chat` over to llamacpp-cpu whenever the GPU is evicted, so a failover that
+        # `local-chat` over to inference-engine-cpu whenever the GPU is evicted, so a failover that
         # accepts less than the primary rejects requests exactly when it is needed. Sizing the
         # GPU window down for a heavier model used to leave the CPU side on its compose default,
         # and the two silently diverged. That default (`${LLAMACPP_CPU_CTX:-...}` in
-        # services/llamacpp-cpu) now only applies to an .env this renderer never wrote.
+        # services/inference-engine-cpu) now only applies to an .env this renderer never wrote.
         "LLAMACPP_CPU_CTX": str(ctx),
-        # The CPU failover's thread budget. services/llamacpp-cpu reads it for --threads,
+        # The CPU failover's thread budget. services/inference-engine-cpu reads it for --threads,
         # --threads-batch and its compose `cpus` limit, so the argv and the ceiling agree.
         "LLAMACPP_CPU_THREADS": str(cpu_fallback_threads),
         "LLAMACPP_GPU_LAYERS": str(lc["gpu_layers"]),
@@ -887,14 +887,14 @@ def render(source: Source, catalog: Catalog,
         "LLAMACPP_EXTRA_ARGS": str(lc["extra_args"]),
     }
     # Placement keys exist only for a model that declares a placement, so every other model renders
-    # exactly the .env (and llamacpp config hash) it did before they existed.
+    # exactly the .env (and inference-engine-gpu config hash) it did before they existed.
     if int(lc["n_cpu_moe"]):
         env["LLAMACPP_N_CPU_MOE"] = str(int(lc["n_cpu_moe"]))
     if int(lc["threads"]):
         env["LLAMACPP_THREADS"] = str(int(lc["threads"]))
     if str(lc["load_mode"]) != "none":
         if str(lc["load_mode"]) not in LOAD_MODES:
-            raise ValueError(f"overrides.llamacpp.load_mode must be one of {', '.join(LOAD_MODES)}")
+            raise ValueError(f"overrides.inference-engine-gpu.load_mode must be one of {', '.join(LOAD_MODES)}")
         env["LLAMACPP_LOAD_MODE"] = str(lc["load_mode"])
     if vision:
         env["LLAMACPP_VISION"] = "1"

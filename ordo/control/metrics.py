@@ -186,9 +186,9 @@ def render(inputs: Inputs) -> str:
     _certs(w, readable_certs)
     if inputs.gpu_chat_up is not None:
         # Engine-neutral liveness of the GPU chat service: llama.cpp and NInfer both answer /health,
-        # while only llama.cpp serves the Prometheus /metrics the `llamacpp` scrape job reads.
+        # while only llama.cpp serves the Prometheus /metrics the `inference-engine-gpu` scrape job reads.
         w.add("ordo_gpu_chat_up", "gauge",
-              "1 when the GPU chat service (llamacpp:8080, either engine) answers /health with 200.",
+              "1 when the GPU chat service (inference-engine-gpu:8080, either engine) answers /health with 200.",
               {}, 1 if inputs.gpu_chat_up else 0)
     if inputs.netns_repair is not None:
         for result in ("repaired", "failed"):

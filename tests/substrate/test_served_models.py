@@ -63,10 +63,10 @@ def test_model_files_are_every_file_the_render_loads():
     rc = render(Source.from_dict(_source(MODEL_A)), CATALOG, PLUGINS)
     files = {f.file: f for f in model_files(rc.compose_dict(), rc.env)}
     model = CATALOG.get(MODEL_A)
-    assert files[model.file].service == "llamacpp" and not files[model.file].optional
+    assert files[model.file].service == "inference-engine-gpu" and not files[model.file].optional
     assert files[_basename(model.mmproj)].optional
-    assert files[CPU_FALLBACK_FILE].service == "llamacpp-cpu"
-    assert files[EMBED_FILE].service == "llamacpp-embed"
+    assert files[CPU_FALLBACK_FILE].service == "inference-engine-cpu"
+    assert files[EMBED_FILE].service == "inference-engine-embed"
 
 
 def test_served_models_come_from_the_render():
@@ -75,7 +75,7 @@ def test_served_models_come_from_the_render():
     model = CATALOG.get(MODEL_A)
 
     chat = models["local-chat"]
-    assert chat["service"] == "llamacpp" and chat["kind"] == "chat"
+    assert chat["service"] == "inference-engine-gpu" and chat["kind"] == "chat"
     assert chat["source"] == {"file": model.file}
     assert chat["config"] == {"ctx": rc.ctx_size, "mmproj": model.mmproj}
     assert chat["gpu_uuid"] == UUID_BIG
@@ -122,7 +122,7 @@ def test_registry_models_follow_a_switch_with_no_file_written(tmp_path):
 def test_a_stale_registry_file_changes_nothing(tmp_path, monkeypatch):
     stale = tmp_path / "model-registry.json"
     stale.write_text(json.dumps({"version": 1, "models": {"local-chat": {
-        "id": "local-chat", "kind": "chat", "service": "llamacpp", "runtime": "single-model",
+        "id": "local-chat", "kind": "chat", "service": "inference-engine-gpu", "runtime": "single-model",
         "source": {"file": "old.gguf"}, "config": {"mmproj": "/models/old-vision.gguf"}}}}),
         encoding="utf-8")
     monkeypatch.setenv("MODEL_REGISTRY_PATH", str(stale))

@@ -1,7 +1,7 @@
 """ops-controller's lifecycle verbs refuse to put a second tenant on a leased GPU.
 
 The control plane hosts the GPU scheduler AND the start/restart/recreate/compose verbs. Before
-this guard the verbs never asked the scheduler, so `POST /services/llamacpp/start` (or a
+this guard the verbs never asked the scheduler, so `POST /services/inference-engine-gpu/start` (or a
 whole-stack `/compose/up`) during a render started the evicted resident beside the lease holder:
 two tenants on one card, the 2026-08-08 host crash. The check lives here, once, in the process
 that owns the lease, instead of in every caller.
@@ -21,7 +21,7 @@ CONFIRM = {"confirm": True}
 
 @pytest.fixture
 def backend():
-    return MockBackend({"services": {name: {"image": name} for name in ("llamacpp", "comfyui", "open-webui")}})
+    return MockBackend({"services": {name: {"image": name} for name in ("inference-engine-gpu", "comfyui", "open-webui")}})
 
 
 @pytest.fixture
@@ -37,10 +37,10 @@ def control_plane(tmp_path, broker):
 
 @pytest.fixture
 def leased(broker, backend):
-    """A render holds the card and llamacpp has been evicted to make room for it."""
-    broker.scheduler.cache_idle("llamacpp", 25)
+    """A render holds the card and inference-engine-gpu has been evicted to make room for it."""
+    broker.scheduler.cache_idle("inference-engine-gpu", 25)
     broker.request(Job("gate-comfyui", 20, "media"))
-    assert "llamacpp" in broker.scheduler.evicted_residents
+    assert "inference-engine-gpu" in broker.scheduler.evicted_residents
     backend.started.clear()
     backend.stopped.clear()
     return broker
@@ -48,14 +48,14 @@ def leased(broker, backend):
 
 @pytest.mark.parametrize("verb", ["start", "restart", "recreate"])
 def test_an_evicted_resident_cannot_be_started_during_a_lease(control_plane, backend, leased, verb):
-    status, body = control_plane.route("POST", f"/services/llamacpp/{verb}", CONFIRM)
+    status, body = control_plane.route("POST", f"/services/inference-engine-gpu/{verb}", CONFIRM)
     assert status == 409
     assert "gate-comfyui" in body["error"]
     assert backend.started == [] and backend.restarted == [] and backend.recreate_calls == []
 
 
 def test_an_evicted_resident_cannot_be_restarted_by_container_name(control_plane, backend, leased):
-    status, _ = control_plane.route("POST", "/containers/ordo-llamacpp-1/restart", CONFIRM)
+    status, _ = control_plane.route("POST", "/containers/ordo-inference-engine-gpu-1/restart", CONFIRM)
     assert status == 409
     assert backend.container_restart_calls == []
 
@@ -75,14 +75,14 @@ def test_a_service_that_is_not_evicted_can_still_be_cycled_during_a_lease(contro
 
 
 def test_stopping_an_evicted_resident_is_allowed(control_plane, backend, leased):
-    status, _ = control_plane.route("POST", "/services/llamacpp/stop", CONFIRM)
+    status, _ = control_plane.route("POST", "/services/inference-engine-gpu/stop", CONFIRM)
     assert status == 200
 
 
 def test_without_a_lease_the_resident_starts_normally(control_plane, backend):
-    status, _ = control_plane.route("POST", "/services/llamacpp/start", CONFIRM)
+    status, _ = control_plane.route("POST", "/services/inference-engine-gpu/start", CONFIRM)
     assert status == 200
-    assert backend.started == ["llamacpp"]
+    assert backend.started == ["inference-engine-gpu"]
 
 
 @pytest.mark.parametrize("path,calls", [("/compose/up", "compose_up_calls"),
@@ -96,7 +96,7 @@ def test_compose_verbs_pass_the_named_service_through(control_plane, backend, pa
 
 
 def test_a_named_compose_up_of_an_evicted_resident_is_refused(control_plane, backend, leased):
-    status, _ = control_plane.route("POST", "/compose/up", {"confirm": True, "service": "llamacpp"})
+    status, _ = control_plane.route("POST", "/compose/up", {"confirm": True, "service": "inference-engine-gpu"})
     assert status == 409
 
 
@@ -123,7 +123,7 @@ def test_a_service_that_is_not_a_name_is_refused_not_widened_to_the_whole_stack(
     assert status == 400, body
     assert "service" in body["error"]
     assert getattr(backend, calls) == []
-    assert sorted(backend.project_containers) == ["comfyui", "llamacpp", "open-webui"]
+    assert sorted(backend.project_containers) == ["comfyui", "inference-engine-gpu", "open-webui"]
 
 
 @pytest.mark.parametrize("path,calls", COMPOSE_VERBS)
@@ -143,7 +143,7 @@ def test_a_whole_stack_down_is_refused_during_a_lease(control_plane, backend, le
 def test_a_named_down_of_an_evicted_resident_is_refused(control_plane, backend, leased):
     # Down REMOVES the container: the scheduler's restore would then find nothing to start and
     # the resident would stay down after the lease.
-    status, _ = control_plane.route("POST", "/compose/down", {"confirm": True, "service": "llamacpp"})
+    status, _ = control_plane.route("POST", "/compose/down", {"confirm": True, "service": "inference-engine-gpu"})
     assert status == 409
     assert backend.compose_down_calls == []
 

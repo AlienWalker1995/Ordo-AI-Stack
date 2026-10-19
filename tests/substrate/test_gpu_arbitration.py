@@ -2,7 +2,7 @@
 
 The 2026-08-08 host bugcheck (0x113) happened because nothing in the config said "ComfyUI
 competes with llama.cpp for the 5090". The arbiter learned contention from a
-`--resident-service llamacpp` CLI default and an ops-api `COMFYUI_GUARDIAN_TARGET` env, and a
+`--resident-service inference-engine-gpu` CLI default and an ops-api `COMFYUI_GUARDIAN_TARGET` env, and a
 render queued by hand in the web UI passed through neither.
 
 These tests lock the replacement in place:
@@ -103,11 +103,11 @@ def test_no_service_declares_a_gpu_without_a_reservation(registry):
 
 def test_resident_set_is_derived_and_excludes_the_secondary_card(rendered):
     residents = gpu.primary_residents(rendered.gpu_inventory())
-    # llamacpp's footprint comes from the render (weights + KV at the rendered ctx), never a
+    # inference-engine-gpu's footprint comes from the render (weights + KV at the rendered ctx), never a
     # constant — so it cannot drift from what .env tells llama-server to load.
-    assert residents["llamacpp"] == pytest.approx(rendered.resident_vram_gb())
-    # llamacpp-embed runs the CPU build: it holds no VRAM, so it is no resident to budget or evict.
-    assert "llamacpp-embed" not in residents
+    assert residents["inference-engine-gpu"] == pytest.approx(rendered.resident_vram_gb())
+    # inference-engine-embed runs the CPU build: it holds no VRAM, so it is no resident to budget or evict.
+    assert "inference-engine-embed" not in residents
     # The 1070's voice models must NOT be folded into the 5090's budget.
     assert "stt" not in residents and "tts" not in residents
 
@@ -161,12 +161,12 @@ def test_an_exclusive_burst_request_evicts_every_primary_resident(rendered):
     broker.request(Job(id="gate-comfyui", vram_gb=comfy.vram_gb, kind=comfy.kind))
 
     assert "gate-comfyui" in sched.running_ids, "the exclusive request was not admitted"
-    assert set(backend.stopped) >= {"llamacpp"}, (
+    assert set(backend.stopped) >= {"inference-engine-gpu"}, (
         f"an exclusive render must reclaim every primary resident; stopped={backend.stopped}")
-    assert "llamacpp-embed" not in backend.stopped, "the CPU embedder must keep serving during a render"
+    assert "inference-engine-embed" not in backend.stopped, "the CPU embedder must keep serving during a render"
     # ...and they come back when it drains — the other half of the contract.
     broker.complete("gate-comfyui")
-    assert set(backend.started) >= {"llamacpp"}
+    assert set(backend.started) >= {"inference-engine-gpu"}
 
 
 # --- gate enforcement -----------------------------------------------------------------------
@@ -376,14 +376,14 @@ def test_a_footprint_is_mandatory_for_anything_that_holds_vram():
 
 # --- the yield contract is checkable, not folklore --------------------------------------------
 
-def test_llamacpp_yields_by_migrating_to_a_real_cpu_service(registry, rendered):
+def test_inference_engine_gpu_yields_by_migrating_to_a_real_cpu_service(registry, rendered):
     """llama.cpp does not die when it yields the card — it migrates to CPU. Assert the declared
     target actually exists and is a CPU-only deployment, so the contract can't rot."""
-    claim = next(c for c in rendered.gpu_inventory() if c.service == "llamacpp")
+    claim = next(c for c in rendered.gpu_inventory() if c.service == "inference-engine-gpu")
     assert claim.yield_strategy == "failover"
     target = claim.degraded_service
-    assert target == "llamacpp-cpu"
-    plugin = registry.get("llamacpp-cpu")
+    assert target == "inference-engine-cpu"
+    plugin = registry.get("inference-engine-cpu")
     assert plugin is not None, "the declared failover target is not a registered service"
     assert not plugin.nvidia, "a GPU failover target that also needs the GPU is not a failover"
     svc = next(s for s in plugin.services if s.name == target)
@@ -392,9 +392,9 @@ def test_llamacpp_yields_by_migrating_to_a_real_cpu_service(registry, rendered):
 
 
 def _cpu_failover_ctx_arg() -> str:
-    """The llamacpp-cpu manifest's `--ctx-size` value, unexpanded."""
+    """The inference-engine-cpu manifest's `--ctx-size` value, unexpanded."""
     manifest = yaml.safe_load(
-        (Path(DEFAULT_PLUGINS_DIR) / "llamacpp-cpu" / "plugin.yaml").read_text(encoding="utf-8"))
+        (Path(DEFAULT_PLUGINS_DIR) / "inference-engine-cpu" / "plugin.yaml").read_text(encoding="utf-8"))
     cmd = [str(c) for c in manifest["services"][0]["command"]]
     return cmd[cmd.index("--ctx-size") + 1]
 
@@ -479,7 +479,7 @@ def test_prompts_queued_behind_a_held_lease_never_strand_the_resident(rendered):
     # A legitimate long batch takes the card; the resident is evicted for it, as designed.
     broker.request(Job(id="songgen-batch", vram_gb=20.0, kind="media", est_seconds=5400))
     assert "songgen-batch" in sched.running_ids
-    assert "llamacpp" in backend.stopped
+    assert "inference-engine-gpu" in backend.stopped
 
     # Ten prompts are submitted while it runs. The gate re-asks for residency each time.
     for _ in range(10):
@@ -497,7 +497,7 @@ def test_prompts_queued_behind_a_held_lease_never_strand_the_resident(rendered):
     assert sched.running_ids == [], f"work is still admitted: {sched.running_ids}"
     assert sched.queued_ids == [], f"orphaned entries survive: {sched.queued_ids}"
     assert sched.evicted_residents == {}, "a resident is still evicted with nothing running"
-    assert "llamacpp" in backend.started, (
+    assert "inference-engine-gpu" in backend.started, (
         "llama.cpp was not restarted after the real work finished — this is the resident "
         "starvation that required manual draining live")
 

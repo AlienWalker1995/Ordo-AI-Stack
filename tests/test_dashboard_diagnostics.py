@@ -404,7 +404,7 @@ def test_get_json_records_auth_on_401_and_403():
 
 
 def test_get_json_records_unreachable_on_a_connection_error():
-    assert _get_json("LLAMACPP-GPU", "http://llamacpp:8080/v1/models", raises=httpx.ConnectError("refused")) is None
+    assert _get_json("LLAMACPP-GPU", "http://inference-engine-gpu:8080/v1/models", raises=httpx.ConnectError("refused")) is None
     from dashboard import diagnostics
     entry = diagnostics._failures[-1]
     assert (entry["code"], entry["target"]) == ("DEP-LLAMACPP-GPU-UNREACHABLE", "/v1/models")

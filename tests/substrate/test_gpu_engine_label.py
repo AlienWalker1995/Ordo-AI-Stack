@@ -13,16 +13,16 @@ def card(catalog: dict, card_id: str) -> dict:
 
 
 def test_the_card_names_the_ninfer_engine():
-    assert card(aggregate_services_catalog(gpu_engine="ninfer"), "llamacpp")["name"] == "NInfer (GPU)"
+    assert card(aggregate_services_catalog(gpu_engine="ninfer"), "inference-engine-gpu")["name"] == "NInfer (GPU)"
 
 
 def test_the_card_names_llama_cpp_for_a_gguf_model():
-    assert card(aggregate_services_catalog(gpu_engine="llama.cpp"), "llamacpp")["name"] == "llama.cpp (GPU)"
+    assert card(aggregate_services_catalog(gpu_engine="llama.cpp"), "inference-engine-gpu")["name"] == "llama.cpp (GPU)"
 
 
 def test_other_cards_are_untouched():
     plain, ninfer = aggregate_services_catalog(), aggregate_services_catalog(gpu_engine="ninfer")
-    assert card(plain, "llamacpp-cpu") == card(ninfer, "llamacpp-cpu")
+    assert card(plain, "inference-engine-cpu") == card(ninfer, "inference-engine-cpu")
 
 
 def test_labels():

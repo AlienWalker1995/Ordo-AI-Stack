@@ -20,7 +20,7 @@ optional_secrets:
   - ALERTMANAGER_DISCORD_WEBHOOK_URL
   - ALERTMANAGER_HEARTBEAT_URL
 # Four compose services, all sha-pinned (the first three digests carried verbatim from V1 PR #71,
-# live-verified at commit 6fe4586: do NOT bump/relax). Prometheus scrapes llamacpp:8080/metrics
+# live-verified at commit 6fe4586: do NOT bump/relax). Prometheus scrapes inference-engine-gpu:8080/metrics
 # (render emits --metrics on llama-server), gpu-exporter:9835 and ops-controller:9000/metrics, and
 # evaluates the alert rules Alertmanager delivers. Config assets under monitoring/.
 services:

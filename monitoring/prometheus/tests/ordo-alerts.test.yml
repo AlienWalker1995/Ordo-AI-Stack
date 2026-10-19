@@ -13,7 +13,7 @@ tests:
     input_series:
       - series: 'ordo_gpu_chat_up'
         values: '1x30'
-      - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
+      - series: 'ordo_gpu_resident_evicted{resident="inference-engine-gpu"}'
         values: '0x30'
       - series: 'ordo_gpu_leases_running'
         values: '0x30'
@@ -26,7 +26,7 @@ tests:
           - exp_labels: {severity: none}
             exp_annotations: {summary: Alerting pipeline heartbeat (always firing)}
       - eval_time: 30m
-        alertname: LlamaCppDown
+        alertname: InferenceEngineGpuDown
         exp_alerts: []
       - eval_time: 30m
         alertname: GpuResidentEvictedWithoutLease
@@ -121,7 +121,7 @@ tests:
   # it. A resident evicted WHILE a lease runs is a render in progress and is fine.
   - interval: 1m
     input_series:
-      - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
+      - series: 'ordo_gpu_resident_evicted{resident="inference-engine-gpu"}'
         values: '1x40'
       - series: 'ordo_gpu_leases_running'
         values: '1x10 0x30'
@@ -134,16 +134,16 @@ tests:
         alertname: GpuResidentEvictedWithoutLease
         exp_alerts: []
       - eval_time: 10m
-        alertname: LlamaCppDown
+        alertname: InferenceEngineGpuDown
         exp_alerts: []
       - eval_time: 25m
         alertname: GpuResidentEvictedWithoutLease
         exp_alerts:
-          - exp_labels: {severity: critical, resident: llamacpp}
+          - exp_labels: {severity: critical, resident: inference-engine-gpu}
             exp_annotations:
-              summary: llamacpp is still evicted with no GPU lease held
+              summary: inference-engine-gpu is still evicted with no GPU lease held
               description: >-
-                llamacpp was stopped for a GPU lease that is gone, and has not been restored. Chat is
+                inference-engine-gpu was stopped for a GPU lease that is gone, and has not been restored. Chat is
                 on the CPU fallback. Check ops-controller's /status and logs.
 
   # Chat on the CPU fallback: the GPU model evicted for a render lease, local-chat served by the
@@ -151,7 +151,7 @@ tests:
   # completes at 5 minutes, so the alert resolves once the GPU model is restored.
   - interval: 1m
     input_series:
-      - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
+      - series: 'ordo_gpu_resident_evicted{resident="inference-engine-gpu"}'
         values: '1x5 0x30'
       - series: 'ordo_gpu_leases_running'
         values: '1x5 0x30'
@@ -164,7 +164,7 @@ tests:
       - eval_time: 3m
         alertname: ChatServedByCpuFallback
         exp_alerts:
-          - exp_labels: {severity: warning, resident: llamacpp}
+          - exp_labels: {severity: warning, resident: inference-engine-gpu}
             exp_annotations:
               summary: Chat is on the CPU fallback (GPU chat model evicted)
               description: >-
@@ -178,7 +178,7 @@ tests:
   # Evicted for a legitimate long job: a warning at 2 hours (the longest observed render: 54 min).
   - interval: 5m
     input_series:
-      - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
+      - series: 'ordo_gpu_resident_evicted{resident="inference-engine-gpu"}'
         values: '1x40'
       - series: 'ordo_gpu_leases_running'
         values: '1x40'
@@ -191,11 +191,11 @@ tests:
       - eval_time: 150m
         alertname: GpuResidentEvictedLong
         exp_alerts:
-          - exp_labels: {severity: warning, resident: llamacpp}
+          - exp_labels: {severity: warning, resident: inference-engine-gpu}
             exp_annotations:
-              summary: llamacpp has been evicted for over 2 hours
+              summary: inference-engine-gpu has been evicted for over 2 hours
               description: >-
-                A GPU lease has kept llamacpp stopped for over 2 hours (the longest render observed
+                A GPU lease has kept inference-engine-gpu stopped for over 2 hours (the longest render observed
                 took 54 minutes). Check the running lease on ops-controller's /status.
 
   # A lease the sweep never completed: at 0 remaining for over 5 minutes.
@@ -222,42 +222,42 @@ tests:
         values: '0x20'
     alert_rule_test:
       - eval_time: 15m
-        alertname: LlamaCppDown
+        alertname: InferenceEngineGpuDown
         exp_alerts:
           - exp_labels: {severity: critical}
             exp_annotations:
               summary: the GPU chat service is down and not evicted for a GPU lease
               description: >-
-                llamacpp:8080/health does not answer 200 and no GPU lease has evicted it. Read `docker
-                logs ordo-llamacpp-1`.
+                inference-engine-gpu:8080/health does not answer 200 and no GPU lease has evicted it. Read `docker
+                logs ordo-inference-engine-gpu-1`.
 
-  # NInfer serves no Prometheus /metrics, so the `llamacpp` scrape is down for good while the engine
-  # is healthy: neither LlamaCppDown nor TargetDown may fire.
+  # NInfer serves no Prometheus /metrics, so the `inference-engine-gpu` scrape is down for good while the engine
+  # is healthy: neither InferenceEngineGpuDown nor TargetDown may fire.
   - interval: 1m
     input_series:
-      - series: 'up{job="llamacpp",instance="llamacpp:8080"}'
+      - series: 'up{job="inference-engine-gpu",instance="inference-engine-gpu:8080"}'
         values: '0x30'
       - series: 'ordo_gpu_chat_up'
         values: '1x30'
-      - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
+      - series: 'ordo_gpu_resident_evicted{resident="inference-engine-gpu"}'
         values: '0x30'
     alert_rule_test:
       - eval_time: 30m
-        alertname: LlamaCppDown
+        alertname: InferenceEngineGpuDown
         exp_alerts: []
       - eval_time: 30m
         alertname: TargetDown
         exp_alerts: []
 
   # Scrape targets: the GPU exporter's one-scrape timeouts do not fire; 20 minutes down does.
-  # llama.cpp is never a TargetDown (LlamaCppDown owns it).
+  # llama.cpp is never a TargetDown (InferenceEngineGpuDown owns it).
   - interval: 1m
     input_series:
       - series: 'up{job="gpu",instance="gpu-exporter:9835"}'
         values: '1 0 1 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
       - series: 'up{job="model-gateway",instance="model-gateway:11435"}'
         values: '1 0 0 0 1x20'
-      - series: 'up{job="llamacpp",instance="llamacpp:8080"}'
+      - series: 'up{job="inference-engine-gpu",instance="inference-engine-gpu:8080"}'
         values: '0x25'
     alert_rule_test:
       - eval_time: 25m

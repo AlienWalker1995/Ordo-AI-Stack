@@ -106,7 +106,7 @@ def run(
     rc = render(source, catalog, registry, agents=agents, dashboards=dashboards)
     # Single image→context resolver over substrate + manifests. A project image resolves to a build
     # context (or buildspec.EXTERNAL for an out-of-band image); an upstream pull image resolves to
-    # None. This REPLACES the old `_is_buildable` substring special-case + the hardcoded llamacpp hint.
+    # None. This REPLACES the old `_is_buildable` substring special-case + the hardcoded inference-engine-gpu hint.
     resolve_ctx = buildspec.context_resolver(registry, agents, dashboards, project=project)
     # The images `ordo build` builds. A project image outside this set carries its own tag or is built
     # out of band, so the hint must not promise that `ordo build` produces it.

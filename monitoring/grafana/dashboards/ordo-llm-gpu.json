@@ -40,7 +40,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}) * 0 + 1))",
+          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
           "refId": "A"
         }
       ],
@@ -65,7 +65,7 @@
       },
       "targets": [
         {
-          "expr": "llamacpp:predicted_tokens_seconds{job=\"llamacpp-cpu\"}",
+          "expr": "llamacpp:predicted_tokens_seconds{job=\"inference-engine-cpu\"}",
           "refId": "A"
         }
       ]
@@ -89,7 +89,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(litellm_llm_api_time_to_first_token_metric_bucket[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}) * 0 + 1)))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(litellm_llm_api_time_to_first_token_metric_bucket[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1)))",
           "refId": "A"
         }
       ],
@@ -119,7 +119,7 @@
           "refId": "A"
         },
         {
-          "expr": "llamacpp:requests_processing{job=\"llamacpp-cpu\"}",
+          "expr": "llamacpp:requests_processing{job=\"inference-engine-cpu\"}",
           "legendFormat": "CPU fallback",
           "refId": "B"
         }
@@ -161,7 +161,7 @@
           "refId": "A"
         },
         {
-          "expr": "up{job=\"llamacpp-cpu\"}",
+          "expr": "up{job=\"inference-engine-cpu\"}",
           "legendFormat": "CPU fallback",
           "refId": "B"
         }
@@ -191,12 +191,12 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}) * 0 + 1))",
+          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
           "legendFormat": "GPU output (gateway)",
           "refId": "A"
         },
         {
-          "expr": "llamacpp:predicted_tokens_seconds{job=\"llamacpp-cpu\"}",
+          "expr": "llamacpp:predicted_tokens_seconds{job=\"inference-engine-cpu\"}",
           "legendFormat": "CPU fallback generation",
           "refId": "B"
         }
@@ -226,12 +226,12 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}) * 0 + 1))",
+          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
           "legendFormat": "GPU (gateway)",
           "refId": "A"
         },
         {
-          "expr": "rate(llamacpp:tokens_predicted_total{job=\"llamacpp-cpu\"}[5m])",
+          "expr": "rate(llamacpp:tokens_predicted_total{job=\"inference-engine-cpu\"}[5m])",
           "legendFormat": "CPU fallback",
           "refId": "B"
         }

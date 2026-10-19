@@ -3,7 +3,7 @@
   "active_model": "gemma4-31b",
   "ctx_size": 131072,
   "recreated": [
-    "llamacpp",
+    "inference-engine-gpu",
     "model-gateway"
   ],
   "restart_required_on_host": [

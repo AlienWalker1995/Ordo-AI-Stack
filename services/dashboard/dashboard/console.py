@@ -20,8 +20,8 @@ NOT_CONTROLLABLE = frozenset({"agent", "ops-controller"})
 # How a registry entry's service reads on a GPU card.
 _TENANT_LABELS = {
     # The GPU chat service, whichever engine serves it (llama.cpp or NInfer).
-    "llamacpp": "GPU chat",
-    "llamacpp-embed": "Embeddings",
+    "inference-engine-gpu": "GPU chat",
+    "inference-engine-embed": "Embeddings",
     "comfyui": "ComfyUI",
     "stt": "Whisper",
     "tts": "Kokoro",
@@ -144,7 +144,7 @@ def _verdict(row: dict | None) -> str:
 
 def _resident_gpu(registry: dict) -> str | None:
     for entry in (registry or {}).values():
-        if entry.get("service") == "llamacpp":
+        if entry.get("service") == "inference-engine-gpu":
             return entry.get("gpu_uuid")
     return None
 
@@ -188,8 +188,8 @@ def chat_engine(status_gpu: dict | None, containers_by_id: dict) -> dict:
     """
     if status_gpu is None:
         return {"engine": "unknown", "reason": "The control plane did not answer"}
-    evicted = "llamacpp" in (status_gpu.get("evicted_residents") or {})
-    gpu_up = _verdict(containers_by_id.get("llamacpp")) in ("up", "starting") and not evicted
+    evicted = "inference-engine-gpu" in (status_gpu.get("evicted_residents") or {})
+    gpu_up = _verdict(containers_by_id.get("inference-engine-gpu")) in ("up", "starting") and not evicted
     if gpu_up:
         return {"engine": "gpu", "reason": ""}
     borrowers = [lease_label(j.get("id", "")) for j in status_gpu.get("running", [])]
@@ -197,7 +197,7 @@ def chat_engine(status_gpu: dict | None, containers_by_id: dict) -> dict:
         reason = f"The GPU is lent to {', '.join(borrowers)}"
     else:
         reason = "The GPU chat model is not running"
-    if _verdict(containers_by_id.get("llamacpp-cpu")) in ("up", "starting"):
+    if _verdict(containers_by_id.get("inference-engine-cpu")) in ("up", "starting"):
         return {"engine": "cpu", "reason": reason}
     return {"engine": "none", "reason": reason}
 
@@ -387,7 +387,7 @@ def served_file(v1_models: dict | None) -> str | None:
 def resident_gpu_file(registry: dict) -> str | None:
     """The file the GPU chat server is declared to serve, whether or not it is loaded now."""
     for entry in (registry or {}).values():
-        if entry.get("service") == "llamacpp":
+        if entry.get("service") == "inference-engine-gpu":
             return (entry.get("source") or {}).get("file")
     return None
 

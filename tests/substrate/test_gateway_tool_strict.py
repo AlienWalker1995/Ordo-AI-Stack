@@ -9,7 +9,7 @@ declared for model-gateway only) -> entrypoint.sh (LiteLLM `additional_drop_para
 get_optional_params (litellm/utils.py, litellm_core_utils/dot_notation_indexing.py in 1.100.1).
 
 The render, catalog and entrypoint halves run everywhere. The `docker` half builds the real gateway
-image, puts a stub OpenAI server on the `llamacpp` alias and checks what the stub received.
+image, puts a stub OpenAI server on the `inference-engine-gpu` alias and checks what the stub received.
 """
 from __future__ import annotations
 
@@ -230,7 +230,7 @@ def _wait_ready(container: str, deadline_s: float = 240) -> None:
 
 @pytest.fixture(scope="module")
 def gateway_pair():
-    """Build the gateway image, start the stub on alias `llamacpp`, and two gateways in front of it: one
+    """Build the gateway image, start the stub on alias `inference-engine-gpu`, and two gateways in front of it: one
     with the flag, one without. Everything is named with a random suffix and removed afterwards."""
     if not _docker_available():
         pytest.skip("docker is not reachable")
@@ -243,10 +243,10 @@ def gateway_pair():
     try:
         _docker("build", "-q", "-t", image, GATEWAY_DIR.as_posix(), timeout=900)
         for flag in ("on", "off"):
-            # One network per gateway, so each one's `llamacpp` is its own stub and the recorded
+            # One network per gateway, so each one's `inference-engine-gpu` is its own stub and the recorded
             # requests cannot mix.
             _docker("network", "create", networks[flag])
-            _docker("run", "-d", "--name", stubs[flag], "--network", networks[flag], "--network-alias", "llamacpp",
+            _docker("run", "-d", "--name", stubs[flag], "--network", networks[flag], "--network-alias", "inference-engine-gpu",
                     "--entrypoint", "python3", image, "-c", STUB_SERVER)
             env = ["-e", f"LITELLM_MASTER_KEY={MASTER_KEY}", "-e", "LLAMACPP_CTX_SIZE=131072",
                    "-e", "LLAMACPP_CPU_CTX=131072", "-e", "LLAMACPP_MODEL=NInfer-Test.gguf",

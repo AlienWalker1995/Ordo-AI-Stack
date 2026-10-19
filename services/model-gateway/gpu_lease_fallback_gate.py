@@ -12,7 +12,7 @@ This hook runs on the fallback hop and logs the lease state (read from ops-contr
 unauthenticated /metrics) for observability, but no longer denies the fallback.
 
 The lease state is read from ops-controller's unauthenticated /metrics (Prometheus
-text): ordo_gpu_resident_evicted{resident="llamacpp"} is 1 while a render has evicted
+text): ordo_gpu_resident_evicted{resident="inference-engine-gpu"} is 1 while a render has evicted
 the GPU chat model, and ordo_gpu_chat_up is 0 while the chat engine is down. The parsed
 state is cached for 5 s; an unreadable or unparseable metrics response is logged (at most
 once per minute) and treated as "not evicted" (the fallback is allowed regardless).
@@ -40,7 +40,7 @@ UNREADABLE_WARN_INTERVAL = 60.0
 
 # The two series ops-controller exports for the GPU chat service (ordo/control/metrics.py):
 # one per resident (1 while stopped for a lease) and the /health liveness of the chat engine.
-_EVICTED_RE = re.compile(r'^ordo_gpu_resident_evicted\{resident="llamacpp"\}\s+(\S+)', re.MULTILINE)
+_EVICTED_RE = re.compile(r'^ordo_gpu_resident_evicted\{resident="inference-engine-gpu"\}\s+(\S+)', re.MULTILINE)
 _CHAT_UP_RE = re.compile(r"^ordo_gpu_chat_up\s+(\S+)", re.MULTILINE)
 
 
@@ -63,7 +63,7 @@ def fallback_allowed(metrics_text: str) -> bool:
     """Whether the CPU fallback may serve, from one ops-controller /metrics scrape.
 
     Allowed while the GPU chat model is evicted for a lease
-    (ordo_gpu_resident_evicted{resident="llamacpp"} 1) or the GPU chat service is down
+    (ordo_gpu_resident_evicted{resident="inference-engine-gpu"} 1) or the GPU chat service is down
     (ordo_gpu_chat_up 0). When neither series is present there is nothing to judge by,
     so the gate fails open: a consumer must not be locked out because ops-controller
     stopped exporting a line.

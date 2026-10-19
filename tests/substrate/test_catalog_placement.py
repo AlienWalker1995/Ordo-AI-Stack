@@ -1,7 +1,7 @@
 """A catalog model's own placement: sharded weights, MoE expert offload, CPU threads, lazy mmap, its
 generation cap, its VRAM reserve and whether `model: auto` may pick it.
 
-These reach llama-server only through the render (.env keys the llamacpp launcher reads) and the
+These reach llama-server only through the render (.env keys the inference-engine-gpu launcher reads) and the
 models-volume checks (every shard must be present before the chat service starts)."""
 from __future__ import annotations
 
@@ -111,7 +111,7 @@ def test_swift_renders_its_measured_placement():
 
 def test_swift_needs_both_shards_in_the_models_volume():
     rc = _render(SWIFT)
-    needed = {need.file: need for need in required_model_files(rc.compose_dict(), rc.env, ["llamacpp"])}
+    needed = {need.file: need for need in required_model_files(rc.compose_dict(), rc.env, ["inference-engine-gpu"])}
     for shard in ("00001-of-00002", "00002-of-00002"):
         need = needed[f"Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-{shard}.gguf"]
         assert not need.optional
@@ -120,12 +120,12 @@ def test_swift_needs_both_shards_in_the_models_volume():
 
 
 def test_a_model_without_a_placement_renders_no_placement_keys():
-    """So adding placement support changes neither the .env nor the llamacpp config hash of any
+    """So adding placement support changes neither the .env nor the inference-engine-gpu config hash of any
     other model: nothing recreates on merge."""
     rc = _render(TURBO)
     assert not set(PLACEMENT_KEYS) & set(rc.env)
     assert rc.env["LLAMACPP_N_PREDICT"] == "65536"
-    assert not set(PLACEMENT_KEYS) & set(rc.compose_dict()["services"]["llamacpp"].get("environment") or {})
+    assert not set(PLACEMENT_KEYS) & set(rc.compose_dict()["services"]["inference-engine-gpu"].get("environment") or {})
 
 
 def test_swift_is_never_the_auto_pick():
@@ -135,4 +135,4 @@ def test_swift_is_never_the_auto_pick():
 def test_a_bad_load_mode_override_is_a_render_error():
     with pytest.raises(ValueError, match="load_mode"):
         render(Source.from_dict({"hardware": PROFILE_5090, "model": TURBO, "plugins": "auto",
-                                 "overrides": {"llamacpp": {"load_mode": "mlock"}}}), CATALOG)
+                                 "overrides": {"inference-engine-gpu": {"load_mode": "mlock"}}}), CATALOG)

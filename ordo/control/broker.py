@@ -129,10 +129,10 @@ def netns_member_rows(inspected: list[dict], owner_state: Callable[[str], str]) 
 
 class ContainerBackend(Protocol):
     # Two kinds of argument, and the distinction is load-bearing. `service` is a COMPOSE SERVICE
-    # name (`llamacpp`), resolved to a container by compose labels so the `-1` replica suffix is
-    # handled. `name` is a RAW CONTAINER name (`ordo-llamacpp-1`). Mixing them up is the defect
-    # that made `docker stop ordo-llamacpp` fail against a container actually called
-    # `ordo-llamacpp-1`, so the parameter names say which one a method takes.
+    # name (`inference-engine-gpu`), resolved to a container by compose labels so the `-1` replica suffix is
+    # handled. `name` is a RAW CONTAINER name (`ordo-inference-engine-gpu-1`). Mixing them up is the defect
+    # that made `docker stop ordo-inference-engine-gpu` fail against a container actually called
+    # `ordo-inference-engine-gpu-1`, so the parameter names say which one a method takes.
     project: str   # this backend's compose project
     def start(self, service: str) -> None: ...
     def stop(self, service: str) -> None: ...
@@ -686,11 +686,11 @@ class MockBackend:
 class DockerBackend:
     """Real backend, HARD-SCOPED to a compose project.
 
-    A name passed here is a compose SERVICE name (e.g. `llamacpp`), NOT a raw container name.
+    A name passed here is a compose SERVICE name (e.g. `inference-engine-gpu`), NOT a raw container name.
     The actual container is resolved by compose LABELS
     (`com.docker.compose.project=<project>` + `com.docker.compose.service=<name>`), which is robust
-    to the `-1` replica suffix compose appends (the live defect: `docker stop ordo-llamacpp`
-    failed because the container is `ordo-llamacpp-1`). Resolving by label — the same mechanism
+    to the `-1` replica suffix compose appends (the live defect: `docker stop ordo-inference-engine-gpu`
+    failed because the container is `ordo-inference-engine-gpu-1`). Resolving by label — the same mechanism
     ops-api uses — is exact and, because the project label is pinned, structurally unable to touch a
     container outside this project.
 
@@ -962,7 +962,7 @@ class DockerBackend:
         `--no-deps` is mandatory: without it compose cascade-recreates the target's dependencies,
         dropping their GPU pins and touching services the operator never asked about. `--force-
         recreate` so a recreate with an unchanged compose file still restarts the container and
-        picks up an edited .env value. No render step: the rendered compose, with llamacpp's 5090
+        picks up an edited .env value. No render step: the rendered compose, with inference-engine-gpu's 5090
         uuid pin baked into its environment/deploy blocks, is replayed as it stands.
 
         The args come from `stack.plan_named`, the planner `ordo recreate` uses on the host: a
@@ -1025,7 +1025,7 @@ class DockerBackend:
     def compose_up(self, service: str | None = None) -> None:
         # A named up is the host's `ordo up <service>`: `stack.plan_named`, so `--no-deps` (else
         # compose also starts the service's dependencies, and during a GPU lease that includes the
-        # evicted llamacpp; the lease guard in api.py checks only the group) plus the netns
+        # evicted inference-engine-gpu; the lease guard in api.py checks only the group) plus the netns
         # members, with every profile so a profiled dependency resolves.
         if service is None:
             subprocess.run(self._compose("up", "-d"), check=True, timeout=900)

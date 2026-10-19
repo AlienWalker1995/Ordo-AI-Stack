@@ -1,6 +1,6 @@
 # Appendix: Rollback Procedures
 
-1. **Model gateway:** Point services directly to llama.cpp (`OPENAI_API_BASE=http://llamacpp:8080/v1`); `cd out && docker compose -p ordo stop model-gateway`. Restart affected services.
+1. **Model gateway:** Point services directly to llama.cpp (`OPENAI_API_BASE=http://inference-engine-gpu:8080/v1`); `cd out && docker compose -p ordo stop model-gateway`. Restart affected services.
 2. **Ops controller:** `cd out && docker compose -p ordo stop ops-controller`; the dashboard's ops actions and model switch show "control plane is not answering" and GPU leases stop being granted. Chat and MCP traffic are unaffected. No data loss.
 3. **MCP registry:** Re-render from the previous `ordo.yaml`; `out/model-gateway/mcp_servers.yaml` is required and `model-gateway` fails loud if it is missing, so there is no partial-registry state to fall back to.
 4. **cap_drop / read_only:** Remove it where it is declared (the service's manifest, or `ordo/render/compose.py` for a core service), re-render (`python -m ordo render`), then `ordo recreate <service>`.
@@ -8,5 +8,5 @@
 6. **MCP tools:** Trim the `kind: mcp` plugins in `ordo.yaml` to a single safe server, then `ordo render` and recreate `model-gateway` (LiteLLM reads MCP servers at startup, there is no hot reload).
 7. **RAG:** `cd out && docker compose -p ordo stop rag-ingestion qdrant`; remove `VECTOR_DB=qdrant` from Open WebUI env → Open WebUI uses built-in vector store. Qdrant data preserved in the `qdrant-data` named volume.
 8. **Restore data:** `ordo restore <archive>` (the config and every volume `ordo backup` saved; see [data.md](../data.md#backup-and-recovery)).
-9. **Minimal stack:** `ordo up llamacpp model-gateway dashboard open-webui qdrant`.
+9. **Minimal stack:** `ordo up inference-engine-gpu model-gateway dashboard open-webui qdrant`.
 10. **Safe mode:** `cd out && docker compose -p ordo stop $(docker compose -p ordo config --services | grep '^mcp-') agent comfyui rag-ingestion` → llama.cpp + Open WebUI + dashboard only.

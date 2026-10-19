@@ -57,10 +57,10 @@ mcp:
   image: ordo/qdrant-rag-mcp          # untagged: render adds the `ordo build` tag
   transport: http
   port: 9000
-  network: stack          # qdrant:6333 + llamacpp-embed:8080
+  network: stack          # qdrant:6333 + inference-engine-embed:8080
   env:
     QDRANT_URL: http://qdrant:6333
-    EMBED_URL: http://llamacpp-embed:8080
+    EMBED_URL: http://inference-engine-embed:8080
     RAG_COLLECTION: documents
   tools: [qdrant_search, qdrant_status]
 ```

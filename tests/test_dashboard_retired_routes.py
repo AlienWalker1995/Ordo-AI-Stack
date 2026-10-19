@@ -22,7 +22,7 @@ DASHBOARD_DIR = Path(__file__).resolve().parents[1] / "services" / "dashboard"
 RETIRED = [
     # wrote LLAMACPP_MODEL into .env: reverted by the next render, skipped the catalog settings
     ("POST", "/api/active-model"),
-    ("POST", "/api/llamacpp/switch"),
+    ("POST", "/api/inference-engine-gpu/switch"),
     # the old Model tab's passthrough; its v1 payload never matched the v2 contract
     ("POST", "/api/model-config"),
     ("GET", "/api/model-config"),

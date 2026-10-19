@@ -198,18 +198,18 @@ def open_webui_check(project: str) -> tuple[bool, str]:
     return open_webui_verdict(probe)
 
 
-# --- The CPU fallback's thread budget: declared (overrides.llamacpp-cpu.threads) vs running ---
+# --- The CPU fallback's thread budget: declared (overrides.inference-engine-cpu.threads) vs running ---
 #
 # A `docker update --cpus` on the running container changes its ceiling without touching its config
 # hash, so neither the changed set nor the container labels show it. This check compares the render
 # with what the container actually runs: its `--threads` argument and its CPU limit.
 
-CPU_FALLBACK_SERVICE = "llamacpp-cpu"
+CPU_FALLBACK_SERVICE = "inference-engine-cpu"
 _NANO_CPUS_PER_CPU = 1_000_000_000
 
 
 def read_cpu_fallback_limits(project: str) -> tuple[int | None, float | None] | None:
-    """(--threads, cpus limit) of the running llamacpp-cpu container, or None when it is not running.
+    """(--threads, cpus limit) of the running inference-engine-cpu container, or None when it is not running.
 
     Either value is None when the container has none (no --threads flag; no CPU limit). Raises
     ContainerUnreadable when docker or the container cannot be queried.
@@ -251,7 +251,7 @@ def _format_cpus(cpus: float | None) -> str:
 def cpu_fallback_check(project: str, declared_threads: int | None) -> tuple[bool, str]:
     """(ok, one-line report) comparing the rendered CPU fallback budget with the running container.
 
-    `declared_threads` is None when the render does not define llamacpp-cpu."""
+    `declared_threads` is None when the render does not define inference-engine-cpu."""
     if declared_threads is None:
         return True, "cpu-fallback: not rendered"
     try:

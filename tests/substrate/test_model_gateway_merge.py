@@ -14,7 +14,7 @@ from merge_mcp_config import main, merge  # noqa: E402
 CONFIG = """\
 model_list:
   - model_name: local-chat
-    litellm_params: {model: openai/local-chat, api_base: http://llamacpp:8080/v1, api_key: local}
+    litellm_params: {model: openai/local-chat, api_base: http://inference-engine-gpu:8080/v1, api_key: local}
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 """

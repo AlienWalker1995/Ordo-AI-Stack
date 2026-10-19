@@ -10,7 +10,7 @@ from ordo_evals.checks import ProbeError
 IDLE_STATUS = {
     "manifest": {"model": {"id": "qwen3.8-27b-uncensored-q6"}},
     "gpu": {"state": "idle", "leased": False, "total_vram_gb": 32.0, "free_vram_gb": 32.0, "running": [], "queued": [],
-           "waiting_on_vram": False, "eta_seconds": 0.0, "idle_cached": {"llamacpp": 20.0},
+           "waiting_on_vram": False, "eta_seconds": 0.0, "idle_cached": {"inference-engine-gpu": 20.0},
            "evicted_residents": {}, "rejected": []},
 }
 
@@ -53,12 +53,12 @@ def test_a_queued_job_is_leased():
 
 
 def test_an_evicted_resident_is_leased_even_with_no_running_or_queued_job():
-    """The window right after a media job evicted llamacpp but before the scheduler shows it
+    """The window right after a media job evicted inference-engine-gpu but before the scheduler shows it
     running/queued (or right after it completed and the resident hasn't been restored yet) -
     evicted_residents alone must trigger the guard, not just running/queued."""
-    status = _busy_status(evicted_residents={"llamacpp": 20.0})
+    status = _busy_status(evicted_residents={"inference-engine-gpu": 20.0})
     leased, detail = gpu_guard.gpu_lease_state(status)
-    assert leased is True and "llamacpp" in detail
+    assert leased is True and "inference-engine-gpu" in detail
 
 
 # ── served_model_for_item ─────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ def test_served_model_is_the_declared_gpu_model_when_clear():
 
 
 def test_served_model_is_the_cpu_fallback_sentinel_when_leased():
-    status = _busy_status(evicted_residents={"llamacpp": 20.0})
+    status = _busy_status(evicted_residents={"inference-engine-gpu": 20.0})
     served, note = gpu_guard.served_model_for_item(_FakeProbes(status), gpu_served_model="qwen-gpu")
     assert served == gpu_guard.CPU_FALLBACK_BACKEND and note is None
 

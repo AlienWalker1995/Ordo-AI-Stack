@@ -138,7 +138,7 @@ def test_post_plugin_enable_valid_returns_200(tmp_path):
 
 def test_post_plugin_enable_not_installable_returns_403(tmp_path):
     cp, _ = _cp(tmp_path)
-    code, body = cp.route("POST", "/plugins/llamacpp/enable", {"confirm": True})
+    code, body = cp.route("POST", "/plugins/inference-engine-gpu/enable", {"confirm": True})
     assert code == 403
     assert "error" in body
     assert "installable" in body
@@ -167,7 +167,7 @@ def test_post_plugin_disable_under_plugins_auto_returns_409(tmp_path):
 
 def test_post_plugin_disable_not_installable_returns_403(tmp_path):
     cp, _ = _cp(tmp_path)
-    code, body = cp.route("POST", "/plugins/llamacpp/disable", {"confirm": True})
+    code, body = cp.route("POST", "/plugins/inference-engine-gpu/disable", {"confirm": True})
     assert code == 403
     assert "error" in body
 

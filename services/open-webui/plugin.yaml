@@ -64,7 +64,7 @@ services:
       # NAMED VOLUME (ext4) — open-webui keeps its SQLite DB + uploads here; DB state
       # never rides the wedge-prone 9p bridge (see services/rag/plugin.yaml note).
       - open-webui-data:/app/backend/data
-    depends_on: [llamacpp, model-gateway, qdrant]
+    depends_on: [inference-engine-gpu, model-gateway, qdrant]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       start_period: 120s

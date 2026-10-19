@@ -66,7 +66,7 @@ def test_enable_on_explicit_list_edits_source_and_rerenders(tmp_path):
 def test_enable_non_installable_is_403_and_writes_nothing(tmp_path):
     cp, src = _cp(tmp_path, plugins=["comfyui"])
     before = src.read_text()
-    for pid in ("agent", "edge", "llamacpp"):
+    for pid in ("agent", "edge", "inference-engine-gpu"):
         code, body = cp.route("POST", f"/plugins/{pid}/enable", {"confirm": True})
         assert code == 403 and "error" in body
     assert src.read_text() == before

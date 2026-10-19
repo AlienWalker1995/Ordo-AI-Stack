@@ -1,8 +1,8 @@
 """The CPU fallback's CPU budget is a declared, rendered setting.
 
-While a render holds the GPU, chat fails over to `llamacpp-cpu`. It used to run with no `--threads`
+While a render holds the GPU, chat fails over to `inference-engine-cpu`. It used to run with no `--threads`
 and no CPU limit, so llama.cpp took about half of a 48-thread host and pushed the operator's UPS into
-its overload alarm. The budget is now `overrides.llamacpp-cpu.threads`: it defaults to
+its overload alarm. The budget is now `overrides.inference-engine-cpu.threads`: it defaults to
 min(12, half the detected logical CPUs) and renders to `--threads`, `--threads-batch` and the
 service's compose `cpus` limit, so the argv and the ceiling cannot disagree.
 """
@@ -31,7 +31,7 @@ def _hardware(cpu_cores: int) -> dict:
 
 
 def _render(cpu_cores: int = 48, overrides: dict | None = None):
-    return render(Source.from_dict({"hardware": _hardware(cpu_cores), "plugins": ["llamacpp-cpu"],
+    return render(Source.from_dict({"hardware": _hardware(cpu_cores), "plugins": ["inference-engine-cpu"],
                                     "overrides": overrides or {}}), CATALOG, REGISTRY)
 
 
@@ -45,7 +45,7 @@ def _interpolate(value: str, env: dict[str, str]) -> str:
 
 
 def _cpu_fallback_service(rc) -> dict:
-    return rc.compose_dict()["services"]["llamacpp-cpu"]
+    return rc.compose_dict()["services"]["inference-engine-cpu"]
 
 
 def _flag(command: list[str], flag: str) -> str:
@@ -78,33 +78,33 @@ def test_manifest_carries_no_fallback_that_could_disagree_with_the_render():
 
 
 def test_override_sets_the_threads():
-    rc = _render(48, {"llamacpp-cpu": {"threads": 6}})
+    rc = _render(48, {"inference-engine-cpu": {"threads": 6}})
     assert rc.env["LLAMACPP_CPU_THREADS"] == "6"
 
 
 def test_override_may_use_every_detected_cpu():
-    assert _render(16, {"llamacpp-cpu": {"threads": 16}}).env["LLAMACPP_CPU_THREADS"] == "16"
+    assert _render(16, {"inference-engine-cpu": {"threads": 16}}).env["LLAMACPP_CPU_THREADS"] == "16"
 
 
 @pytest.mark.parametrize("threads", [0, -2, 49, "12", 4.5, True, None])
 def test_threads_outside_one_to_the_detected_cpus_is_a_render_error(threads):
     with pytest.raises(ValueError) as err:
-        _render(48, {"llamacpp-cpu": {"threads": threads}})
+        _render(48, {"inference-engine-cpu": {"threads": threads}})
     message = str(err.value)
-    assert "llamacpp-cpu" in message and "threads" in message and "48" in message
+    assert "inference-engine-cpu" in message and "threads" in message and "48" in message
 
 
-def test_unknown_llamacpp_cpu_override_key_is_a_render_error_naming_threads():
+def test_unknown_inference_engine_cpu_override_key_is_a_render_error_naming_threads():
     with pytest.raises(ValueError) as err:
-        _render(48, {"llamacpp-cpu": {"cpus": 4}})
+        _render(48, {"inference-engine-cpu": {"cpus": 4}})
     message = str(err.value)
     assert "'cpus'" in message and "threads" in message
 
 
 def test_the_gpu_chat_service_is_untouched():
     """GPU token throughput must not move: the budget applies to the CPU fallback only."""
-    default = _render(48).compose_dict()["services"]["llamacpp"]
-    capped = _render(48, {"llamacpp-cpu": {"threads": 4}}).compose_dict()["services"]["llamacpp"]
+    default = _render(48).compose_dict()["services"]["inference-engine-gpu"]
+    capped = _render(48, {"inference-engine-cpu": {"threads": 4}}).compose_dict()["services"]["inference-engine-gpu"]
     assert capped == default
     assert "LLAMACPP_CPU_THREADS" not in str(default)
     assert "limits" not in default.get("deploy", {}).get("resources", {})
@@ -118,10 +118,10 @@ def _inspect_output(cmd: list[str], nano_cpus: int) -> str:
 
 def _fake_docker(monkeypatch, *, cmd: list[str] | None, nano_cpus: int = 0, returncode: int = 0):
     monkeypatch.setattr(bringup, "find_running_container",
-                        lambda project, service: "ordo-llamacpp-cpu-1" if cmd is not None else None)
+                        lambda project, service: "ordo-inference-engine-cpu-1" if cmd is not None else None)
 
     def run(argv, **kwargs):
-        assert argv[:2] == ["docker", "inspect"] and argv[-1] == "ordo-llamacpp-cpu-1"
+        assert argv[:2] == ["docker", "inspect"] and argv[-1] == "ordo-inference-engine-cpu-1"
         return subprocess.CompletedProcess(argv, returncode, _inspect_output(cmd or [], nano_cpus), "boom")
 
     monkeypatch.setattr(doctor.subprocess, "run", run)
@@ -134,7 +134,7 @@ def test_doctor_flags_a_running_container_without_the_declared_threads(monkeypat
     ok, line = doctor.cpu_fallback_check("ordo", 12)
     assert not ok
     assert "declared threads=12" in line and "threads=unset" in line and "cpus=12" in line
-    assert "ordo apply --only llamacpp-cpu" in line
+    assert "ordo apply --only inference-engine-cpu" in line
 
 
 def test_doctor_flags_a_running_container_without_a_cpu_limit(monkeypatch):

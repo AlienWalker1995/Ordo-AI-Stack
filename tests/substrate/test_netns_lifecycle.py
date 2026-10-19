@@ -37,7 +37,7 @@ MEMBERS = ["hermes-dashboard", "tailnet-chat"]
 
 COMPOSE = {
     "services": {
-        "llamacpp": {"image": "x"},
+        "inference-engine-gpu": {"image": "x"},
         "oauth2-proxy": {"image": "x", "profiles": ["edge"]},
         "caddy": {"image": "x", "profiles": ["edge"], "depends_on": ["oauth2-proxy"]},
         "tailnet-chat": {"image": "x", "profiles": ["edge"], "network_mode": "service:caddy"},
@@ -62,7 +62,7 @@ def test_lifecycle_group_derives_any_owner_not_just_caddy():
     assert stack.lifecycle_group(COMPOSE, "vpn") == ["vpn", "gpu-sidecar", "torrent"]
 
 
-@pytest.mark.parametrize("service", ["tailnet-chat", "llamacpp", "open-webui", "not-rendered"])
+@pytest.mark.parametrize("service", ["tailnet-chat", "inference-engine-gpu", "open-webui", "not-rendered"])
 def test_a_member_or_a_plain_service_is_its_own_group(service):
     # Acting on a member acts on the member only; `network_mode: host` is not a netns owner.
     assert stack.lifecycle_group(COMPOSE, service) == [service]
@@ -113,9 +113,9 @@ def test_restarting_a_member_restarts_only_the_member(control_plane, backend):
 
 
 def test_a_plain_service_restart_is_unchanged(control_plane, backend):
-    status, body = control_plane.route("POST", "/services/llamacpp/restart", CONFIRM)
+    status, body = control_plane.route("POST", "/services/inference-engine-gpu/restart", CONFIRM)
     assert status == 200
-    assert backend.restarted == ["llamacpp"]
+    assert backend.restarted == ["inference-engine-gpu"]
     assert "members" not in body
 
 

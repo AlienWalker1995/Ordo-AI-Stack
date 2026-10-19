@@ -140,7 +140,7 @@ def test_install_node_requirements_is_503_when_comfyui_is_not_running(cp):
 def test_gpu_assign_is_gone_not_a_silent_success(cp):
     """V1 answered {"ok": true} and changed nothing. A 410 is the honest answer."""
     plane, _, _ = cp
-    code, body = plane.route("POST", "/gpu/assign", {"service": "llamacpp", "gpu": "GPU-abc"})
+    code, body = plane.route("POST", "/gpu/assign", {"service": "inference-engine-gpu", "gpu": "GPU-abc"})
     assert code == 410
     assert "render" in body["error"]
 

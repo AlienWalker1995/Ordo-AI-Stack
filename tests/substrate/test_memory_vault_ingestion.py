@@ -52,7 +52,7 @@ def test_rag_ingestion_contract_otherwise_unchanged():
     # single watch root: the recursive scanner sees the nested vault without extra env
     assert ri["environment"]["WATCH_DIR"] == "/watch"
     assert ri["environment"]["QDRANT_COLLECTION"] == "${RAG_COLLECTION:-documents}"
-    assert ri["environment"]["MODEL_GATEWAY_URL"] == "http://llamacpp-embed:8080"
+    assert ri["environment"]["MODEL_GATEWAY_URL"] == "http://inference-engine-embed:8080"
 
 
 def test_embed_server_batch_fits_a_full_chunk():
@@ -60,7 +60,7 @@ def test_embed_server_batch_fits_a_full_chunk():
     # (n_ubatch=512) 500s on chunks over 512 tokens — a 400-word markdown chunk routinely is
     # (CONVENTIONS.md = 556 tokens, caught live). Both batch flags must be raised together.
     c = render(_src(["rag"]), CATALOG, REGISTRY).compose_dict()
-    cmd = c["services"]["llamacpp-embed"]["command"]
+    cmd = c["services"]["inference-engine-embed"]["command"]
     assert cmd[cmd.index("--batch-size") + 1] == "2048"
     assert cmd[cmd.index("--ubatch-size") + 1] == "2048"
     assert "--embeddings" in cmd
@@ -155,7 +155,7 @@ class _FakeResp:
 
 
 class _FakeClient:
-    """Rejects inputs over a token budget the way llamacpp-embed does (whole batch)."""
+    """Rejects inputs over a token budget the way inference-engine-embed does (whole batch)."""
 
     def __init__(self, max_chars):
         self.max_chars = max_chars

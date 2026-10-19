@@ -44,10 +44,10 @@ def _samples(text: str) -> dict[tuple[str, tuple], float]:
 
 
 def _leased_scheduler() -> Scheduler:
-    """llamacpp evicted by a running media lease, llamacpp-embed still resident, one job queued."""
+    """inference-engine-gpu evicted by a running media lease, inference-engine-embed still resident, one job queued."""
     sched = Scheduler(32)
-    sched.cache_idle("llamacpp", 27.5)
-    sched.cache_idle("llamacpp-embed", 1.0)
+    sched.cache_idle("inference-engine-gpu", 27.5)
+    sched.cache_idle("inference-engine-embed", 1.0)
     sched.submit(Job("gate-comfyui", 30.0, "media", est_seconds=600))
     sched.pump()
     sched.submit(Job("queued-render", 30.0, "media"))
@@ -63,8 +63,8 @@ def test_the_lease_state_is_exported():
     lease = (("kind", "media"), ("lease", "gate-comfyui"))
     assert got[("ordo_gpu_lease_held_seconds", lease)] == 120
     assert got[("ordo_gpu_lease_ttl_remaining_seconds", lease)] == 1080   # 2 x 600s estimate - 120s held
-    assert got[("ordo_gpu_resident_evicted", (("resident", "llamacpp"),))] == 1
-    assert got[("ordo_gpu_resident_evicted", (("resident", "llamacpp-embed"),))] == 0
+    assert got[("ordo_gpu_resident_evicted", (("resident", "inference-engine-gpu"),))] == 1
+    assert got[("ordo_gpu_resident_evicted", (("resident", "inference-engine-embed"),))] == 0
 
 
 def test_a_lease_past_its_ttl_reads_zero_remaining():
@@ -84,18 +84,18 @@ def test_an_idle_card_still_declares_every_family():
 
 
 def test_containers_restarts_disks_and_certs():
-    rows = [{"id": "llamacpp", "state": "running", "health": "healthy"},
+    rows = [{"id": "inference-engine-gpu", "state": "running", "health": "healthy"},
             {"id": "mcp-comfyui", "state": "restarting", "health": None},
             {"id": "gpu-exporter", "state": "running", "health": "unhealthy"}]
     text = metrics.render(metrics.Inputs(
-        containers=rows, restarts={"mcp-comfyui": 7, "llamacpp": 0},
+        containers=rows, restarts={"mcp-comfyui": 7, "inference-engine-gpu": 0},
         disks={"docker": metrics.DiskUsage(size=1_081_101_176_832, free=160_000_000_000, avail=141_733_474_304)},
         tls_certs={"edge": 1_797_981_483.0}))
     got = _samples(text)
-    assert got[("ordo_container_running", (("service", "llamacpp"),))] == 1
+    assert got[("ordo_container_running", (("service", "inference-engine-gpu"),))] == 1
     assert got[("ordo_container_running", (("service", "mcp-comfyui"),))] == 0
     assert got[("ordo_container_unhealthy", (("service", "gpu-exporter"),))] == 1
-    assert got[("ordo_container_unhealthy", (("service", "llamacpp"),))] == 0
+    assert got[("ordo_container_unhealthy", (("service", "inference-engine-gpu"),))] == 0
     assert got[("ordo_container_restarts_total", (("service", "mcp-comfyui"),))] == 7
     assert "# TYPE ordo_container_restarts_total counter" in text
     # Byte counts past 1e12 are written exactly, never in rounded scientific notation.
@@ -163,7 +163,7 @@ def plane(tmp_path, monkeypatch):
     src.write_text(yaml.safe_dump({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                                    "model": "auto", "plugins": "auto"}), encoding="utf-8")
     sched = _leased_scheduler()
-    backend = MockBackend({"services": {"llamacpp": {"image": "example/llamacpp"},
+    backend = MockBackend({"services": {"inference-engine-gpu": {"image": "example/inference-engine-gpu"},
                                         "mcp-comfyui": {"image": "example/mcp"}}})
     backend.project_containers["mcp-comfyui"].restart_count = 3
     usage = {"/": metrics.DiskUsage(100, 10, 5), str(tmp_path / "out"): metrics.DiskUsage(200, 100, 90)}
@@ -176,9 +176,9 @@ def plane(tmp_path, monkeypatch):
 
 def test_metrics_text_gathers_every_source(plane):
     got = _samples(plane.metrics_text())
-    assert got[("ordo_gpu_resident_evicted", (("resident", "llamacpp"),))] == 1
+    assert got[("ordo_gpu_resident_evicted", (("resident", "inference-engine-gpu"),))] == 1
     assert got[("ordo_container_restarts_total", (("service", "mcp-comfyui"),))] == 3
-    assert got[("ordo_container_running", (("service", "llamacpp"),))] == 1
+    assert got[("ordo_container_running", (("service", "inference-engine-gpu"),))] == 1
     assert got[("ordo_filesystem_size_bytes", (("mount", "host"),))] == 200
     assert got[("ordo_filesystem_free_bytes", (("mount", "docker"),))] == 10
     assert got[("ordo_tls_cert_not_after_timestamp_seconds", (("cert", "edge"),))] == 1_797_981_483

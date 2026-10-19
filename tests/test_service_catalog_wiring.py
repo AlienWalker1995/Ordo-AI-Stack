@@ -111,7 +111,7 @@ def test_no_card_targets_a_service_the_backend_refuses():
 
 def test_added_cards_are_controllable():
     """The newly-added cards must each be operator-controllable."""
-    for display_id in ("stt", "tts", "rag-ingestion", "llamacpp-cpu"):
+    for display_id in ("stt", "tts", "rag-ingestion", "inference-engine-cpu"):
         assert display_id in OPS_SERVICE_MAP, f"{display_id} not wired for lifecycle control"
 
 
@@ -129,13 +129,13 @@ def test_catalog_ids_are_unique():
 def test_non_user_facing_services_carry_background_flag():
     """`background: True` marks NON-user-facing services — the ones the frontend moves out
     of the main grid (which is only browsable UIs) into the secondary 'Background jobs'
-    section (no 'Open' link). That is the backend infra (llamacpp, qdrant, stt, tts)
+    section (no 'Open' link). That is the backend infra (inference-engine-gpu, qdrant, stt, tts)
     plus the two portless headless workers (rag-ingestion, livesync-bridge) and the html-video
     renderer (an HTTP API with no UI). The user-facing UIs —
     webui/comfyui/n8n/hermes/codebase-memory-ui — and model-gateway (its Open link is the
     LiteLLM admin UI) must NOT carry it, so an openable service can't be quietly demoted."""
     bg = {s["id"] for s in SERVICES if s.get("background")}
-    assert bg == {"rag-ingestion", "llamacpp", "llamacpp-cpu", "qdrant", "stt", "tts",
+    assert bg == {"rag-ingestion", "inference-engine-gpu", "inference-engine-cpu", "qdrant", "stt", "tts",
                   "couchdb", "livesync-bridge", "html-video"}
     user_facing = {"webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"}
     for s in SERVICES:
@@ -147,7 +147,7 @@ def test_non_user_facing_services_carry_background_flag():
 def test_headless_workers_have_no_ui_open_target():
     """The two pure headless workers expose no port and no health check, so the frontend has
     nothing to build a link from (and shows a neutral 'unknown' state, not a false-red). The
-    other background services (llamacpp/qdrant/stt/tts) ARE probeable — they keep their
+    other background services (inference-engine-gpu/qdrant/stt/tts) ARE probeable — they keep their
     check — they're just not user-facing, so the frontend omits their 'Open' link via the flag."""
     for wid in ("rag-ingestion", "livesync-bridge"):
         s = next(x for x in SERVICES if x["id"] == wid)
@@ -168,7 +168,7 @@ def test_visible_services_hides_disabled_plugins():
     enabled = {"open-webui", "comfyui"}  # rag / voice / automation / hermes disabled
     visible_ids = {s["id"] for s in visible_services(enabled=enabled)}
     # Core services (plugin=None) always show.
-    assert {"llamacpp", "model-gateway"} <= visible_ids
+    assert {"inference-engine-gpu", "model-gateway"} <= visible_ids
     # Enabled plugins show.
     assert {"webui", "comfyui"} <= visible_ids
     # Disabled plugins are hidden.
@@ -180,7 +180,7 @@ def test_visible_services_shows_all_for_live_enabled_set():
     """Against the real rendered manifest's enabled set, nothing is hidden."""
     enabled = {
         "automation", "codebase-memory-ui", "comfyui", "edge", "hermes-dashboard", "html-video",
-        "langfuse", "llamacpp-cpu", "ltx-trainer", "monitoring", "open-webui", "rag",
+        "langfuse", "inference-engine-cpu", "ltx-trainer", "monitoring", "open-webui", "rag",
         "searxng-web", "song-gen", "tailnet-names", "voice", "obsidian-livesync",
         "obsidian-livesync-funnel",
     }

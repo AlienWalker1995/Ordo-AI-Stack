@@ -44,7 +44,7 @@ def _controller(path, clock, backend=None, total=32.0, resident_gb=25.0):
     """What `ordo serve` builds at startup: residents registered from the render, then the
     persisted state adopted before the first request is served."""
     sched = Scheduler(total)
-    sched.cache_idle("llamacpp", resident_gb)
+    sched.cache_idle("inference-engine-gpu", resident_gb)
     broker = Broker(sched, backend or MockBackend(), state_store=SchedulerStateStore(path, now_fn=clock))
     return sched, broker
 
@@ -61,7 +61,7 @@ def test_every_transition_is_written_to_disk(tmp_path):
     doc = json.loads(path.read_text(encoding="utf-8"))
     assert doc["version"] == STATE_VERSION
     assert [r["id"] for r in doc["running"]] == ["gate-comfyui"]
-    assert doc["evicted"] == {"llamacpp": 25.0}
+    assert doc["evicted"] == {"inference-engine-gpu": 25.0}
 
     broker.complete("gate-comfyui")
     doc = json.loads(path.read_text(encoding="utf-8"))
@@ -118,7 +118,7 @@ class CountingStore(SchedulerStateStore):
 def test_an_idle_lease_loop_tick_does_not_rewrite_the_file(tmp_path):
     """The lease loop sweeps every few seconds; the file changes only on a transition."""
     sched = Scheduler(32)
-    sched.cache_idle("llamacpp", 25)
+    sched.cache_idle("inference-engine-gpu", 25)
     store = CountingStore(tmp_path / "scheduler-state.json", Clock())
     broker = Broker(sched, MockBackend(), state_store=store)
     broker.request(Job("gate-comfyui", 18, "media", est_seconds=600))
@@ -155,7 +155,7 @@ def test_restart_mid_lease_keeps_the_resident_evicted_and_restores_it_on_drain(t
     clock = Clock()
     _old, old_broker = _controller(path, clock)
     old_broker.request(Job("gate-comfyui", 18, "media", est_seconds=600))
-    assert "llamacpp" in old_broker.backend.stopped
+    assert "inference-engine-gpu" in old_broker.backend.stopped
 
     # ops-controller is recreated 30s later; the render is still running.
     clock.now += 30
@@ -163,8 +163,8 @@ def test_restart_mid_lease_keeps_the_resident_evicted_and_restores_it_on_drain(t
     broker.restore_state()
     assert broker.state_persisted is True
     assert sched.running_ids == ["gate-comfyui"]
-    assert sched.evicted_residents == {"llamacpp": 25.0}
-    assert "llamacpp" not in sched.idle_cached
+    assert sched.evicted_residents == {"inference-engine-gpu": 25.0}
+    assert "inference-engine-gpu" not in sched.idle_cached
     assert broker.backend.started == [], "the resident was restored beside the running render"
     assert sched.status()["leased"] is True
     # the TTL survived the restart, minus the time that passed
@@ -175,7 +175,7 @@ def test_restart_mid_lease_keeps_the_resident_evicted_and_restores_it_on_drain(t
     assert broker.heartbeat("gate-comfyui") is True
     # ... and when it releases, the resident comes back
     broker.complete("gate-comfyui")
-    assert broker.backend.started == ["llamacpp"]
+    assert broker.backend.started == ["inference-engine-gpu"]
     assert sched.evicted_residents == {}
 
 
@@ -192,9 +192,9 @@ def test_a_queued_request_survives_the_restart(tmp_path):
     assert sched.queued_ids == ["render-b"]
     broker.complete("render-a")
     assert sched.running_ids == ["render-b"]
-    assert "llamacpp" not in broker.backend.started, "restored between back-to-back renders"
+    assert "inference-engine-gpu" not in broker.backend.started, "restored between back-to-back renders"
     broker.complete("render-b")
-    assert broker.backend.started[-1] == "llamacpp"
+    assert broker.backend.started[-1] == "inference-engine-gpu"
 
 
 def test_a_lease_whose_ttl_passed_while_down_is_swept_and_the_resident_restored(tmp_path):
@@ -208,7 +208,7 @@ def test_a_lease_whose_ttl_passed_while_down_is_swept_and_the_resident_restored(
     broker.restore_state()
     assert sched.running_ids == []
     assert sched.evicted_residents == {}
-    assert broker.backend.started == ["llamacpp"]
+    assert broker.backend.started == ["inference-engine-gpu"]
     assert json.loads(path.read_text(encoding="utf-8"))["running"] == []
 
 
@@ -217,11 +217,11 @@ def test_an_evicted_resident_with_no_lease_left_is_restored_on_startup(tmp_path)
     path = tmp_path / "scheduler-state.json"
     clock = Clock()
     path.write_text(json.dumps({"version": STATE_VERSION, "saved_at": clock.now, "running": [],
-                                "queued": [], "evicted": {"llamacpp": 25.0}, "rejected": []}),
+                                "queued": [], "evicted": {"inference-engine-gpu": 25.0}, "rejected": []}),
                     encoding="utf-8")
     sched, broker = _controller(path, clock)
     broker.restore_state()
-    assert broker.backend.started == ["llamacpp"]
+    assert broker.backend.started == ["inference-engine-gpu"]
     assert sched.evicted_residents == {}
 
 
@@ -230,7 +230,7 @@ def test_no_state_file_is_a_clean_start(tmp_path):
     sched, broker = _controller(path, Clock())
     broker.restore_state()
     assert sched.running_ids == [] and sched.evicted_residents == {}
-    assert sched.idle_cached == {"llamacpp": 25.0}
+    assert sched.idle_cached == {"inference-engine-gpu": 25.0}
     assert broker.backend.started == [] and broker.backend.stopped == []
     assert path.exists()
 
@@ -259,7 +259,7 @@ def test_corrupt_state_keeps_a_stopped_resident_evicted_under_a_recovery_lease(t
     path.write_text("{truncated", encoding="utf-8")
     sched, broker = _controller(path, Clock(), backend=RunningBackend(running=set()))
     broker.restore_state()
-    assert sched.evicted_residents == {"llamacpp": 25.0}
+    assert sched.evicted_residents == {"inference-engine-gpu": 25.0}
     assert sched.running_ids == [RECOVERY_JOB_ID]
     assert broker.backend.started == []
     assert "scheduler state" in capsys.readouterr().err.lower()
@@ -270,9 +270,9 @@ def test_corrupt_state_keeps_a_stopped_resident_evicted_under_a_recovery_lease(t
     sched.tick(sched.heartbeat_ttl + 1)
     broker.sweep_leases()
     assert sched.running_ids == ["gate-comfyui"]
-    assert "llamacpp" not in broker.backend.started
+    assert "inference-engine-gpu" not in broker.backend.started
     broker.complete("gate-comfyui")
-    assert broker.backend.started[-1] == "llamacpp"
+    assert broker.backend.started[-1] == "inference-engine-gpu"
 
 
 def test_corrupt_state_restores_the_resident_once_the_recovery_lease_expires(tmp_path):
@@ -282,7 +282,7 @@ def test_corrupt_state_restores_the_resident_once_the_recovery_lease_expires(tmp
     broker.restore_state()
     sched.tick(sched.heartbeat_ttl + 1)
     assert broker.sweep_leases() == [RECOVERY_JOB_ID]
-    assert broker.backend.started == ["llamacpp"]
+    assert broker.backend.started == ["inference-engine-gpu"]
 
 
 def test_corrupt_state_leaves_a_running_resident_alone(tmp_path):
@@ -290,10 +290,10 @@ def test_corrupt_state_leaves_a_running_resident_alone(tmp_path):
     that does not exist."""
     path = tmp_path / "scheduler-state.json"
     path.write_text("{truncated", encoding="utf-8")
-    sched, broker = _controller(path, Clock(), backend=RunningBackend(running={"llamacpp"}))
+    sched, broker = _controller(path, Clock(), backend=RunningBackend(running={"inference-engine-gpu"}))
     broker.restore_state()
     assert sched.running_ids == [] and sched.evicted_residents == {}
-    assert sched.idle_cached == {"llamacpp": 25.0}
+    assert sched.idle_cached == {"inference-engine-gpu": 25.0}
     assert broker.backend.stopped == []
 
 
@@ -302,6 +302,6 @@ def test_corrupt_state_with_docker_unreadable_assumes_the_worst(tmp_path):
     path.write_text("{truncated", encoding="utf-8")
     sched, broker = _controller(path, Clock(), backend=RunningBackend(fail=True))
     broker.restore_state()
-    assert sched.evicted_residents == {"llamacpp": 25.0}
+    assert sched.evicted_residents == {"inference-engine-gpu": 25.0}
     assert sched.running_ids == [RECOVERY_JOB_ID]
     assert broker.backend.started == []

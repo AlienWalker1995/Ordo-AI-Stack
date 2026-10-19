@@ -62,7 +62,7 @@ secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
 # whole file). COMFYUI_URL is the ComfyUI admission gate: the dialogue/reel/image publishers and the
 # baked comfyui skill submit to it. Without it they fall back to a
 # direct ComfyUI address, which bypasses the GPU lease. Rendered only while comfyui is enabled.
-# LLAMACPP_CTX_SIZE: the context window (llamacpp KV / gateway max_input_tokens / the dashboard
+# LLAMACPP_CTX_SIZE: the context window (inference-engine-gpu KV / gateway max_input_tokens / the dashboard
 # progress bar); the boot hook seeds it into $HERMES_HOME/config.yaml and refuses to start without it.
 # HERMES_MAX_TOKENS / HERMES_COMPRESSION_THRESHOLD_PERCENT (`site:` knobs, present only when set): the
 # boot hook seeds them into config.yaml; unset, it keeps its own defaults. Compaction triggers at that
@@ -87,7 +87,7 @@ environment:
   # else a hardcoded 600). config.yaml's `cron.idle_timeout_seconds` is NOT wired to the cron
   # watchdog — do not rely on it. Raised to 3000 so long single-slot local-chat turns (reel,
   # reel-metrics, job-monitor) aren't killed mid-generation. Real fix for the single-slot
-  # bottleneck is llamacpp parallelism / streaming; this stops the false-hang kills meanwhile.
+  # bottleneck is inference-engine-gpu parallelism / streaming; this stops the false-hang kills meanwhile.
   HERMES_CRON_TIMEOUT: ${HERMES_CRON_TIMEOUT:-3000}
   HERMES_API_MAX_RETRIES: ${HERMES_API_MAX_RETRIES:-10}
   # 24h — keeps the streaming stale-detector from killing slow local-model turns mid-flight.

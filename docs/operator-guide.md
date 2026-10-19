@@ -198,7 +198,7 @@ past (`removed_jobs`) and leaves a running one alone (`running_jobs`). The contr
 the checkout, so an edited config file (a declared `config_mounts:` bind, `ordo/render/bind_configs.py`)
 never makes it recreate a service. A service it recreates for its own reason still mounts the file as
 it is now: after an edit to `scripts/llamacpp/` that `ordo apply` has not deployed, a model switch
-starts llamacpp on the edited script, and the next `ordo apply` recreates llamacpp once more to
+starts inference-engine-gpu on the edited script, and the next `ordo apply` recreates inference-engine-gpu once more to
 record the new digest. `POST /apply`
 (`{"dry_run": true}` for the plan, else `{"confirm": true}`) applies whatever `out/` holds now. model-gateway and model-gateway-keys carry a digest of the
 `out/model-gateway/` files they read at startup (`ordo.rendered-config`), so an MCP toggle changes

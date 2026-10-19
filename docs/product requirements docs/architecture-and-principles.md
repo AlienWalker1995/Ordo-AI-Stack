@@ -209,14 +209,14 @@ dashboard iframe expects that prefix).
 | caddy | `${CADDY_BIND}:443`, `:8443`–`:8450` | The only host-published ports in the stack (eight total: the `:443` front door plus one per UI service). Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
 | oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`site: SSO_ALLOWED_EMAILS`); one domain-scoped session covers all eight Caddy ports |
 | open-webui | — | Reached at `https://<tailnet>:8443/` (its own port, served at its compiled root); needs model-gateway, qdrant |
-| dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs llamacpp, ops-controller, model-gateway |
+| dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs inference-engine-gpu, ops-controller, model-gateway |
 | agent (Hermes) | — | No UI; needs model-gateway, model-gateway-keys |
 | Hermes dashboard (in `agent`) | — | Reached at `https://<tailnet>:8447/` (served at its origin root, Hermes's own Google sign-in) |
 | model-gateway | — | No host port; reached internally at `http://model-gateway:11435` on `ordo-net`, and externally via Caddy `:443/llm/*` (bearer key, no SSO) |
 | litellm-db | — | Internal only; Postgres for LiteLLM virtual keys, teams and spend; reached at `litellm-db:5432` on `ordo-net` |
 | `mcp-*` (seven MCP servers) | — | No host port; on `ordo-mcp-net` (`internal: true`), reachable only by model-gateway, which serves them at `:443/mcp` (LiteLLM key, no SSO) |
 | ops-controller | — | Internal only; no host port |
-| llamacpp | — | Backend-only; no host port; GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/` |
+| inference-engine-gpu | — | Backend-only; no host port; GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/` |
 | qdrant | — | Internal only; reached at `http://qdrant:6333` on `ordo-net` |
 | searxng | — | Internal only; queried by the `searxng` MCP server at `http://searxng:8080` |
 | comfyui | — | Reached at `https://<tailnet>:8446/` (its own port, served at its compiled root) |
@@ -262,7 +262,7 @@ ordo-ai-stack/
 ├── config/              # Misc static config (e.g. comfyui-manager-seed.ini)
 ├── assets/              # Shared render/runtime helpers (lease-exec.py, tailscale-serve)
 ├── monitoring/          # Grafana + Prometheus config (monitoring plugin)
-├── scripts/             # llamacpp runtime assets, secrets flow, smoke tests, cron-run monitors
+├── scripts/             # inference-engine-gpu runtime assets, secrets flow, smoke tests, cron-run monitors
 ├── tests/               # Contract + smoke tests; render-substrate tests under tests/substrate/
 ├── docs/                # Getting started, runbooks, docs/product requirements docs/ (this documentation); docs/operator-guide.md is the authoritative operating guide
 ├── data/                # gitignored, runtime data

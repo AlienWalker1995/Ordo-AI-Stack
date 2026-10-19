@@ -37,9 +37,9 @@ OPS = {
     "/status": {"gpu": {"state": "idle", "running": [], "queued": [], "evicted_residents": {},
                         "rejected": [{"id": "train-lora", "reason": "needs 30 GB, 4 GB free"}]}},
     "/services": {"services": [
-        {"id": "llamacpp", "name": "ordo-llamacpp-1", "state": "exited", "health": None,
+        {"id": "inference-engine-gpu", "name": "ordo-inference-engine-gpu-1", "state": "exited", "health": None,
          "status": "Exited (137) 1 minute ago"},
-        {"id": "llamacpp-cpu", "name": "ordo-llamacpp-cpu-1", "state": "running", "health": "healthy",
+        {"id": "inference-engine-cpu", "name": "ordo-inference-engine-cpu-1", "state": "running", "health": "healthy",
          "status": "Up 3 hours (healthy)"},
         {"id": "open-webui", "name": "ordo-open-webui-1", "state": "running", "health": "healthy",
          "status": "Up 1 hour (healthy)"},
@@ -47,14 +47,14 @@ OPS = {
          "status": "Exited (0) 3 hours ago"},
     ]},
     "/registry/models": {"models": {
-        "local-chat": {"service": "llamacpp", "gpu_uuid": BIG, "source": {"file": GPU_FILE}},
+        "local-chat": {"service": "inference-engine-gpu", "gpu_uuid": BIG, "source": {"file": GPU_FILE}},
         "comfyui": {"service": "comfyui", "gpu_uuid": BIG},
         "voice-stt": {"service": "stt", "gpu_uuid": SMALL},
     }},
     "/model-config": {"source_model": "auto", "active_model": "turbo", "active_file": GPU_FILE, "ctx_size": 106496,
-                      "model_files": [{"file": GPU_FILE, "service": "llamacpp", "optional": False},
-                                      {"file": CPU_FILE, "service": "llamacpp-cpu", "optional": False},
-                                      {"file": EMBED_FILE, "service": "llamacpp-embed", "optional": False}],
+                      "model_files": [{"file": GPU_FILE, "service": "inference-engine-gpu", "optional": False},
+                                      {"file": CPU_FILE, "service": "inference-engine-cpu", "optional": False},
+                                      {"file": EMBED_FILE, "service": "inference-engine-embed", "optional": False}],
                       "available": [{"id": "turbo", "tier": "ultra", "vram_gb": 24, "file": GPU_FILE}]},
     "/jobs/history": {"history": [{"id": "train-lora", "kind": "train", "started": 100.0, "ended": 200.0,
                                    "outcome": "completed"}]},
@@ -98,15 +98,15 @@ COMFY_HISTORY = {"r1": {"status": {"status_str": "success", "messages": [["execu
                         "outputs": {"9": {"images": [{"filename": "ordo_00001_.png", "subfolder": "",
                                                       "type": "output"}]}}}}
 PROMETHEUS_RANGE = {"status": "success", "data": {"resultType": "matrix", "result": [
-    {"metric": {"job": "llamacpp"}, "values": [[1700000000, "21.5"], [1700000300, "22.9"]]},
-    {"metric": {"job": "llamacpp-cpu"}, "values": [[1700000000, "2.6"], [1700000300, "2.8"]]},
+    {"metric": {"job": "inference-engine-gpu"}, "values": [[1700000000, "21.5"], [1700000300, "22.9"]]},
+    {"metric": {"job": "inference-engine-cpu"}, "values": [[1700000000, "2.6"], [1700000300, "2.8"]]},
 ]}}
 STATS_SERVICES = {"gpu": {"total_gb": 34.2, "used_gb": 29.6, "utilization_pct": 97},
                   "services": {"open-webui": {"cpu_pct": 1.5, "mem_gb": 0.6, "mem_pct": 0.5, "vram_gb": 0.0,
                                               "vram_pct": 0.0, "running": True}},
                   "vram_aggregate_unavailable": False}
 # ControlPlane.apply_render's answer, which the switch passes on.
-APPLIED = {"dry_run": False, "recreated": ["llamacpp", "llamacpp-cpu", "model-gateway"], "stopped": [],
+APPLIED = {"dry_run": False, "recreated": ["inference-engine-gpu", "inference-engine-cpu", "model-gateway"], "stopped": [],
            "restart_required_on_host": ["agent"], "host_command": "ordo apply --only agent",
            "host_reasons": {"agent": "agent runs the control plane"}}
 

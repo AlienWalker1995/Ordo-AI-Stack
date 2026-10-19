@@ -154,7 +154,7 @@ def test_every_alert_has_a_known_severity_and_a_summary():
 def test_the_incidents_this_was_built_for_each_have_an_alert():
     names = {rule["alert"] for rule in _alerts()}
     assert {"Watchdog", "DiskUsageHigh", "ContainerRestartLoop", "ContainerUnhealthy", "GpuLeasePastTtl",
-            "GpuResidentEvictedWithoutLease", "LlamaCppDown", "TlsCertExpiring", "TargetDown",
+            "GpuResidentEvictedWithoutLease", "InferenceEngineGpuDown", "TlsCertExpiring", "TargetDown",
             "GpuTemperatureHigh", "GpuPowerAboveLimit"} <= names
 
 

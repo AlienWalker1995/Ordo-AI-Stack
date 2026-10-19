@@ -18,7 +18,7 @@ RECENT_MAX = 1000
 RECENT_MAX_AGE_S = 24 * 3600
 WINDOW_S = 300
 # The two chat engines always appear under "engines", even idle.
-ENGINES = ("llamacpp", "llamacpp-cpu")
+ENGINES = ("inference-engine-gpu", "inference-engine-cpu")
 
 _EVENT_FIELDS = ("call_id", "caller", "model_group", "model", "deployment", "prompt_tokens", "fallback")
 

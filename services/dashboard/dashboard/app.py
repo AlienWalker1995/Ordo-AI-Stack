@@ -219,7 +219,7 @@ _role_samples: dict[str, list[dict]] = {}         # {role: [{"tps", "ts", "model
 _ROLES = ("gpu-chat", "cpu-fallback", "embed")
 # The api_base host that served a completion names its service (the gateway sends it per sample);
 # the render's /model-config maps each loaded file to the same service ids.
-_ROLE_BY_SERVICE = {"llamacpp": "gpu-chat", "llamacpp-cpu": "cpu-fallback", "llamacpp-embed": "embed"}
+_ROLE_BY_SERVICE = {"inference-engine-gpu": "gpu-chat", "inference-engine-cpu": "cpu-fallback", "inference-engine-embed": "embed"}
 _MAX_SAMPLES_PER_MODEL = 500
 _MAX_TRACKED_MODELS = 50
 # v2: samples are timestamped dicts. v1 stored bare floats keyed largely by routing
@@ -568,7 +568,7 @@ async def work():
     body = _work_store.snapshot(time.time())
     for engine in body["engines"].values():
         engine["prefill"] = None
-    cpu = body["engines"]["llamacpp-cpu"]
+    cpu = body["engines"]["inference-engine-cpu"]
     # Read the CPU engine only while the fallback is serving something.
     if cpu["inflight"]:
         cpu["prefill"] = await _cpu_prefill()

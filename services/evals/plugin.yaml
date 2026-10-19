@@ -15,7 +15,7 @@
 #   - ops-controller / qdrant   OUT-OF-BAND ground truth for harness checks: the runner
 #                           verifies what Hermes did itself and never trusts Hermes's claim
 # No Docker socket, no host port, no GPU. GPU renders are out of scope by construction: no suite
-# asks for image/video generation, and llamacpp-bound work runs at concurrency 1.
+# asks for image/video generation, and work on inference-engine-gpu runs at concurrency 1.
 #
 # PRIVACY: the repo is public. This dir holds code, generic datasets and schemas only. Anything
 # derived from the operator's data (the private domain set built from Hermes's state.db, run

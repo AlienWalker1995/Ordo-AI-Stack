@@ -18,7 +18,7 @@ from .responses import CONFIRM_REQUIRED, confirmed, error
 from .source import StackSource, enabled_ids
 
 # Service plugins Hermes may install/enable on request (kind=service, profile-gated). The core
-# substrate (llamacpp, litellm-db, model-gateway, model-gateway-keys, ops-controller, dashboard,
+# substrate (inference-engine-gpu, litellm-db, model-gateway, model-gateway-keys, ops-controller, dashboard,
 # agent), the edge / front-door (edge, tailnet-names — secret-dependent, host `make up` only), and
 # the agent itself are NOT here, so they can never be created/removed via this path — the
 # allowlist is the security gate. Every kind=mcp plugin (an agent tool server) is installable as
@@ -26,7 +26,7 @@ from .source import StackSource, enabled_ids
 # through this same write path.
 INSTALLABLE_PLUGINS = frozenset({
     "comfyui", "song-gen", "voice", "rag", "open-webui", "monitoring",
-    "searxng-web", "codebase-memory-ui", "obsidian-livesync", "llamacpp-cpu",
+    "searxng-web", "codebase-memory-ui", "obsidian-livesync", "inference-engine-cpu",
 })
 
 

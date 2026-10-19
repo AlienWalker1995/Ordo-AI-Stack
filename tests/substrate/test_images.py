@@ -387,7 +387,7 @@ def test_render_pins_the_recorded_tag_and_leaves_the_rest_alone(tmp_path):
     assert refs["dashboard"] == "ordo/dashboard:current"            # not built yet
     # upstream and pinned images are untouched by the record
     assert refs["litellm-db"] == rc.compose_dict()["services"]["litellm-db"]["image"]
-    assert "@sha256:" in refs["llamacpp"] or refs["llamacpp"] == "ordo/llamacpp-patched:current"
+    assert "@sha256:" in refs["inference-engine-gpu"] or refs["inference-engine-gpu"] == "ordo/llamacpp-patched:current"
 
 
 def test_every_rendered_first_party_ref_is_current_or_recorded(tmp_path):
@@ -568,37 +568,37 @@ def test_cli_up_builds_by_default_and_no_build_turns_it_off(monkeypatch, tmp_pat
     assert len(seen) == 1
 
 
-def test_an_upstream_llamacpp_image_is_never_retagged_by_the_record(tmp_path):
+def test_an_upstream_engine_image_is_never_retagged_by_the_record(tmp_path):
     """Without a special build, llama.cpp runs the backend selector's digest-pinned upstream image.
     It is not an `ordo build` image, so no record entry, even one naming it, changes what render writes."""
     hardware = {"gpus": [], "ram_gb": 32, "cpu_cores": 8, "platform": "Linux"}
     rc = render(Source.from_dict({"hardware": hardware, "model": "auto", "plugins": "auto"}), CATALOG)
-    expected = rc.compose_dict()["services"]["llamacpp"]["image"]
+    expected = rc.compose_dict()["services"]["inference-engine-gpu"]["image"]
     assert "@sha256:" in expected
     images.save_record(tmp_path, {"ghcr.io/ggml-org/llama.cpp": "b" * 12,
                                   buildspec.image_ident(expected): "c" * 12})
     rc.write(tmp_path)
-    assert _compose_images(tmp_path)["llamacpp"] == expected
+    assert _compose_images(tmp_path)["inference-engine-gpu"] == expected
 
 
-def test_the_patched_llamacpp_build_is_pinned_to_its_recorded_tag(tmp_path):
+def test_the_patched_build_is_pinned_to_its_recorded_tag(tmp_path):
     """The patched sm_120 build a catalog `backend_image` names is first-party: `ordo build` builds it
     from services/llamacpp-patched and records the tag, and render pins the compose to it like every
     other first-party image."""
     rc = _rc(PROFILE_5090_SM120)
     assert rc.model.backend_image == "ordo/llamacpp-patched"
     rc.write(tmp_path)
-    assert _compose_images(tmp_path)["llamacpp"] == "ordo/llamacpp-patched:current"
+    assert _compose_images(tmp_path)["inference-engine-gpu"] == "ordo/llamacpp-patched:current"
     images.save_record(tmp_path, {"ordo/llamacpp-patched": "a" * 12})
     rc.write(tmp_path)
-    assert _compose_images(tmp_path)["llamacpp"] == "ordo/llamacpp-patched:" + "a" * 12
+    assert _compose_images(tmp_path)["inference-engine-gpu"] == "ordo/llamacpp-patched:" + "a" * 12
 
 
-def test_ordo_build_selects_the_patched_llamacpp_build(tmp_path):
+def test_ordo_build_selects_the_patched_build(tmp_path):
     rc = _rc(PROFILE_5090_SM120)
     rc.write(tmp_path)
     doc = yaml.safe_load((tmp_path / "docker-compose.yml").read_text(encoding="utf-8"))
-    assert images.select_images(doc, FIRST_PARTY, ["llamacpp"]) == ["ordo/llamacpp-patched"]
+    assert images.select_images(doc, FIRST_PARTY, ["inference-engine-gpu"]) == ["ordo/llamacpp-patched"]
     assert "ordo/llamacpp-patched" in images.select_images(doc, FIRST_PARTY, None)
     target = images.build_target("ordo/llamacpp-patched", FIRST_PARTY["ordo/llamacpp-patched"], ROOT)
     assert (target.context, target.dockerfile) == ("services/llamacpp-patched", "services/llamacpp-patched/Dockerfile")
@@ -640,12 +640,12 @@ def test_ordo_build_ninfer_tags_the_commit_and_records_it(tmp_path):
 
 
 def test_an_untagged_ninfer_backend_image_is_pinned_to_its_record_never_latest():
-    services = {"llamacpp": {"image": "ordo/ninfer"}}
+    services = {"inference-engine-gpu": {"image": "ordo/ninfer"}}
     image_tags.pin_first_party(services, FIRST_PARTY, {})
-    assert services["llamacpp"]["image"] == "ordo/ninfer:current"
-    services = {"llamacpp": {"image": "ordo/ninfer"}}
+    assert services["inference-engine-gpu"]["image"] == "ordo/ninfer:current"
+    services = {"inference-engine-gpu": {"image": "ordo/ninfer"}}
     image_tags.pin_first_party(services, FIRST_PARTY, {"ordo/ninfer": "0123456789ab"})
-    assert services["llamacpp"]["image"] == "ordo/ninfer:0123456789ab"
+    assert services["inference-engine-gpu"]["image"] == "ordo/ninfer:0123456789ab"
 
 
 def test_ninfer_is_fetched_by_its_full_commit_and_verified():

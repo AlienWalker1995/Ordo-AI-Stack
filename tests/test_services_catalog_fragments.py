@@ -79,8 +79,8 @@ def test_orders_are_unique():
 
 def test_derived_ops_service_map_is_exactly_the_pre_refactor_wiring():
     assert OPS_SERVICE_MAP == {
-        "llamacpp": "llamacpp",
-        "llamacpp-cpu": "llamacpp-cpu",
+        "inference-engine-gpu": "inference-engine-gpu",
+        "inference-engine-cpu": "inference-engine-cpu",
         "model-gateway": "model-gateway",
         "webui": "open-webui",
         "comfyui": "comfyui",

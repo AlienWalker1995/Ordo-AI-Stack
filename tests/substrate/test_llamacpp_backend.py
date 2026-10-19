@@ -194,9 +194,9 @@ def test_every_backend_image_is_one_pinned_upstream_build():
 
 
 def test_cpu_backend_is_the_same_digest_the_cpu_manifests_run():
-    # llamacpp-cpu and llamacpp-embed pin the CPU server build; the chat backend's CPU choice must
+    # inference-engine-cpu and inference-engine-embed pin the CPU server build; the chat backend's CPU choice must
     # be that same image, not a second CPU build that can drift from it.
-    for manifest in ("llamacpp-cpu", "rag"):
+    for manifest in ("inference-engine-cpu", "rag"):
         text = (ROOT / "services" / manifest / "plugin.yaml").read_text(encoding="utf-8")
         assert f"image: {llamacpp_backend.CPU.image}" in text, manifest
 
@@ -204,7 +204,7 @@ def test_cpu_backend_is_the_same_digest_the_cpu_manifests_run():
 def test_cpu_manifests_use_the_pinned_builds_load_flag():
     # The pinned build removed --no-mmap ("invalid argument: --no-mmap" and the server exits);
     # reading the weights fully into RAM is `--load-mode none` now.
-    for manifest in ("llamacpp-cpu", "rag"):
+    for manifest in ("inference-engine-cpu", "rag"):
         text = (ROOT / "services" / manifest / "plugin.yaml").read_text(encoding="utf-8")
         assert "- --no-mmap" not in text, manifest
 
@@ -331,15 +331,15 @@ def test_compute_target(target, tmp_path, monkeypatch):
     assert rc.env["LLAMACPP_GPU_LAYERS"] == ("-1" if backend.accelerated else "0")
 
     c = yaml.safe_load((out / "docker-compose.yml").read_text(encoding="utf-8"))
-    llamacpp = c["services"]["llamacpp"]
+    svc = c["services"]["inference-engine-gpu"]
     # a special build is first-party, so render pins its recorded tag (`current` before a build)
-    assert llamacpp["image"] == (f"{special_image}:current" if special_image else backend.image)
+    assert svc["image"] == (f"{special_image}:current" if special_image else backend.image)
     if backend_name == "cuda":
-        assert _nvidia_devices(llamacpp)
-        assert "devices" not in llamacpp
+        assert _nvidia_devices(svc)
+        assert "devices" not in svc
     else:
-        assert not _nvidia_devices(llamacpp)
-        assert llamacpp.get("devices", []) == list(backend.devices)
+        assert not _nvidia_devices(svc)
+        assert svc.get("devices", []) == list(backend.devices)
     if not hw.primary_is_nvidia:
         # No NVIDIA device request anywhere: Docker refuses to create a container that asks for
         # a driver the host does not have.
