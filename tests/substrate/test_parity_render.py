@@ -73,8 +73,8 @@ def test_parity_matrix_counts():
 def test_ported_services_carry_pins_and_healthchecks():
     # spot-check the exact V1 pins/healthchecks survived the port (no silent :latest drift)
     c = _dual().compose_dict()
-    assert c["services"]["qdrant"]["image"].startswith("qdrant/qdrant:v1.19.1@sha256:")
-    assert c["services"]["open-webui"]["image"].startswith("ghcr.io/open-webui/open-webui:v0.11.4@sha256:")
+    assert c["services"]["qdrant"]["image"].startswith("qdrant/qdrant:v1.19.2@sha256:")
+    assert c["services"]["open-webui"]["image"].startswith("ghcr.io/open-webui/open-webui:v0.12.3@sha256:")
     assert "@sha256:" in c["services"]["searxng"]["image"]         # searxng pinned by digest
     for svc in ("qdrant", "open-webui", "rag-ingestion"):
         assert "healthcheck" in c["services"][svc]
