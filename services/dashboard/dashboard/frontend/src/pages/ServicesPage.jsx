@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { BTN, BTN_DANGER, ConfirmDialog, Dot, Drawer, INPUT, Skeleton, Unavailable } from '../components/ui.jsx'
-import { useToast } from '../components/Toast.jsx'
+import { errorMeta, useToast } from '../components/Toast.jsx'
 import {
   CONFIRM_FAST_FOR_MS, CONFIRM_FAST_MS, CONFIRM_SLOW_MS, GIVE_UP_MS, isConfirmed, outcomeUnknown,
 } from './serviceActions.js'
@@ -380,9 +380,9 @@ function useRowActions(refreshTable, toast) {
     setStates(copy)
   }, [])
 
-  const fail = useCallback((id, state, message) => {
-    toast(`${rowLabel(state.before)}: ${message}`, 'error')
-    setRow(id, { ...state, phase: 'failed', note: `${VERB[state.action]} failed: ${message}` })
+  const fail = useCallback((id, state, error) => {
+    toast(`${rowLabel(state.before)}: ${error.message}`, 'error', errorMeta(error))
+    setRow(id, { ...state, phase: 'failed', note: `${VERB[state.action]} failed: ${error.message}` })
     refreshTable()
   }, [toast, setRow, refreshTable])
 
@@ -392,7 +392,7 @@ function useRowActions(refreshTable, toast) {
     try {
       await api.post(`${opsPath(row)}/${action}`)
     } catch (e) {
-      if (!outcomeUnknown(e)) { fail(row.id, requesting, e.message); return }
+      if (!outcomeUnknown(e)) { fail(row.id, requesting, e); return }
     }
     setRow(row.id, { ...requesting, phase: 'confirming', since: Date.now() })
   }, [setRow, fail])
@@ -520,7 +520,7 @@ export default function ServicesPage() {
 
   if (!table.data) {
     return table.error
-      ? <Unavailable>The service list is unavailable: {table.error.message}</Unavailable>
+      ? <Unavailable error={table.error}>The service list is unavailable: {table.error.message}</Unavailable>
       : <Skeleton className="h-64 w-full" />
   }
 

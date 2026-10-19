@@ -55,7 +55,7 @@ async def services():
         if svc.get("edge_check"):
             ok, err = await _check_via_edge(svc, client)
         elif svc.get("check"):
-            ok, err = await _check_service(svc["check"], client)
+            ok, err = await _check_service(svc["check"], client, card_id=svc["id"])
         else:
             ok, err = _container_health(svc["id"])
         # Server-owned Open link, one source of truth (no hostname guess in the browser), and
@@ -90,7 +90,8 @@ async def health():
         if svc.get("edge_check"):
             ok, err = await _check_via_edge(svc, client)
         else:
-            ok, err = await _check_service(svc["check"], client) if svc.get("check") else (None, "")
+            ok, err = (await _check_service(svc["check"], client, card_id=svc["id"])
+                       if svc.get("check") else (None, ""))
         return {"id": svc["id"], "ok": ok, "error": err}
 
     results = await asyncio.gather(*[_probe(s) for s in visible_services()])

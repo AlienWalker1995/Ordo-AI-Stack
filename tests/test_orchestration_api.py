@@ -208,17 +208,17 @@ class _MockAsyncClient:
     async def __aexit__(self, *a):
         return False
 
-    async def get(self, url, **kwargs):
+    async def request(self, method, url, **kwargs):
         for suffix, resp in self._responses.items():
             if url.endswith(suffix):
                 return resp
         return _MockResp({}, 404)
 
+    async def get(self, url, **kwargs):
+        return await self.request("GET", url, **kwargs)
+
     async def post(self, url, **kwargs):
-        for suffix, resp in self._responses.items():
-            if url.endswith(suffix):
-                return resp
-        return _MockResp({}, 404)
+        return await self.request("POST", url, **kwargs)
 
 
 @pytest.fixture
@@ -288,9 +288,9 @@ def ops_calls(monkeypatch):
 
     calls: list[str] = []
 
-    async def _ops_request(method, path, **_kwargs):
+    async def _ops_request_coded(method, path, **_kwargs):
         calls.append(path)
-        return 200, {"ok": True}
+        return 200, {"ok": True}, None
 
     class _RecordingClient:
         def __init__(self, *_a, **_k):
@@ -302,13 +302,15 @@ def ops_calls(monkeypatch):
         async def __aexit__(self, *_exc):
             return False
 
-        async def post(self, url, **_kwargs):
+        async def request(self, method, url, **_kwargs):
             calls.append(url)
             response = _FakeResp({"ok": True})
             response.status_code = 200
             return response
 
-    monkeypatch.setattr(dashboard_app, "_ops_request", _ops_request)
+    # _ops_proxy (the /api/ops/* routes) calls _ops_request_coded; the orchestration routes open
+    # their own httpx client and send through .request.
+    monkeypatch.setattr(dashboard_app, "_ops_request_coded", _ops_request_coded)
     monkeypatch.setattr(ro, "OPS_CONTROLLER_TOKEN", "tok")
     monkeypatch.setattr(ro.httpx, "AsyncClient", _RecordingClient)
     return calls

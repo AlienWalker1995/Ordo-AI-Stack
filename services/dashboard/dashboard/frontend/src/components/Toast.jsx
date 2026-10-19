@@ -1,11 +1,19 @@
 // Toast notifications, ported from the legacy `toast(msg, type)` helper: bottom-right
-// stack, auto-dismiss after 5s, click to dismiss. type is '' | 'success' | 'error'.
+// stack, auto-dismiss after 5s, click to dismiss. type is '' | 'success' | 'error'. An error toast
+// for a failed request passes the ApiError's code and trace id (errorMeta) so the operator can
+// find it on the Logs page.
 import { createContext, useCallback, useContext, useRef, useState } from 'react'
 
-/** @typedef {(msg: string, type?: '' | 'success' | 'error') => void} Toast */
+/** @typedef {{ code?: string | null, traceId?: string | null }} ToastMeta */
+/** @typedef {(msg: string, type?: '' | 'success' | 'error', meta?: ToastMeta) => void} Toast */
 
 /** @type {import('react').Context<Toast>} */
 const ToastContext = createContext(/** @type {Toast} */ (() => {}))
+
+/** The code and trace id a failed request's ApiError carries, for a toast's third argument. */
+export function errorMeta(error) {
+  return { code: error?.code ?? null, traceId: error?.traceId ?? null }
+}
 
 export function useToast() {
   return useContext(ToastContext)
@@ -19,9 +27,9 @@ export function ToastProvider({ children }) {
     setToasts((t) => t.filter((x) => x.id !== id))
   }, [])
 
-  const toast = useCallback((msg, type = '') => {
+  const toast = useCallback((msg, type = '', metadata = {}) => {
     const id = ++idRef.current
-    setToasts((t) => [...t, { id, msg, type }])
+    setToasts((t) => [...t, { id, msg, type, code: metadata.code, traceId: metadata.traceId }])
     setTimeout(() => remove(id), 5000)
   }, [remove])
 
@@ -53,6 +61,9 @@ export function ToastProvider({ children }) {
             onClick={() => remove(t.id)}
           >
             {t.msg}
+            {(t.code || t.traceId) && <span className="mt-1 block text-caption font-normal text-muted">
+              {[t.code, t.traceId && `Trace ${t.traceId}`].filter(Boolean).join(' · ')}
+            </span>}
           </button>
         ))}
       </div>

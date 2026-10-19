@@ -82,11 +82,13 @@ async def _ops_call(method: str, path: str, json: dict | None = None) -> tuple[i
     return await _ops_request(method, path, timeout=_RECREATE_TIMEOUT, **kwargs)
 
 
-async def _get_json(url: str, timeout: float = 10.0, dep: str = "PROBE") -> dict | None:
+async def _get_json(url: str, timeout: float = 10.0, *, dep: str) -> dict | None:
     """GET a dependency's JSON endpoint. A dependency being down is data, not an error page:
     transport failures, 5xx/AUTH answers and unparseable bodies degrade to None, each recorded
     with a DEP-<dep>-* code (dashboard/diagnostics.py). A 4xx other than AUTH means the
-    dependency answered — it is up, so it marks ok and still returns None."""
+    dependency answered — it is up, so it marks ok and still returns None. The dep must be
+    named: PROBE keeps its status per target, so a bare "PROBE" would raise from
+    diagnostics._status_key on the success path instead of degrading."""
     from dashboard import diagnostics
     from dashboard.app import _get_http_client
 

@@ -33,7 +33,7 @@ def ops_http(monkeypatch):
     """Stub the dashboard's shared HTTP client; `.request` is what forwards to ops-controller."""
     import dashboard.app  # noqa: F401  (load the module before patching it)
 
-    async def _stub_check(url: str, client=None):
+    async def _stub_check(url: str, client=None, *, card_id: str = ""):
         return (True, "")
 
     monkeypatch.setattr("dashboard.services_catalog._check_service", _stub_check)

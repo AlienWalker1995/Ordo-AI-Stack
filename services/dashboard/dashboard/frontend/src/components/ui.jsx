@@ -81,10 +81,13 @@ export function Meter({ value, tone = 'accent', label }) {
 }
 
 // Stated plainly instead of drawing zeros: a dependency that did not answer is not "0".
-export function Unavailable({ children }) {
+export function Unavailable({ children, error = null }) {
+  const code = error?.code
+  const traceId = error?.traceId
   return (
     <div role="status" className="rounded-sm border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.04] px-3 py-2 text-body text-fg-muted">
       {children}
+      {(code || traceId) && <span className="mt-1 block text-caption text-muted">{[code, traceId && `Trace ${traceId}`].filter(Boolean).join(' · ')}</span>}
     </div>
   )
 }

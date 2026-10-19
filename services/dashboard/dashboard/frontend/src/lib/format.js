@@ -50,3 +50,11 @@ export function pct(used, total) {
   if (!total) return 0
   return Math.max(0, Math.min(100, (used / total) * 100))
 }
+
+// A call's elapsed time from milliseconds: whole ms under 10 s ("734 ms"), else seconds with one
+// decimal ("12.3 s").
+export function formatElapsed(ms) {
+  if (ms == null || Number.isNaN(ms)) return '—'
+  const wholeMs = Math.round(ms)
+  return wholeMs < 10000 ? `${wholeMs} ms` : `${(ms / 1000).toFixed(1)} s`
+}

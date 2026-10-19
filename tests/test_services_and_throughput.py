@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 def client(monkeypatch):
     import dashboard.app as dashboard_app
 
-    async def _stub_check(url: str, client=None):
+    async def _stub_check(url: str, client=None, *, card_id: str = ""):
         return (True, "")
 
     monkeypatch.setattr("dashboard.services_catalog._check_service", _stub_check)

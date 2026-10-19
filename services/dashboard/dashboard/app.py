@@ -86,6 +86,13 @@ async def _global_exception_handler(request: Request, exc: Exception):
                         headers={"X-Trace-Id": trace})
 
 
+@app.exception_handler(diagnostics.DependencyHTTPException)
+async def _dependency_error_handler(request: Request, exc: diagnostics.DependencyHTTPException):
+    """An HTTP error a recorded dependency failure caused: detail as usual, plus its DEP code."""
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "code": exc.code},
+                        headers=exc.headers)
+
+
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     """Add CSP and security headers to reduce XSS token theft risk."""
@@ -696,8 +703,8 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
         )
     prompt = "Say 'ok' and nothing else."
     url = f"{MODEL_GATEWAY_URL.rstrip('/')}/v1/chat/completions"
+    started = time.perf_counter()
     try:
-        started = time.perf_counter()
         r = await _get_http_client().post(
             url,
             headers=_model_gateway_headers(),
@@ -710,7 +717,18 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
             timeout=60.0,
         )
         elapsed_ms = (time.perf_counter() - started) * 1000
-        if r.status_code == 400:
+        if r.status_code < 400:
+            try:
+                data = r.json()
+            except (ValueError, UnicodeDecodeError):
+                code = diagnostics.record_failure("GATEWAY", "BADPAYLOAD", "unparseable JSON response",
+                                                  target="/v1/chat/completions", elapsed_ms=elapsed_ms)
+                raise diagnostics.DependencyHTTPException(502, "Model gateway returned invalid JSON", code)
+            diagnostics.mark_ok("GATEWAY")
+        elif r.status_code == 400:
+            # A 400 means the gateway answered (a bad model name, for instance): mark it ok and
+            # pass the gateway's own message through.
+            diagnostics.mark_ok("GATEWAY")
             try:
                 err = r.json()
                 error_obj = err.get("error", err)
@@ -721,12 +739,23 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
             except (ValueError, UnicodeDecodeError, KeyError):
                 msg = r.text or "Bad request"
             raise HTTPException(status_code=400, detail=f"Model gateway: {msg}")
-        r.raise_for_status()
-        data = r.json()
+        else:
+            kind = diagnostics.classify_failure(status=r.status_code)
+            detail = f"Model gateway answered HTTP {r.status_code}"
+            if kind == "HTTP4XX":
+                diagnostics.mark_ok("GATEWAY")
+                raise HTTPException(status_code=502, detail=detail)
+            code = diagnostics.record_failure("GATEWAY", kind, f"HTTP {r.status_code}",
+                                              target="/v1/chat/completions", elapsed_ms=elapsed_ms)
+            raise diagnostics.DependencyHTTPException(502, detail, code)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Model gateway request failed: {e}")
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        code = diagnostics.record_failure("GATEWAY", diagnostics.classify_failure(e),
+                                          f"{type(e).__name__}: {e}", target="/v1/chat/completions",
+                                          elapsed_ms=elapsed_ms)
+        raise diagnostics.DependencyHTTPException(502, f"Model gateway request failed: {e}", code) from e
 
     usage = data.get("usage", {}) if isinstance(data, dict) else {}
     eval_count = int(usage.get("completion_tokens") or 0)
@@ -772,15 +801,29 @@ async def _ops_request(
     timeout: float = 30.0,
     **kwargs,
 ) -> tuple[int, dict]:
-    """Proxy request to ops controller. Returns (status_code, json_body).
+    """Proxy request to ops controller. Returns (status_code, json_body); see _ops_request_coded."""
+    status, data, _code = await _ops_request_coded(method, path, timeout=timeout, **kwargs)
+    return status, data
+
+
+async def _ops_request_coded(
+    method: str,
+    path: str,
+    *,
+    timeout: float = 30.0,
+    **kwargs,
+) -> tuple[int, dict, str | None]:
+    """Proxy request to ops controller. Returns (status_code, json_body, dep_code).
     Sends X-Request-ID (the request's trace id, unless a caller overrides it) for audit
     correlation, and records every failure with a DEP-OPS-* code (dashboard/diagnostics.py);
     a success — including a 4xx other than AUTH, which means the controller answered — marks OPS ok.
+    dep_code is the DEP code of the failure it recorded, None when it recorded none (_ops_proxy
+    passes it to the page).
     """
     if not OPS_CONTROLLER_TOKEN:
-        diagnostics.record_failure("OPS", "NOTCONFIGURED", "OPS_CONTROLLER_TOKEN not set",
-                                   target=path, elapsed_ms=0.0)
-        return 503, {"detail": "OPS_CONTROLLER_TOKEN not configured"}
+        code = diagnostics.record_failure("OPS", "NOTCONFIGURED", "OPS_CONTROLLER_TOKEN not set",
+                                          target=path, elapsed_ms=0.0)
+        return 503, {"detail": "OPS_CONTROLLER_TOKEN not configured"}, code
     url = f"{OPS_CONTROLLER_URL.rstrip('/')}{path}"
     extra = kwargs.pop("headers", {})
     # The trace id is the default; a caller may override it (the same convention as X-Actor below).
@@ -795,17 +838,17 @@ async def _ops_request(
         detail = f"ops-controller did not answer {method} {path} within {timeout:g} s"
         if method != "GET":
             detail += "; the action may still be running, so check the service before retrying"
-        diagnostics.record_failure("OPS", "TIMEOUT", detail, target=path, elapsed_ms=elapsed_ms)
-        return 503, {"detail": detail}
+        code = diagnostics.record_failure("OPS", "TIMEOUT", detail, target=path, elapsed_ms=elapsed_ms)
+        return 503, {"detail": detail}, code
     except Exception as e:
         elapsed_ms = (time.perf_counter() - started) * 1000
         # The class name plus the message: str(e) alone embeds internal hostnames and ports.
         detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
-        diagnostics.record_failure("OPS", diagnostics.classify_failure(e), detail,
-                                   target=path, elapsed_ms=elapsed_ms)
+        code = diagnostics.record_failure("OPS", diagnostics.classify_failure(e), detail,
+                                          target=path, elapsed_ms=elapsed_ms)
         # Reuse the sanitized detail in the body too: the raw exception text is exactly what
         # embeds internal hostnames and ports.
-        return 503, {"detail": diagnostics.sanitize_detail(detail)}
+        return 503, {"detail": diagnostics.sanitize_detail(detail)}, code
     elapsed_ms = (time.perf_counter() - started) * 1000
     try:
         data = r.json()
@@ -815,25 +858,27 @@ async def _ops_request(
             # A non-AUTH 4xx means ops-controller answered — it is up, so mark ok and pass the
             # body through, matching the parseable path below.
             diagnostics.mark_ok("OPS")
-            return r.status_code, data
+            return r.status_code, data, None
         # An unparseable body is a BADPAYLOAD failure on its own; only an unparseable 5xx/AUTH
         # keeps the status kind.
         kind = "BADPAYLOAD" if r.status_code < 500 and r.status_code not in (401, 403) \
             else diagnostics.classify_failure(status=r.status_code)
-        diagnostics.record_failure("OPS", kind, f"unparseable JSON body from {method} {path} (HTTP {r.status_code})",
-                                   target=path, elapsed_ms=elapsed_ms)
-        return r.status_code, data
+        code = diagnostics.record_failure(
+            "OPS", kind, f"unparseable JSON body from {method} {path} (HTTP {r.status_code})",
+            target=path, elapsed_ms=elapsed_ms)
+        return r.status_code, data, code
+    code = None
     if r.status_code >= 400:
         kind = diagnostics.classify_failure(status=r.status_code)
         if kind == "HTTP4XX":
             # A 4xx other than AUTH means ops-controller answered — it is up, so mark ok.
             diagnostics.mark_ok("OPS")
         else:
-            diagnostics.record_failure("OPS", kind, f"HTTP {r.status_code} from {method} {path}",
-                                       target=path, elapsed_ms=elapsed_ms)
+            code = diagnostics.record_failure("OPS", kind, f"HTTP {r.status_code} from {method} {path}",
+                                              target=path, elapsed_ms=elapsed_ms)
     else:
         diagnostics.mark_ok("OPS")
-    return r.status_code, data
+    return r.status_code, data, code
 
 
 # One docker start/stop/restart is 60 s at most in ops-controller (DockerBackend), and an owner
@@ -855,10 +900,14 @@ def _ops_error_detail(code: int, data: dict) -> str:
 
 
 async def _ops_proxy(method: str, path: str, request: Request, *, timeout: float, **kwargs) -> dict:
-    """An ops-controller call whose failure reaches the page as an HTTPException with its reason."""
-    code, data = await _ops_request(method, path, timeout=timeout, **kwargs)
-    if code >= 400:
-        raise HTTPException(status_code=code, detail=_ops_error_detail(code, data))
+    """An ops-controller call whose failure reaches the page as an HTTPException with its reason,
+    and with the DEP code when _ops_request recorded the failure."""
+    status, data, dep_code = await _ops_request_coded(method, path, timeout=timeout, **kwargs)
+    if status >= 400:
+        detail = _ops_error_detail(status, data)
+        if dep_code:
+            raise diagnostics.DependencyHTTPException(status, detail, dep_code)
+        raise HTTPException(status_code=status, detail=detail)
     return data
 
 
@@ -946,10 +995,19 @@ RAG_COLLECTION = os.environ.get("RAG_COLLECTION", "documents")
 
 async def rag_status():
     """Qdrant health and document collection stats."""
+    target = f"/collections/{RAG_COLLECTION}"
+    started = time.perf_counter()
     try:
-        r = await _get_http_client().get(f"{QDRANT_URL}/collections/{RAG_COLLECTION}", timeout=5.0)
+        r = await _get_http_client().get(f"{QDRANT_URL}{target}", timeout=5.0)
+        elapsed_ms = (time.perf_counter() - started) * 1000
         if r.status_code == 200:
-            info = r.json().get("result", {})
+            try:
+                info = r.json().get("result", {})
+            except (ValueError, UnicodeDecodeError) as e:
+                diagnostics.record_failure("QDRANT", "BADPAYLOAD", type(e).__name__, target=target,
+                                           elapsed_ms=elapsed_ms)
+                return {"ok": False, "error": "Invalid response from Qdrant"}
+            diagnostics.mark_ok("QDRANT")
             return {
                 "ok": True,
                 "collection": RAG_COLLECTION,
@@ -957,9 +1015,19 @@ async def rag_status():
                 "status": info.get("status", "unknown"),
             }
         if r.status_code == 404:
+            diagnostics.mark_ok("QDRANT")
             return {"ok": True, "collection": RAG_COLLECTION, "points_count": 0, "status": "empty"}
+        kind = diagnostics.classify_failure(status=r.status_code)
+        if kind == "HTTP4XX":
+            diagnostics.mark_ok("QDRANT")
+        else:
+            diagnostics.record_failure("QDRANT", kind, f"HTTP {r.status_code}", target=target,
+                                       elapsed_ms=elapsed_ms)
         return {"ok": False, "error": f"HTTP {r.status_code}"}
     except Exception as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        diagnostics.record_failure("QDRANT", diagnostics.classify_failure(e),
+                                   f"{type(e).__name__}: {e}", target=target, elapsed_ms=elapsed_ms)
         return {"ok": False, "error": str(e)}
 
 
@@ -986,9 +1054,17 @@ def _mib_to_gb(mib: int | None) -> float | None:
 async def _live_gpus() -> list[dict]:
     """ops-controller `GET /gpus`, the stack's one live GPU reader (ordo/render/gpu_live.py), in
     the /api/hardware `gpus` shape. The dashboard reserves no GPU and never probes one itself.
-    ops-controller unreachable or answering garbage -> [] (the GPU widgets show none)."""
+    ops-controller unreachable or answering garbage -> [] (the GPU widgets show none). A 200 whose
+    body is not an object records DEP-OPS-BADPAYLOAD (dashboard/diagnostics.py); transport and
+    status failures are already recorded by _ops_request."""
+    started = time.perf_counter()
     code, data = await _ops_request("GET", "/gpus", timeout=15.0)
+    elapsed_ms = (time.perf_counter() - started) * 1000
     if code != 200 or not isinstance(data, dict):
+        if code == 200:
+            diagnostics.record_failure("OPS", "BADPAYLOAD",
+                                       "ops-controller /gpus answered 200 without an object body",
+                                       target="/gpus", elapsed_ms=elapsed_ms)
         logger.debug("ops-controller /gpus answered %s: %s", code, data)
         return []
     gpus = []
