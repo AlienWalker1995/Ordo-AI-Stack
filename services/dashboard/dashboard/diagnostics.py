@@ -103,6 +103,18 @@ def _new_status() -> dict:
     return {"last_ok": None, "last_failure": None, "consecutive_failures": 0}
 
 
+def _is_failing(st: dict | None) -> bool:
+    """Whether a dependency's status currently reads 'failing' — its newest event is a failure.
+
+    Mirrors the failing branch of _status_row so record_failure can tell, before it updates the
+    status, whether this target was already down when the new failure arrived."""
+    if st is None:
+        return False
+    return st["last_failure"] is not None and (
+        st["last_ok"] is None or st["last_failure"]["at"] >= st["last_ok"]
+    )
+
+
 def new_trace_id() -> str:
     """A fresh trace id for a request the edge did not tag."""
     return uuid.uuid4().hex[:16]
@@ -160,6 +172,13 @@ def record_failure(dep: str, kind: str, detail: str, *, target: str, elapsed_ms:
     detail must be a short one-liner without tokens, headers or bodies; URLs are stripped
     (sanitize_detail) and the result truncated to _DETAIL_MAX characters. For a PER_TARGET_DEPS
     dependency the status is kept under (dep, target).
+
+    A repeat of the same (dep, target, kind) while that target is already failing refreshes the
+    newest matching ring entry instead of appending a fresh one: the hub probes run on every
+    /api/overview and /api/services/table poll, so a card that stays down would otherwise append
+    an entry per poll and evict the rarer OPS/GATEWAY/QDRANT events from the ring within minutes.
+    Coalesced, a persistent failure holds a single slot until it recovers (mark_ok) and fails
+    again, which starts a new entry. The status map still counts every failure.
     """
     key = _status_key(dep, target)
     code = f"DEP-{dep}-{kind}"
@@ -171,10 +190,25 @@ def record_failure(dep: str, kind: str, detail: str, *, target: str, elapsed_ms:
     )
     now = time.time()
     with _ring_lock:
-        _failures.append({
-            "at": now, "code": code, "dep": dep, "kind": kind, "trace": trace,
-            "target": target, "elapsed_ms": round(elapsed_ms, 1), "detail": detail,
-        })
+        existing = None
+        if _is_failing(_dep_status.get(key)):
+            # Newest matching entry first: the ring is oldest-first, so scan from the end.
+            for i in range(len(_failures) - 1, -1, -1):
+                e = _failures[i]
+                if e["dep"] == dep and e["target"] == target and e["kind"] == kind:
+                    existing = _failures.pop(i)
+                    break
+        if existing is not None:
+            existing.update({
+                "at": now, "trace": trace,
+                "elapsed_ms": round(elapsed_ms, 1), "detail": detail,
+            })
+            _failures.append(existing)
+        else:
+            _failures.append({
+                "at": now, "code": code, "dep": dep, "kind": kind, "trace": trace,
+                "target": target, "elapsed_ms": round(elapsed_ms, 1), "detail": detail,
+            })
         if len(_failures) > _RING_CAP:
             del _failures[: len(_failures) - _RING_CAP]
         st = _dep_status.setdefault(key, _new_status())

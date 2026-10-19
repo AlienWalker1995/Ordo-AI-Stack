@@ -112,12 +112,47 @@ def test_record_failure_strips_urls_from_the_detail_before_it_enters_the_ring():
 def test_ring_caps_at_200_newest_first_in_the_snapshot():
     from dashboard import diagnostics
 
+    # Distinct targets per call: coalescing only folds repeats of the SAME (dep, target, kind), so
+    # 205 different targets still fill the ring to its cap and evict the oldest five.
     for i in range(205):
-        diagnostics.record_failure("PROBE", "UNREACHABLE", f"probe {i}", target="/probe", elapsed_ms=1.0)
+        diagnostics.record_failure("PROBE", "UNREACHABLE", f"probe {i}", target=f"/probe-{i}", elapsed_ms=1.0)
     assert len(diagnostics._failures) == 200
     assert diagnostics._failures[0]["detail"] == "probe 5"      # the oldest five were evicted
     recent = diagnostics.snapshot()["recent"]
     assert recent[0]["detail"] == "probe 204"                   # newest first
+
+
+def test_repeated_failure_for_the_same_target_coalesces_into_one_ring_entry():
+    # A card that stays down is probed on every /api/overview and /api/services/table poll; without
+    # coalescing each poll appends a fresh DEP-PROBE-* entry and ~17 minutes of one down card evict
+    # the rarer OPS/GATEWAY/QDRANT events from the ring. N record_failure calls for the same
+    # (dep, target, kind) must produce fewer than N ring entries — here exactly one.
+    from dashboard import diagnostics
+
+    n = 50
+    for i in range(n):
+        diagnostics.record_failure("PROBE", "UNREACHABLE", f"probe {i}", target="langfuse", elapsed_ms=1.0)
+    assert len(diagnostics._failures) < n
+    assert len(diagnostics._failures) == 1
+    # The single entry carries the LATEST occurrence, not the first.
+    assert diagnostics._failures[0]["detail"] == f"probe {n - 1}"
+    # ...and the status still counts every failure, so 'Failures in a row' keeps climbing.
+    assert diagnostics._dep_status[("PROBE", "langfuse")]["consecutive_failures"] == n
+
+
+def test_coalesced_failure_starts_a_new_entry_after_recovery():
+    # While failing, repeats refresh one entry; once the target answers (mark_ok) the next failure
+    # is a fresh incident and gets its own entry — a persistent failure holds one slot until it
+    # recovers and fails again.
+    from dashboard import diagnostics
+
+    diagnostics.record_failure("PROBE", "UNREACHABLE", "down 1", target="langfuse", elapsed_ms=1.0)
+    diagnostics.record_failure("PROBE", "UNREACHABLE", "down 2", target="langfuse", elapsed_ms=1.0)
+    assert len(diagnostics._failures) == 1
+    diagnostics.mark_ok("PROBE", "langfuse")
+    diagnostics.record_failure("PROBE", "UNREACHABLE", "down again", target="langfuse", elapsed_ms=1.0)
+    assert len(diagnostics._failures) == 2
+    assert diagnostics._failures[-1]["detail"] == "down again"
 
 
 def test_mark_ok_resets_consecutive_failures():
