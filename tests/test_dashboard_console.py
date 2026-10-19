@@ -37,21 +37,21 @@ HW_GPUS = [
 ]
 REGISTRY = {
     "comfyui": {"id": "comfyui", "kind": "comfyui", "service": "comfyui", "gpu_uuid": BIG},
-    "local-chat": {"id": "local-chat", "kind": "chat", "service": "llamacpp", "gpu_uuid": BIG,
+    "local-chat": {"id": "local-chat", "kind": "chat", "service": "inference-engine-gpu", "gpu_uuid": BIG,
                    "source": {"file": GPU_FILE}, "config": {"ctx": 106496, "mmproj": f"/models/{MMPROJ_FILE}"}},
-    "local-embed": {"id": "local-embed", "kind": "embedding", "service": "llamacpp-embed", "gpu_uuid": BIG},
+    "local-embed": {"id": "local-embed", "kind": "embedding", "service": "inference-engine-embed", "gpu_uuid": BIG},
     "voice-stt": {"id": "voice-stt", "kind": "stt", "service": "stt", "gpu_uuid": SMALL},
     "voice-tts": {"id": "voice-tts", "kind": "tts", "service": "tts", "gpu_uuid": SMALL},
 }
 IDLE = {"state": "idle", "running": [], "queued": [], "evicted_residents": {}, "rejected": []}
 RENDERING = {"state": "busy", "running": [{"id": "gate-comfyui", "kind": "media", "vram_gb": 31.8}],
-             "queued": [], "evicted_residents": {"llamacpp": 27.5}, "rejected": []}
+             "queued": [], "evicted_residents": {"inference-engine-gpu": 27.5}, "rejected": []}
 
 
 def containers(**states):
     rows = {
-        "llamacpp": {"id": "llamacpp", "state": "running", "health": None, "status": "Up 3 hours"},
-        "llamacpp-cpu": {"id": "llamacpp-cpu", "state": "running", "health": "healthy",
+        "inference-engine-gpu": {"id": "inference-engine-gpu", "state": "running", "health": None, "status": "Up 3 hours"},
+        "inference-engine-cpu": {"id": "inference-engine-cpu", "state": "running", "health": "healthy",
                          "status": "Up 3 hours (healthy)"},
     }
     for sid, row in states.items():
@@ -124,21 +124,21 @@ def test_chat_runs_on_the_gpu_when_nothing_has_borrowed_it():
 
 
 def test_chat_falls_back_to_cpu_while_a_render_holds_the_gpu():
-    engine = console.chat_engine(RENDERING, containers(llamacpp={"state": "exited", "status": "Exited (137) 1 minute ago"}))
+    engine = console.chat_engine(RENDERING, containers(inference_engine_gpu={"state": "exited", "status": "Exited (137) 1 minute ago"}))
     assert engine["engine"] == "cpu"
     assert "ComfyUI" in engine["reason"]
 
 
 def test_chat_falls_back_to_cpu_when_the_gpu_server_is_down():
-    engine = console.chat_engine(IDLE, containers(llamacpp={"state": "exited", "status": "Exited (1) 1 minute ago"}))
+    engine = console.chat_engine(IDLE, containers(inference_engine_gpu={"state": "exited", "status": "Exited (1) 1 minute ago"}))
     assert engine["engine"] == "cpu"
     assert "not running" in engine["reason"]
 
 
 def test_no_chat_engine_when_both_servers_are_down():
     engine = console.chat_engine(IDLE, containers(
-        llamacpp={"state": "exited", "status": "Exited (1) now"},
-        llamacpp_cpu={"state": "exited", "status": "Exited (1) now"},
+        inference_engine_gpu={"state": "exited", "status": "Exited (1) now"},
+        inference_engine_cpu={"state": "exited", "status": "Exited (1) now"},
     ))
     assert engine["engine"] == "none"
 
@@ -185,9 +185,9 @@ def test_a_rejected_gpu_job_is_an_alert():
 def test_a_model_evicted_for_a_render_is_not_an_alert():
     # While a render borrows the GPU the resident chat server is stopped on purpose: its probe
     # fails and its container is down, and the page already says chat is on the CPU fallback.
-    cards = [{"id": "llamacpp", "ops_service": "llamacpp", "name": "llama.cpp (GPU)", "ok": False,
+    cards = [{"id": "inference-engine-gpu", "ops_service": "inference-engine-gpu", "name": "llama.cpp (GPU)", "ok": False,
               "error": "[Errno -2] Name or service not known"}]
-    rows = containers(llamacpp={"state": "exited", "status": "Exited (137) 5 seconds ago"})
+    rows = containers(inference_engine_gpu={"state": "exited", "status": "Exited (137) 5 seconds ago"})
     items = console.build_attention(cards, rows, {"disk_pct": 10, "ram_pct": 10}, RENDERING)
     assert items == []
     # the same failure with no render holding the GPU is a real problem
@@ -280,7 +280,7 @@ def _audit(action, target="", **fields):
     (_audit("model_config", "qwen"), "Switched model to qwen"),
     (_audit("models.download", "w.safetensors"), "Started download of w.safetensors"),
     (_audit("stop", "n8n", dry_run=True), "Stopped n8n (dry run)"),
-    (_audit("start", "llamacpp", result="refused", status=409), "Started llamacpp (refused)"),
+    (_audit("start", "inference-engine-gpu", result="refused", status=409), "Started inference-engine-gpu (refused)"),
     (_audit("restart", "n8n", result="error", status=500), "Restarted n8n (failed)"),
 ])
 def test_activity_titles_every_recorded_verb(entry, title):
@@ -307,10 +307,10 @@ def test_activity_is_capped():
 
 # The render's answer (ops-controller /model-config): every file a rendered service loads.
 MODEL_FILES = [
-    {"file": GPU_FILE, "service": "llamacpp", "optional": False},
-    {"file": MMPROJ_FILE, "service": "llamacpp", "optional": True},
-    {"file": CPU_FILE, "service": "llamacpp-cpu", "optional": False},
-    {"file": EMBED_FILE, "service": "llamacpp-embed", "optional": False},
+    {"file": GPU_FILE, "service": "inference-engine-gpu", "optional": False},
+    {"file": MMPROJ_FILE, "service": "inference-engine-gpu", "optional": True},
+    {"file": CPU_FILE, "service": "inference-engine-cpu", "optional": False},
+    {"file": EMBED_FILE, "service": "inference-engine-embed", "optional": False},
 ]
 MODEL_CONFIG = {
     "active_model": "qwen3.8-27b-turbo-fable-q6", "active_file": GPU_FILE, "ctx_size": 106496,
@@ -385,8 +385,8 @@ def test_after_a_switch_the_new_projector_is_in_use_and_the_old_one_is_not():
     """The render names the projector the next load uses. The retired registry file kept naming
     the old one, which left the new projector deletable while llama.cpp was evicted."""
     switched = {**MODEL_CONFIG, "active_mmproj": "new-vision.gguf", "model_files": [
-        {"file": GPU_FILE, "service": "llamacpp", "optional": False},
-        {"file": "new-vision.gguf", "service": "llamacpp", "optional": True},
+        {"file": GPU_FILE, "service": "inference-engine-gpu", "optional": False},
+        {"file": "new-vision.gguf", "service": "inference-engine-gpu", "optional": True},
     ]}
     used = console.in_use_files({"gpu": None, "cpu": None, "embed": None}, switched)
     assert "new-vision.gguf" in used and MMPROJ_FILE not in used

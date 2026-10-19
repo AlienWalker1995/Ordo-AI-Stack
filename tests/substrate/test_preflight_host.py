@@ -20,7 +20,7 @@ NVIDIA = {"deploy": {"resources": {"reservations": {"devices": [
     {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}]}}}}
 
 SERVICES = {
-    "llamacpp": {"image": "x", **NVIDIA, "environment": {"A": "1"}},
+    "inference-engine-gpu": {"image": "x", **NVIDIA, "environment": {"A": "1"}},
     "model-gateway": {"image": "x", "environment": {"LITELLM_MASTER_KEY": "${LITELLM_MASTER_KEY}"}},
     "comfyui": {"image": "x", "environment": {"HF_TOKEN": "${HF_TOKEN:-}"}},
     "open-webui": {"image": "x", "ports": ["127.0.0.1:8443:8080"]},
@@ -77,7 +77,7 @@ def test_nvidia_runtime_is_required_when_the_render_reserves_a_gpu(tmp_path):
     facts = HostFacts(**{**READY.__dict__, "runtimes": frozenset({"runc"})})
     check = _checks(tmp_path, facts=facts)["NVIDIA container runtime present"]
     assert check.blocking and not check.ok
-    assert "llamacpp" in check.detail
+    assert "inference-engine-gpu" in check.detail
 
 
 def test_nvidia_runtime_is_not_needed_without_a_gpu_reservation(tmp_path):

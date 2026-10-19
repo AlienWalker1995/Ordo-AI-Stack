@@ -1,7 +1,7 @@
 """The GPU residents the scheduler holds as reclaimable, and the VRAM each one holds.
 
 Registration is DERIVED from the declared GPU inventory of the render (ordo/render/gpu.py), not from
-a `--resident-service llamacpp` default: every service that declares it holds VRAM on the primary
+a `--resident-service inference-engine-gpu` default: every service that declares it holds VRAM on the primary
 device and may be reclaimed is registered as idle-cached, so a burst request can actually evict it.
 An unregistered resident's VRAM looks free and the scheduler admits a job into space that is already
 taken. Secondary-device residents (the 1070's voice models) are excluded on purpose, and a

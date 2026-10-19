@@ -79,7 +79,7 @@ what was observed.
 | `GpuLeasePastTtl` | critical | a GPU lease sits past its TTL for 5 min (the lease sweep is failing) |
 | `GpuResidentEvictedWithoutLease` | critical | llama.cpp (or another resident) is evicted with no lease running or queued, for 10 min |
 | `GpuResidentEvictedLong` | warning | a resident has been evicted for 2 hours (longest observed render: 54 min) |
-| `LlamaCppDown` | critical | llama.cpp is unscrapable for 10 min and not evicted for a lease |
+| `InferenceEngineGpuDown` | critical | the GPU chat backend is unscrapable for 10 min and not evicted for a lease |
 | `TargetDown` | warning | any other scrape target is down for 15 min |
 | `GpuTemperatureHigh` | warning / critical | a GPU at 80 C for 5 min / 88 C for 2 min (observed max: 65 C) |
 | `GpuPowerAboveLimit` | warning | a GPU's 5-min average draw is over 1.05x its enforced power limit for 5 min |

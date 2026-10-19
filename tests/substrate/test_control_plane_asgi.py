@@ -147,7 +147,7 @@ def test_post_plugin_enable_valid_returns_200(tmp_path):
 def test_post_plugin_enable_not_installable_returns_403(tmp_path):
     cp, _ = _cp(tmp_path)
     client = _client(cp)
-    resp = client.post("/plugins/llamacpp/enable", json={"confirm": True})
+    resp = client.post("/plugins/inference-engine-gpu/enable", json={"confirm": True})
     assert resp.status_code == 403
     body = resp.json()
     assert "error" in body
@@ -180,7 +180,7 @@ def test_post_plugin_disable_under_plugins_auto_returns_409(tmp_path):
 def test_post_plugin_disable_not_installable_returns_403(tmp_path):
     cp, _ = _cp(tmp_path)
     client = _client(cp)
-    resp = client.post("/plugins/llamacpp/disable", json={"confirm": True})
+    resp = client.post("/plugins/inference-engine-gpu/disable", json={"confirm": True})
     assert resp.status_code == 403
     assert "error" in resp.json()
 
@@ -347,11 +347,11 @@ def test_unknown_path_returns_404(tmp_path):
 # Every route that refuses to act without {"confirm": true}.
 CONFIRM_GATED_ROUTES = [
     "/apply",
-    "/services/llamacpp/start",
-    "/services/llamacpp/stop",
-    "/services/llamacpp/restart",
-    "/services/llamacpp/recreate",
-    "/containers/ordo-llamacpp-1/restart",
+    "/services/inference-engine-gpu/start",
+    "/services/inference-engine-gpu/stop",
+    "/services/inference-engine-gpu/restart",
+    "/services/inference-engine-gpu/recreate",
+    "/containers/ordo-inference-engine-gpu-1/restart",
     "/compose/up",
     "/compose/down",
     "/compose/restart",
@@ -398,9 +398,9 @@ def test_a_plugin_dry_run_names_the_change_and_writes_nothing(tmp_path, verb):
 
 def test_confirm_true_passes_the_gate(tmp_path):
     cp, _ = _cp(tmp_path)
-    resp = _client(cp).post("/services/llamacpp/stop", json={"confirm": True})
+    resp = _client(cp).post("/services/inference-engine-gpu/stop", json={"confirm": True})
     assert resp.status_code == 200
-    assert cp.broker.backend.stopped == ["llamacpp"]
+    assert cp.broker.backend.stopped == ["inference-engine-gpu"]
 
 
 # --- A JSON body that is not an object ---
@@ -410,7 +410,7 @@ def test_a_json_body_that_is_not_an_object_is_a_400(tmp_path, raw):
     cp, _ = _cp(tmp_path)
     client = TestClient(cp.app(auth_token=TOKEN), raise_server_exceptions=False,
                         headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
-    resp = client.post("/services/llamacpp/stop", content=raw)
+    resp = client.post("/services/inference-engine-gpu/stop", content=raw)
     assert resp.status_code == 400
     assert resp.json() == {"error": "JSON body must be an object"}
     assert cp.broker.backend.stopped == []

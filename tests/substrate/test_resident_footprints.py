@@ -37,7 +37,7 @@ from ordo.render.plugins import PluginRegistry
 assert isinstance(CATALOG, Catalog) and isinstance(REGISTRY, PluginRegistry)
 
 
-def _footprint(cp: ControlPlane, service: str = "llamacpp") -> float:
+def _footprint(cp: ControlPlane, service: str = "inference-engine-gpu") -> float:
     """What the render the control plane reads now declares for `service`."""
     return gpu.primary_residents(cp._render().gpu_inventory())[service]
 
@@ -63,58 +63,58 @@ def _stack(tmp_path, model=SMALL_CTX_MODEL, state_path=None):
 
 def test_the_scheduler_adopts_a_new_footprint_for_an_idle_resident():
     sched = Scheduler(32)
-    sched.cache_idle("llamacpp", 27.5)
-    sched.cache_idle("llamacpp-embed", 1.0)
+    sched.cache_idle("inference-engine-gpu", 27.5)
+    sched.cache_idle("inference-engine-embed", 1.0)
 
-    changed = sched.update_resident_footprints({"llamacpp": 30.16, "llamacpp-embed": 1.0})
+    changed = sched.update_resident_footprints({"inference-engine-gpu": 30.16, "inference-engine-embed": 1.0})
 
-    assert changed == {"llamacpp": (27.5, 30.16)}
-    assert sched.idle_cached == {"llamacpp": 30.16, "llamacpp-embed": 1.0}
+    assert changed == {"inference-engine-gpu": (27.5, 30.16)}
+    assert sched.idle_cached == {"inference-engine-gpu": 30.16, "inference-engine-embed": 1.0}
     assert sched.free_vram_gb == 32 - 31.16
-    assert sched.update_resident_footprints({"llamacpp": 30.16, "llamacpp-embed": 1.0}) == {}
+    assert sched.update_resident_footprints({"inference-engine-gpu": 30.16, "inference-engine-embed": 1.0}) == {}
 
 
 def test_an_evicted_resident_takes_the_new_footprint_and_a_new_resident_is_registered():
     sched = Scheduler(32)
-    sched.cache_idle("llamacpp", 27.5)
+    sched.cache_idle("inference-engine-gpu", 27.5)
     sched.submit(Job("render", 31, "media"))
     sched.pump()
-    assert sched.evicted_residents == {"llamacpp": 27.5}
+    assert sched.evicted_residents == {"inference-engine-gpu": 27.5}
 
-    changed = sched.update_resident_footprints({"llamacpp": 30.16, "llamacpp-embed": 1.0})
+    changed = sched.update_resident_footprints({"inference-engine-gpu": 30.16, "inference-engine-embed": 1.0})
 
-    assert changed == {"llamacpp": (27.5, 30.16), "llamacpp-embed": (0.0, 1.0)}
-    assert sched.evicted_residents == {"llamacpp": 30.16}   # restored at its true size
-    assert sched.idle_cached == {"llamacpp-embed": 1.0}
+    assert changed == {"inference-engine-gpu": (27.5, 30.16), "inference-engine-embed": (0.0, 1.0)}
+    assert sched.evicted_residents == {"inference-engine-gpu": 30.16}   # restored at its true size
+    assert sched.idle_cached == {"inference-engine-embed": 1.0}
 
 
 # --- path 1: a control-plane apply ------------------------------------------------------------------------
 
 def test_a_model_switch_through_the_control_plane_registers_the_new_footprint(tmp_path):
     cp, _backend, _source, _out = _stack(tmp_path)
-    old = cp.scheduler.idle_cached["llamacpp"]
+    old = cp.scheduler.idle_cached["inference-engine-gpu"]
     status, body = cp.route("POST", "/model-config", {"model": LARGE_CTX_MODEL})
     assert status == 200, body
     new = _footprint(cp)
     assert new != old
-    assert cp.scheduler.idle_cached["llamacpp"] == new
+    assert cp.scheduler.idle_cached["inference-engine-gpu"] == new
 
 
 def test_a_dry_run_apply_changes_no_footprint(tmp_path):
     cp, _backend, source, out = _stack(tmp_path)
-    old = cp.scheduler.idle_cached["llamacpp"]
+    old = cp.scheduler.idle_cached["inference-engine-gpu"]
     _write_source(source, model=LARGE_CTX_MODEL)
     cp._render().write(out)
     status, body = cp.route("POST", "/apply", {"dry_run": True})
     assert status == 200, body
-    assert cp.scheduler.idle_cached["llamacpp"] == old
+    assert cp.scheduler.idle_cached["inference-engine-gpu"] == old
 
 
 # --- path 2: the host's `ordo apply` (out/ rewritten on the host, the control plane not called) ------------
 
 def test_the_lease_loop_adopts_a_render_the_host_wrote(tmp_path):
     cp, _backend, source, out = _stack(tmp_path)
-    old = cp.scheduler.idle_cached["llamacpp"]
+    old = cp.scheduler.idle_cached["inference-engine-gpu"]
     assert cp.residents.adopt_if_render_changed() is None       # nothing changed: no re-render
 
     # the host edits the source and renders out/, as `ordo apply` does, then recreates llama.cpp
@@ -123,8 +123,8 @@ def test_the_lease_loop_adopts_a_render_the_host_wrote(tmp_path):
 
     changed = cp.residents.adopt_if_render_changed()
     new = _footprint(cp)
-    assert changed == {"llamacpp": (old, new)}
-    assert cp.scheduler.idle_cached["llamacpp"] == new
+    assert changed == {"inference-engine-gpu": (old, new)}
+    assert cp.scheduler.idle_cached["inference-engine-gpu"] == new
     assert cp.residents.adopt_if_render_changed() is None       # adopted once
 
 
@@ -134,7 +134,7 @@ def test_a_restart_reconciles_a_persisted_evicted_footprint_with_the_render(tmp_
     state = tmp_path / "scheduler-state.json"
     cp, backend, source, out = _stack(tmp_path, state_path=state)
     cp.broker.request(Job("render", 31, "media", est_seconds=600))
-    old = cp.scheduler.evicted_residents["llamacpp"]
+    old = cp.scheduler.evicted_residents["inference-engine-gpu"]
 
     # while the resident is evicted the source moves to a bigger model (a hand edit, say), and
     # ops-controller restarts: the state file still holds the old footprint
@@ -147,9 +147,9 @@ def test_a_restart_reconciles_a_persisted_evicted_footprint_with_the_render(tmp_
     new = _footprint(cp2)
     assert new != old
     assert scheduler.running_ids == ["render"]
-    assert scheduler.evicted_residents["llamacpp"] == new
+    assert scheduler.evicted_residents["inference-engine-gpu"] == new
     # and the file now says so, for the next restart
-    assert yaml.safe_load(state.read_text(encoding="utf-8"))["evicted"]["llamacpp"] == new
+    assert yaml.safe_load(state.read_text(encoding="utf-8"))["evicted"]["inference-engine-gpu"] == new
 
 
 def test_start_residents_registers_every_primary_resident_from_the_render(tmp_path):

@@ -43,11 +43,11 @@ def test_docker_backend_scopes_to_its_project_via_compose_service_name():
     d = DockerBackend(project="ordo")
     # a bare compose service name passes through — the container is resolved by the compose-project
     # LABEL filter (in _resolve), which structurally can only match containers in this project.
-    assert d._guard("llamacpp") == "llamacpp"
+    assert d._guard("inference-engine-gpu") == "inference-engine-gpu"
     assert d._guard("codebase-memory-ui") == "codebase-memory-ui"        # dashes in a service name are fine
     # a fully-qualified container name for THIS project is normalized back to the bare service
     # (strips the project prefix AND the -N replica suffix) so the label filter matches exactly.
-    assert d._guard("ordo-llamacpp-1") == "llamacpp"
+    assert d._guard("ordo-inference-engine-gpu-1") == "inference-engine-gpu"
     assert d._guard("ordo-agent") == "agent"
     # anything shaped like a raw path / not a bare service name is refused (belt-and-braces)
     import pytest
@@ -60,37 +60,37 @@ def test_docker_backend_scopes_to_its_project_via_compose_service_name():
 
 def _broker_with_resident(total=32, resident_gb=25):
     s = Scheduler(total)
-    s.cache_idle("llamacpp", resident_gb)
+    s.cache_idle("inference-engine-gpu", resident_gb)
     return Broker(s, MockBackend())
 
 
 def test_media_lease_stops_resident_then_restarts_it_on_completion():
     b = _broker_with_resident()
-    b.request(Job("render", 18, "media"))                 # evicts llamacpp -> stop; starts render
-    assert "llamacpp" in b.backend.stopped
+    b.request(Job("render", 18, "media"))                 # evicts inference-engine-gpu -> stop; starts render
+    assert "inference-engine-gpu" in b.backend.stopped
     assert "render" in b.backend.started
     b.backend.started.clear()                            # focus on what completion does
     b.complete("render")                                   # media done -> restore the resident
     assert "render" in b.backend.stopped                   # the job container is stopped
-    assert b.backend.started == ["llamacpp"]             # resident RESTARTED by the broker
+    assert b.backend.started == ["inference-engine-gpu"]             # resident RESTARTED by the broker
 
 
 def test_no_resident_restart_between_back_to_back_renders():
     b = _broker_with_resident()
-    b.request(Job("render1", 18, "media"))                # render1 runs (llamacpp stopped)
+    b.request(Job("render1", 18, "media"))                # render1 runs (inference-engine-gpu stopped)
     b.request(Job("render2", 18, "media"))                # render2 queued
     b.backend.started.clear()
     b.complete("render1")                                  # render2 admitted — resident NOT restarted
     assert "render2" in b.backend.started
-    assert "llamacpp" not in b.backend.started           # anti-thrash: still down for render2
+    assert "inference-engine-gpu" not in b.backend.started           # anti-thrash: still down for render2
     b.backend.started.clear()
     b.complete("render2")
-    assert b.backend.started == ["llamacpp"]             # only after the queue fully drains
+    assert b.backend.started == ["inference-engine-gpu"]             # only after the queue fully drains
 
 
 def test_sweep_leases_restarts_resident_for_a_stranded_job():
     s = Scheduler(32)
-    s.cache_idle("llamacpp", 25)
+    s.cache_idle("inference-engine-gpu", 25)
     b = Broker(s, MockBackend())
     b.request(Job("render", 18, "media", est_seconds=30))  # TTL = 60s
     b.backend.started.clear()
@@ -98,7 +98,7 @@ def test_sweep_leases_restarts_resident_for_a_stranded_job():
     swept = b.sweep_leases()
     assert swept == ["render"]
     assert "render" in b.backend.stopped                   # stranded job's container stopped
-    assert b.backend.started == ["llamacpp"]             # resident self-healed back up
+    assert b.backend.started == ["inference-engine-gpu"]             # resident self-healed back up
 
 
 def test_sweep_is_noop_when_no_lease_expired():
@@ -115,7 +115,7 @@ class _ResolvingBackend(MockBackend):
     """Mimics DockerBackend: start/stop are a NO-OP for a name that isn't a known container (an
     abstract lease job), and act only on names that resolve. This locks in the live-caught defect:
     an external media lease (`lease-test`) has no container of its own, so the broker must NOT try
-    (and fail) to `docker start/stop` it — only the real resident (`llamacpp`) is a container."""
+    (and fail) to `docker start/stop` it — only the real resident (`inference-engine-gpu`) is a container."""
     def __init__(self, real_containers: set[str]):
         super().__init__()
         self._real = real_containers
@@ -133,13 +133,13 @@ def test_abstract_lease_job_never_touched_only_resident_is():
     # the exact live scenario: a media LEASE reserves VRAM (evicting the resident) but owns no
     # container; only the resident is stopped/started by the broker.
     s = Scheduler(32)
-    s.cache_idle("llamacpp", 25)
-    b = Broker(s, _ResolvingBackend(real_containers={"llamacpp"}))
-    b.request(Job("lease-test", 18, "media"))            # evicts llamacpp; lease-test has no container
-    assert b.backend.stopped == ["llamacpp"]             # resident stopped — NOT lease-test
+    s.cache_idle("inference-engine-gpu", 25)
+    b = Broker(s, _ResolvingBackend(real_containers={"inference-engine-gpu"}))
+    b.request(Job("lease-test", 18, "media"))            # evicts inference-engine-gpu; lease-test has no container
+    assert b.backend.stopped == ["inference-engine-gpu"]             # resident stopped — NOT lease-test
     assert b.backend.started == []                        # abstract lease started nothing
     b.complete("lease-test")                              # release the lease
-    assert b.backend.started == ["llamacpp"]             # resident restarted; lease-test never touched
+    assert b.backend.started == ["inference-engine-gpu"]             # resident restarted; lease-test never touched
     assert "lease-test" not in b.backend.stopped and "lease-test" not in b.backend.started
 
 
@@ -161,7 +161,7 @@ def test_broker_records_lease_history_lifecycle(tmp_path):
     from ordo.control.lease_history import LeaseHistory
     hist = LeaseHistory(tmp_path / "h.jsonl", now_fn=lambda: 42.0)
     sched = Scheduler(32)
-    sched.cache_idle("llamacpp", 25)
+    sched.cache_idle("inference-engine-gpu", 25)
     b = Broker(sched, MockBackend(), history=hist)
     b.request(Job("train", 30, "training"))     # evicts resident, admits, starts
     b.complete("train")
@@ -203,18 +203,18 @@ def test_an_evicted_resident_started_from_outside_is_stopped_again():
     # A whole-stack `docker compose up -d` during a render starts every stopped service, the
     # evicted resident included; the scheduler still believes it is off the card. Two tenants on
     # one GPU is how the host crashed (2026-08-08), so the broker puts it back down.
-    b = Broker(Scheduler(32), MockBackend({"services": {"llamacpp": {"image": "llama"}}}))
-    b.scheduler.cache_idle("llamacpp", 25)
+    b = Broker(Scheduler(32), MockBackend({"services": {"inference-engine-gpu": {"image": "llama"}}}))
+    b.scheduler.cache_idle("inference-engine-gpu", 25)
     b.request(Job("render", 20, "media"))
-    assert "llamacpp" in b.scheduler.evicted_residents
-    b.backend.start("llamacpp")                      # the whole-stack `up -d` from outside
+    assert "inference-engine-gpu" in b.scheduler.evicted_residents
+    b.backend.start("inference-engine-gpu")                      # the whole-stack `up -d` from outside
     b.backend.stopped.clear()
-    assert b.enforce_evictions() == ["llamacpp"]
-    assert b.backend.stopped == ["llamacpp"]
+    assert b.enforce_evictions() == ["inference-engine-gpu"]
+    assert b.backend.stopped == ["inference-engine-gpu"]
 
 
 def test_nothing_is_stopped_when_no_resident_is_evicted():
     b = _broker()
-    b.scheduler.cache_idle("llamacpp", 25)
+    b.scheduler.cache_idle("inference-engine-gpu", 25)
     assert b.enforce_evictions() == []
     assert b.backend.stopped == []

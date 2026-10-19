@@ -61,11 +61,11 @@ def _records(path: Path) -> list[dict]:
 
 PRIVILEGED_CALLS = [
     # (path, body, action, target)
-    ("/services/llamacpp/start", {"confirm": True}, "start", "llamacpp"),
-    ("/services/llamacpp/stop", {"confirm": True}, "stop", "llamacpp"),
-    ("/services/llamacpp/restart", {"confirm": True}, "restart", "llamacpp"),
-    ("/services/llamacpp/recreate", {"confirm": True}, "recreate", "llamacpp"),
-    ("/containers/ordo-llamacpp-1/restart", {"confirm": True}, "container.restart", "ordo-llamacpp-1"),
+    ("/services/inference-engine-gpu/start", {"confirm": True}, "start", "inference-engine-gpu"),
+    ("/services/inference-engine-gpu/stop", {"confirm": True}, "stop", "inference-engine-gpu"),
+    ("/services/inference-engine-gpu/restart", {"confirm": True}, "restart", "inference-engine-gpu"),
+    ("/services/inference-engine-gpu/recreate", {"confirm": True}, "recreate", "inference-engine-gpu"),
+    ("/containers/ordo-inference-engine-gpu-1/restart", {"confirm": True}, "container.restart", "ordo-inference-engine-gpu-1"),
     ("/compose/up", {"confirm": True, "service": "open-webui"}, "compose.up", "open-webui"),
     ("/compose/down", {"confirm": True, "service": "open-webui"}, "compose.down", "open-webui"),
     ("/compose/restart", {"confirm": True, "service": "open-webui"}, "compose.restart", "open-webui"),
@@ -77,7 +77,7 @@ PRIVILEGED_CALLS = [
     ("/jobs/heartbeat", {"id": "render-1"}, "lease.heartbeat", "render-1"),
     ("/models/download", {"url": "http://example.invalid/w.safetensors"}, "models.download", "w.safetensors"),
     ("/comfyui/install-node-requirements", {"node_path": "Pack"}, "comfyui_pip_install", "Pack"),
-    ("/gpu/assign", {"service": "llamacpp"}, "gpu_assign", "llamacpp"),
+    ("/gpu/assign", {"service": "inference-engine-gpu"}, "gpu_assign", "inference-engine-gpu"),
     ("/registry/models/local-chat/assign-gpu", {}, "gpu_assign", "local-chat"),
 ]
 
@@ -107,7 +107,7 @@ def test_each_privileged_call_leaves_exactly_one_record(plane, client, path, bod
 
 def test_a_dry_run_is_recorded_as_one(plane, client):
     _, audit_path = plane
-    r = client.post("/services/llamacpp/stop", json={"dry_run": True}, headers=AUTH)
+    r = client.post("/services/inference-engine-gpu/stop", json={"dry_run": True}, headers=AUTH)
     assert r.status_code == 200
     [rec] = _records(audit_path)
     assert (rec["action"], rec["dry_run"], rec["confirm"], rec["result"]) == ("stop", True, False, "ok")
@@ -129,12 +129,12 @@ def test_a_lease_the_card_can_never_hold_is_recorded_as_rejected(plane, client):
 
 def test_a_lease_refusal_409_is_recorded(plane, client):
     cp, audit_path = plane
-    cp.scheduler.cache_idle("llamacpp", 25)
+    cp.scheduler.cache_idle("inference-engine-gpu", 25)
     # A media job that does not fit beside the resident evicts it for the lease...
     client.post("/jobs", json={"id": "render-1", "vram_gb": 18, "kind": "media"}, headers=AUTH)
     assert cp.scheduler.evicted_residents
     # ...so starting the resident again is refused with 409, and that refusal is recorded too.
-    r = client.post("/services/llamacpp/start", json={"confirm": True}, headers=AUTH)
+    r = client.post("/services/inference-engine-gpu/start", json={"confirm": True}, headers=AUTH)
     assert r.status_code == 409
 
     grant, refusal = _records(audit_path)
@@ -145,12 +145,12 @@ def test_a_lease_refusal_409_is_recorded(plane, client):
 
 def test_an_unauthenticated_write_is_refused_and_recorded(plane, client):
     cp, audit_path = plane
-    r = client.post("/services/llamacpp/stop", json={"confirm": True}, headers={"X-Actor": "someone"})
+    r = client.post("/services/inference-engine-gpu/stop", json={"confirm": True}, headers={"X-Actor": "someone"})
     assert r.status_code == 401
     assert cp.broker.backend.stopped == []
 
     [rec] = _records(audit_path)
-    assert (rec["action"], rec["target"], rec["status"], rec["result"]) == ("stop", "llamacpp", 401, "refused")
+    assert (rec["action"], rec["target"], rec["status"], rec["result"]) == ("stop", "inference-engine-gpu", 401, "refused")
     # The actor header of an unauthenticated call is only a claim, but it is still what was sent.
     assert rec["caller"] == "someone"
 
@@ -163,14 +163,14 @@ def test_an_unauthenticated_read_is_not_recorded(plane, client):
 
 def test_a_call_without_an_actor_header_is_recorded_as_unknown(plane, client):
     _, audit_path = plane
-    client.post("/services/llamacpp/stop", json={"dry_run": True},
+    client.post("/services/inference-engine-gpu/stop", json={"dry_run": True},
                 headers={"Authorization": f"Bearer {TOKEN}"})
     assert _records(audit_path)[0]["caller"] == "unknown"
 
 
 def test_the_actor_header_is_sanitised_and_bounded(plane, client):
     _, audit_path = plane
-    client.post("/services/llamacpp/stop", json={"dry_run": True},
+    client.post("/services/inference-engine-gpu/stop", json={"dry_run": True},
                 headers={"Authorization": f"Bearer {TOKEN}", "X-Actor": "hermes\"}{evil" + "x" * 500})
     caller = _records(audit_path)[0]["caller"]
     assert caller.startswith("hermes")
@@ -180,7 +180,7 @@ def test_the_actor_header_is_sanitised_and_bounded(plane, client):
 
 def test_an_invalid_json_body_is_recorded(plane, client):
     _, audit_path = plane
-    r = client.post("/services/llamacpp/stop", content=b"{not json", headers=AUTH)
+    r = client.post("/services/inference-engine-gpu/stop", content=b"{not json", headers=AUTH)
     assert r.status_code == 400
     [rec] = _records(audit_path)
     assert (rec["action"], rec["status"], rec["result"]) == ("stop", 400, "refused")
@@ -188,7 +188,7 @@ def test_an_invalid_json_body_is_recorded(plane, client):
 
 def test_a_json_body_that_is_not_an_object_is_recorded(plane, client):
     _, audit_path = plane
-    r = client.post("/services/llamacpp/stop", content=b'["confirm"]',
+    r = client.post("/services/inference-engine-gpu/stop", content=b'["confirm"]',
                     headers={**AUTH, "Content-Type": "application/json"})
     assert r.status_code == 400
     [rec] = _records(audit_path)
@@ -198,7 +198,7 @@ def test_a_json_body_that_is_not_an_object_is_recorded(plane, client):
 
 def test_a_confirm_that_is_not_json_true_is_recorded_as_unconfirmed(plane, client):
     _, audit_path = plane
-    r = client.post("/services/llamacpp/stop", json={"confirm": "yes"}, headers=AUTH)
+    r = client.post("/services/inference-engine-gpu/stop", json={"confirm": "yes"}, headers=AUTH)
     assert r.status_code == 400
     [rec] = _records(audit_path)
     assert (rec["confirm"], rec["status"], rec["result"]) == (False, 400, "refused")
@@ -217,7 +217,7 @@ def test_a_handler_that_raises_is_recorded_as_an_error(plane, client, monkeypatc
     def boom(*_args, **_kwargs):
         raise RuntimeError("backend exploded")
     monkeypatch.setattr(cp, "service_stop", boom)
-    assert client.post("/services/llamacpp/stop", json={"confirm": True}, headers=AUTH).status_code == 500
+    assert client.post("/services/inference-engine-gpu/stop", json={"confirm": True}, headers=AUTH).status_code == 500
     [rec] = _records(audit_path)
     assert (rec["action"], rec["status"], rec["result"]) == ("stop", 500, "error")
     assert "backend exploded" in rec["error"]
@@ -226,7 +226,7 @@ def test_a_handler_that_raises_is_recorded_as_an_error(plane, client, monkeypatc
 @pytest.mark.parametrize("path", [
     "/status", "/model-config", "/plugins", "/services", "/containers", "/stats/services",
     "/jobs/history", "/registry/models", "/models/download/status", "/audit", "/health",
-    "/services/llamacpp/logs",
+    "/services/inference-engine-gpu/logs",
 ])
 def test_reads_leave_no_record(plane, client, path, monkeypatch):
     cp, audit_path = plane
@@ -243,7 +243,7 @@ def test_no_secret_or_body_field_beyond_the_named_ones_is_recorded(plane, client
               "filename": "", "api_key": "sk-sekrit-body", "confirm": True},
         headers={**AUTH, "X-Request-ID": "r-1"},
     )
-    client.post("/services/llamacpp/stop", json={"confirm": True, "password": "sekrit-pw"},
+    client.post("/services/inference-engine-gpu/stop", json={"confirm": True, "password": "sekrit-pw"},
                 headers={"Authorization": "Bearer wrong-sekrit-token"})
     raw = audit_path.read_text(encoding="utf-8")
     for secret in (TOKEN, "wrong-sekrit-token", "hf_sekrit_query", "sk-sekrit-body", "sekrit-pw", "token="):
@@ -257,7 +257,7 @@ def test_no_secret_or_body_field_beyond_the_named_ones_is_recorded(plane, client
 def test_long_error_messages_are_truncated(plane, client, monkeypatch):
     cp, audit_path = plane
     monkeypatch.setattr(cp, "service_stop", lambda *_a: cp._error(500, "x" * 5000))
-    client.post("/services/llamacpp/stop", json={"confirm": True}, headers=AUTH)
+    client.post("/services/inference-engine-gpu/stop", json={"confirm": True}, headers=AUTH)
     assert len(_records(audit_path)[0]["error"]) <= 300
 
 

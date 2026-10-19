@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 # separately below) makes 7 mandatory services total. Caddy/oauth2-proxy is an OPTIONAL
 # remote-access plugin, so it's not here — a local floor install is localhost-only. The
 # enabled MCP servers render as `mcp-<id>` services alongside these, from the manifests.
-_CORE = ["llamacpp", "litellm-db", "model-gateway", "model-gateway-keys",
+_CORE = ["inference-engine-gpu", "litellm-db", "model-gateway", "model-gateway-keys",
          "ops-controller", "dashboard"]
 
 # How `ordo backup` saves the named volumes the core services own (ordo/render/backup_policy.py);
@@ -200,7 +200,7 @@ LLAMACPP_DERIVED_ENV: tuple[str, ...] = (
     "LLAMACPP_OVERRIDE_KV",  # an optional `site:` knob (--override-kv), absent unless set
     # A model's own placement (catalog n_cpu_moe, cpu_threads, load_mode), absent unless it declares one.
     "LLAMACPP_N_CPU_MOE", "LLAMACPP_THREADS", "LLAMACPP_LOAD_MODE",
-    # A ninfer model's vision encoder (catalog vision / overrides.llamacpp.vision), absent unless on.
+    # A ninfer model's vision encoder (catalog vision / overrides.inference-engine-gpu.vision), absent unless on.
     "LLAMACPP_VISION",
 )
 # model-gateway: services/model-gateway/entrypoint.sh, which writes these into the LiteLLM config's
@@ -449,7 +449,7 @@ def _model_gateway(project: str, net: str, langfuse_tracing: bool = False,
     services/model-gateway/README.md)."""
     s = _svc(f"{project}/model-gateway", net=net)
     s["networks"] = [net, _mcp_net(project)]
-    s["depends_on"] = _depends_on({"llamacpp": "service_started", "litellm-db": "service_healthy"})
+    s["depends_on"] = _depends_on({"inference-engine-gpu": "service_started", "litellm-db": "service_healthy"})
     s["volumes"] = [_MODEL_GATEWAY_CONFIG_BIND]
     s["environment"] = {
         "LITELLM_MODE": "PRODUCTION",   # no load_dotenv(): a stray .env cannot inject credentials
@@ -805,7 +805,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    agent_depends_on: dict[str, str] | None = None,
                    agent_healthcheck: dict[str, Any] | None = None,
                    dashboard: dict[str, Any] | None = None,
-                   llamacpp_image: str | None = None,
+                   inference_engine_gpu_image: str | None = None,
                    chat_backend: str = "llama.cpp",
                    plugin_services: list[tuple[Plugin, PluginService]] | None = None,
                    primary_gpu_uuid: str | None = None,
@@ -833,27 +833,27 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     # The llama.cpp build is the host's backend (ordo/render/llamacpp_backend.py: CPU, CUDA, ROCm or
     # Vulkan upstream server image) unless the chosen model pins its own build (e.g. the patched
     # Qwen3.6/3.8 image) via its catalog `backend_image`. render resolves which and passes it in
-    # as llamacpp_image; the backend alone decides how the service reaches the GPU.
-    llamacpp_img = llamacpp_image or llamacpp_backend.image
+    # as inference_engine_gpu_image; the backend alone decides how the service reaches the GPU.
+    gpu_chat_img = inference_engine_gpu_image or llamacpp_backend.image
     uses_cuda = llamacpp_backend.name == "cuda"
-    llamacpp = _svc(llamacpp_img, net=net, gpu=uses_cuda)
+    gpu_chat_svc = _svc(gpu_chat_img, net=net, gpu=uses_cuda)
     if chat_backend == "llama.cpp":
         # always-on Prometheus metrics endpoint (the monitoring plugin's prometheus scrapes it).
         # NInfer has no Prometheus endpoint; ops-controller's chat probe covers its liveness.
-        llamacpp["command"] = [LLAMACPP_METRICS_ARG]
+        gpu_chat_svc["command"] = [LLAMACPP_METRICS_ARG]
     # Pin the compute service to the PRIMARY card by uuid (V1 does this in gpu-assignments.yml).
     # Without the CUDA_VISIBLE_DEVICES pin, on a dual-GPU WSL2 box `count: all` lets llama.cpp see
     # the 1070 too — a failure that only surfaces against real dual-GPU hardware. The
     # `.env` still carries no pin; this is a compose-level env override on the service.
     if uses_cuda and primary_gpu_uuid:
-        llamacpp["deploy"] = _gpu_pinned_reservation(primary_gpu_uuid)["deploy"]
-        llamacpp["environment"] = _pin_env(primary_gpu_uuid)
+        gpu_chat_svc["deploy"] = _gpu_pinned_reservation(primary_gpu_uuid)["deploy"]
+        gpu_chat_svc["environment"] = _pin_env(primary_gpu_uuid)
     # ROCm / Vulkan: compose has no device driver for these GPUs, so the device nodes are passed
     # through instead (/dev/kfd + /dev/dri for ROCm, /dev/dri for Vulkan). EXPERIMENTAL: rendered
     # and `docker compose config`-validated, not yet run on real AMD/Intel hardware.
-    _add_derived_env(llamacpp, LLAMACPP_DERIVED_ENV, available_env)
+    _add_derived_env(gpu_chat_svc, LLAMACPP_DERIVED_ENV, available_env)
     if llamacpp_backend.devices:
-        llamacpp["devices"] = list(llamacpp_backend.devices)
+        gpu_chat_svc["devices"] = list(llamacpp_backend.devices)
     # The patched image is a drop-in binary at /app/llama-server; the launch LOGIC lives in the
     # host wrapper scripts/llamacpp/run-llama-server.sh, which translates the rendered LLAMACPP_*
     # env into the full `llama-server -m /models/<gguf> -c <ctx> -ngl -1 …` argv. Without this
@@ -862,8 +862,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     # shared-by-path from the V1 tree via ${BASE_PATH} (already rendered into .env), so no copy.
     # The model's catalog `backend` picks the launcher: one GPU chat service, whichever engine runs it.
     launcher = "run-ninfer-serve.sh" if chat_backend == "ninfer" else "run-llama-server.sh"
-    llamacpp["entrypoint"] = ["/bin/sh", f"/llamacpp-scripts/{launcher}"]
-    llamacpp["volumes"] = [
+    gpu_chat_svc["entrypoint"] = ["/bin/sh", f"/llamacpp-scripts/{launcher}"]
+    gpu_chat_svc["volumes"] = [
         # models-gguf NAMED VOLUME, not the old ${BASE_PATH}/models/gguf 9p bind: on
         # 2026-08-07 the 9p mount began wedging GGUF reads deterministically
         # (p9_client_rpc D-state at ~100MB into the file, fresh VM, first contact),
@@ -875,12 +875,12 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         "${BASE_PATH:?BASE_PATH must be set (non-empty)}/scripts/llamacpp:/llamacpp-scripts:ro",
     ]
     # Its entrypoint script is read at start: an edit recreates it (ordo/render/bind_configs.py).
-    bind_configs.add_labels("llamacpp", llamacpp, ["/llamacpp-scripts"])
+    bind_configs.add_labels("inference-engine-gpu", gpu_chat_svc, ["/llamacpp-scripts"])
     # model-gateway is the V1 custom-built LiteLLM config wrapper (+ the MCP gateway since 2026-09);
     # a first-party BUILDABLE image (build context services/model-gateway) so preflight reports
     # 'build first' not 'Docker will pull'. The V2-native ops-controller + dashboard remain the new control plane.
     svcs: dict[str, Any] = {
-        "llamacpp": llamacpp,
+        "inference-engine-gpu": gpu_chat_svc,
         "litellm-db": _litellm_db(net),
         # LITELLM_MASTER_KEY + LITELLM_SALT_KEY + THROUGHPUT_RECORD_TOKEN are secrets (secrets.env).
         "model-gateway": _model_gateway(project, net, langfuse_tracing=langfuse_tracing,

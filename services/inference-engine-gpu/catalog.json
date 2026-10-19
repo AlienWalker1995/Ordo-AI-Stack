@@ -1,18 +1,18 @@
 {
   "cards": [
     {
-      "id": "llamacpp",
+      "id": "inference-engine-gpu",
       "name": "llama.cpp (GPU)",
       "order": 10,
       "port": 8080,
       "url": "http://localhost:8080",
-      "check": "http://llamacpp:8080/health",
+      "check": "http://inference-engine-gpu:8080/health",
       "has_gpu": true,
       "plugin": null,
       "category": "inference",
       "background": true,
-      "ops_service": "llamacpp",
-      "hint": "Backend-only; use model-gateway :11435 from host. Run: ordo up llamacpp (refused while a GPU lease has evicted it)",
+      "ops_service": "inference-engine-gpu",
+      "hint": "Backend-only; use model-gateway :11435 from host. Run: ordo up inference-engine-gpu (refused while a GPU lease has evicted it)",
       "notes": "Core service (plugin null = always visible). The compose service is defined by the substrate (ordo/render/compose.py); this dir exists to carry its dashboard card."
     }
   ]

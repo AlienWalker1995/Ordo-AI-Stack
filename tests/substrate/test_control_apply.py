@@ -1,7 +1,7 @@
 """ops-controller's post-render step: after a source write and a render, recreate exactly the changed set.
 
 Every caller that changes the operator source through the control plane (the model switch, a plugin
-enable or disable) used to keep its own hand-written list of what to restart afterwards. The dashboard's said "llamacpp + model-gateway (+ llamacpp-cpu)" and reported
+enable or disable) used to keep its own hand-written list of what to restart afterwards. The dashboard's said "inference-engine-gpu + model-gateway (+ inference-engine-cpu)" and reported
 "restart Hermes" on a context change, because the agent reads LLAMACPP_CTX_SIZE too. The render
 already decides what changed: `ordo/render/changed_set.py` compares every rendered service's config
 hash and image with its container's, the same computation the host's `ordo apply` makes.
@@ -162,8 +162,8 @@ def test_a_switch_that_changes_the_context_recreates_what_the_render_changed(sta
     applied = body["apply"]
     # The chat server loads the new file, the gateway re-templates its aliases, and the CPU
     # fallback's window mirrors the GPU's: the render changed all three.
-    assert applied["recreated"] == ["llamacpp", "llamacpp-cpu", "model-gateway"]
-    assert _recreated(backend) == ["llamacpp", "llamacpp-cpu", "model-gateway"]
+    assert applied["recreated"] == ["inference-engine-cpu", "inference-engine-gpu", "model-gateway"]
+    assert _recreated(backend) == ["inference-engine-cpu", "inference-engine-gpu", "model-gateway"]
     # The agent reads LLAMACPP_CTX_SIZE too, and it is the process calling this API: it cannot be
     # cycled from here, so the host command that finishes the switch is named precisely.
     assert applied["restart_required_on_host"] == ["agent"]
@@ -178,7 +178,7 @@ def test_a_switch_with_the_same_context_leaves_the_fallback_and_the_agent_alone(
     backend.create_all()
     status, body = cp.route("POST", "/model-config", {"model": LARGE_CTX_MODEL})
     assert status == 200, body
-    assert body["apply"]["recreated"] == ["llamacpp", "model-gateway"]
+    assert body["apply"]["recreated"] == ["inference-engine-gpu", "model-gateway"]
     assert body["apply"]["restart_required_on_host"] == [] and body["apply"]["host_command"] is None
 
 
@@ -187,7 +187,7 @@ def test_unchanged_services_are_never_touched(stack):
     before = dict(backend.containers)
     cp.route("POST", "/model-config", {"model": LARGE_CTX_MODEL})
     touched = {name for name in before if backend.containers[name] != before[name]}
-    assert touched == {"llamacpp", "llamacpp-cpu", "model-gateway"}
+    assert touched == {"inference-engine-gpu", "inference-engine-cpu", "model-gateway"}
     assert backend.started == backend.stopped == backend.restarted == []
 
 
@@ -204,13 +204,13 @@ def test_a_lease_refusal_propagates_and_rolls_the_source_back(stack):
     before_env = (out / ".env").read_text(encoding="utf-8")
     # A render holds the card and llama.cpp was evicted to make room for it: recreating llama.cpp
     # now would put a second tenant on a leased GPU (the 2026-08-08 host crash).
-    cp.scheduler.cache_idle("llamacpp", 25)
+    cp.scheduler.cache_idle("inference-engine-gpu", 25)
     cp.broker.request(Job("gate-comfyui", 20, "media"))
-    assert "llamacpp" in cp.scheduler.evicted_residents
+    assert "inference-engine-gpu" in cp.scheduler.evicted_residents
 
     status, body = cp.route("POST", "/model-config", {"model": LARGE_CTX_MODEL})
     assert status == 409
-    assert "gate-comfyui" in body["error"] and "llamacpp" in body["error"]
+    assert "gate-comfyui" in body["error"] and "inference-engine-gpu" in body["error"]
     assert backend.recreate_batches == []
     assert body["rolled_back"] is True
     assert source.read_text(encoding="utf-8") == before_source
@@ -230,7 +230,7 @@ def test_a_failed_recreate_restores_the_source_and_re_applies_it(stack):
     assert source.read_text(encoding="utf-8") == before_source
     # The rollback re-applies the previous render: the one service already recreated onto the new
     # model is recreated back, so nothing is left running a config the source no longer names.
-    assert body["rollback"]["recreated"] == ["llamacpp"]
+    assert body["rollback"]["recreated"] == ["inference-engine-cpu"]
     assert backend.containers == before
 
 
@@ -249,16 +249,16 @@ def test_an_unreadable_docker_state_refuses_and_rolls_back(stack):
 
 def test_a_container_made_by_another_compose_version_is_left_to_the_host(stack):
     cp, backend, _, _ = stack
-    old = backend.containers["llamacpp-cpu"]
-    backend.containers["llamacpp-cpu"] = RunningContainer(
+    old = backend.containers["inference-engine-cpu"]
+    backend.containers["inference-engine-cpu"] = RunningContainer(
         service=old.service, config_hash=old.config_hash, image_id=old.image_id,
         compose_version="2.30.0", container_id=old.container_id)
     status, body = cp.route("POST", "/model-config", {"model": LARGE_CTX_MODEL})
     assert status == 200, body
-    assert "llamacpp-cpu" not in body["apply"]["recreated"]
-    assert body["apply"]["restart_required_on_host"] == ["agent", "llamacpp-cpu"]
-    assert "compose" in body["apply"]["host_reasons"]["llamacpp-cpu"]
-    assert body["apply"]["host_command"] == "ordo apply --only agent llamacpp-cpu"
+    assert "inference-engine-cpu" not in body["apply"]["recreated"]
+    assert body["apply"]["restart_required_on_host"] == ["agent", "inference-engine-cpu"]
+    assert "compose" in body["apply"]["host_reasons"]["inference-engine-cpu"]
+    assert body["apply"]["host_command"] == "ordo apply --only agent inference-engine-cpu"
 
 
 # --------------------------------------------------------------------------- #
@@ -348,8 +348,8 @@ def test_apply_dry_run_plans_without_touching_anything(stack):
     status, body = cp.route("POST", "/apply", {"dry_run": True})
     assert status == 200, body
     assert body["dry_run"] is True
-    assert body["recreated"] == ["llamacpp", "llamacpp-cpu", "model-gateway"]
-    assert {c["service"] for c in body["changes"]} == {"agent", "llamacpp", "llamacpp-cpu", "model-gateway"}
+    assert body["recreated"] == ["inference-engine-cpu", "inference-engine-gpu", "model-gateway"]
+    assert {c["service"] for c in body["changes"]} == {"agent", "inference-engine-gpu", "inference-engine-cpu", "model-gateway"}
     assert backend.recreate_batches == []
 
 
@@ -367,7 +367,7 @@ def test_apply_recreates_the_changed_set_of_the_current_render(stack):
     status, body = cp.route("POST", "/apply", {"confirm": True})
     assert status == 200, body
     assert body["dry_run"] is False
-    assert _recreated(backend) == ["llamacpp", "llamacpp-cpu", "model-gateway"]
+    assert _recreated(backend) == ["inference-engine-cpu", "inference-engine-gpu", "model-gateway"]
     assert body["restart_required_on_host"] == ["agent"]
 
 
@@ -468,7 +468,7 @@ def _listed_with_volume(tmp_path, files):
 def _embed_file(cp) -> str:
     from ordo.render.models_volume import required_model_files
     rc = cp._render()
-    return next(f.file for f in required_model_files(rc.compose_dict(), rc.env, ["llamacpp-embed"]))
+    return next(f.file for f in required_model_files(rc.compose_dict(), rc.env, ["inference-engine-embed"]))
 
 
 def test_a_plugin_whose_model_file_is_missing_is_left_to_the_host_to_fetch(tmp_path):
@@ -476,10 +476,10 @@ def test_a_plugin_whose_model_file_is_missing_is_left_to_the_host_to_fetch(tmp_p
     status, body = cp.route("POST", "/plugins/rag/enable", {"confirm": True})
     assert status == 200, body
     applied = body["apply"]
-    assert "llamacpp-embed" not in applied["recreated"] and "llamacpp-embed" not in backend.containers
-    assert "llamacpp-embed" in applied["restart_required_on_host"]
-    assert _embed_file(cp) in applied["host_reasons"]["llamacpp-embed"]
-    assert "llamacpp-embed" in applied["host_command"]
+    assert "inference-engine-embed" not in applied["recreated"] and "inference-engine-embed" not in backend.containers
+    assert "inference-engine-embed" in applied["restart_required_on_host"]
+    assert _embed_file(cp) in applied["host_reasons"]["inference-engine-embed"]
+    assert "inference-engine-embed" in applied["host_command"]
 
 
 def test_a_plugin_whose_model_file_is_present_is_started(tmp_path):
@@ -491,10 +491,10 @@ def test_a_plugin_whose_model_file_is_present_is_started(tmp_path):
     from ordo.render.engine import render
     rc = render(Source.from_dict(source), CATALOG, REGISTRY)
     from ordo.render.models_volume import required_model_files
-    files.update(f.file for f in required_model_files(rc.compose_dict(), rc.env, ["llamacpp-embed"]))
+    files.update(f.file for f in required_model_files(rc.compose_dict(), rc.env, ["inference-engine-embed"]))
     status, body = cp.route("POST", "/plugins/rag/enable", {"confirm": True})
     assert status == 200, body
-    assert "llamacpp-embed" in body["apply"]["recreated"] and "llamacpp-embed" in backend.containers
+    assert "inference-engine-embed" in body["apply"]["recreated"] and "inference-engine-embed" in backend.containers
 
 
 def test_an_unlistable_models_volume_leaves_model_loaders_to_the_host(tmp_path):
@@ -502,8 +502,8 @@ def test_an_unlistable_models_volume_leaves_model_loaders_to_the_host(tmp_path):
     status, body = cp.route("POST", "/plugins/rag/enable", {"confirm": True})
     assert status == 200, body
     applied = body["apply"]
-    assert "llamacpp-embed" not in backend.containers
-    assert "cannot list the models volume" in applied["host_reasons"]["llamacpp-embed"]
+    assert "inference-engine-embed" not in backend.containers
+    assert "cannot list the models volume" in applied["host_reasons"]["inference-engine-embed"]
 
 
 # --------------------------------------------------------------------------- #

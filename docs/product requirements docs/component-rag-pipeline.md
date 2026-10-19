@@ -13,7 +13,7 @@ Retrieval-Augmented Generation (RAG) pipeline providing vector search and docume
 
 1. Drop documents into `data/rag-input/` (the ingester also watches the memory vault and this repo's `docs/`, read-only)
 2. `rag-ingestion` watches directory; chunks at `RAG_CHUNK_SIZE` tokens (default 400, overlap 50)
-3. Embeds directly against the `llamacpp-embed` service (`http://llamacpp-embed:8080`) — **not**
+3. Embeds directly against the `inference-engine-embed` service (`http://inference-engine-embed:8080`) — **not**
    the LiteLLM model gateway; the env var carrying that URL is confusingly still named
    `MODEL_GATEWAY_URL` (`EMBED_URL` is the current/preferred name, matching its sibling
    `services/qdrant-rag/server.py`). Model is `EMBED_MODEL`, default `embeddinggemma-2-Q8_0.gguf`.
@@ -42,7 +42,7 @@ The dashboard's `GET /api/overview` reports the collection point count as `knowl
 # out/docker-compose.yml (rendered from ordo.yaml; relevant env vars)
 rag-ingestion:
   environment:
-    - MODEL_GATEWAY_URL=http://llamacpp-embed:8080   # despite the name, points at llamacpp-embed
+    - MODEL_GATEWAY_URL=http://inference-engine-embed:8080   # despite the name, points at inference-engine-embed
     - EMBED_MODEL=${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-embeddinggemma-2-Q8_0.gguf}}
     - QDRANT_COLLECTION=${RAG_COLLECTION:-documents}
     - CHUNK_SIZE=${RAG_CHUNK_SIZE:-400}
@@ -52,7 +52,7 @@ rag-ingestion:
 ## Dependencies
 
 - **Qdrant** service (on the single `ordo-net`; internal, no host port)
-- **`llamacpp-embed`** (services/rag/plugin.yaml) for embeddings — EmbeddingGemma 2 (GGUF) served
+- **`inference-engine-embed`** (services/rag/plugin.yaml) for embeddings — EmbeddingGemma 2 (GGUF) served
   directly by llama.cpp, not routed through the LiteLLM model gateway
 - `embeddinggemma-2-Q8_0.gguf` (or `LLAMACPP_EMBED_MODEL` override) must be present before
   ingestion can embed

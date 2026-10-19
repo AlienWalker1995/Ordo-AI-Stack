@@ -57,7 +57,7 @@ environment:
   # The control plane. Every route this dashboard calls is served by ops-controller.
   OPS_CONTROLLER_URL: http://ops-controller:9000
   # Backend service URLs the dashboard reads at runtime (all V2 service names).
-  LLAMACPP_URL: http://llamacpp:8080
+  LLAMACPP_URL: http://inference-engine-gpu:8080
   MODEL_GATEWAY_URL: http://model-gateway:11435
   QDRANT_URL: http://qdrant:6333
   # On-disk model dir (mounted below): the Models page scans GGUF_MODELS_DIR.

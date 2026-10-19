@@ -4,7 +4,7 @@ The arbiter already exists: `ordo serve`'s Scheduler + Broker is a global queue 
 RESIDENCY (`POST /jobs` = "grant me VRAM", `POST /jobs/complete` = "I'm done"). What was missing
 is the other half — a way for a service to DECLARE that it competes for the card. Without that,
 the arbiter learned the shape of contention from tribal knowledge: `ordo serve` carried a
-`--resident-service llamacpp` default, the old ops-api carried a `COMFYUI_GUARDIAN_TARGET`, and
+`--resident-service inference-engine-gpu` default, the old ops-api carried a `COMFYUI_GUARDIAN_TARGET`, and
 every other GPU service was arbitrated only by whoever remembered to call `/jobs`. That gap is
 what let a hand-queued ComfyUI render share the 5090 with the resident llama.cpp for four hours
 at ~98% VRAM on 2026-08-08 until the graphics kernel bugchecked (0x113).
@@ -68,7 +68,7 @@ questions. `preemptible` says the arbiter MAY reclaim the card; `yield` says WHA
 CAPABILITY when it does. Not all preemptible services are alike:
 
   - A burst render has no degraded path — reclaiming it means the work stops. ``strategy: stop``.
-  - The resident LLM does: it MIGRATES rather than dies. ``llamacpp-cpu`` runs its own CPU
+  - The resident LLM does: it MIGRATES rather than dies. ``inference-engine-cpu`` runs its own CPU
     chat model at the same context window, and the model-gateway (LiteLLM) already carries
     ``fallbacks: [{local-chat: [<cpu pin alias>]}]`` with the router's cooldown (`cooldown_time` in services/model-gateway/litellm_config.yaml) that routes back to
     the GPU model as soon as it is healthy again. So llama.cpp yielding the 5090 is a
@@ -115,7 +115,7 @@ VALID_ENFORCEMENT: dict[str, tuple[str, ...]] = {
 # Yield strategies the RUNTIME can actually honour today:
 #   stop      the Broker stops the container; the capability goes away until residency returns.
 #   failover  same reclamation, but a declared degraded service keeps the capability available
-#             (llama.cpp -> llamacpp-cpu via the model-gateway's LiteLLM fallback). Availability
+#             (GPU chat service -> inference-engine-cpu via the model-gateway's LiteLLM fallback). Availability
 #             survives; in-flight work at the moment of the stop does not.
 # `handover` — quiesce, reroute, drain in-flight under a bounded timeout, release, ack — is the
 # next stage of this work and is deliberately NOT accepted: parsing a strategy nothing implements
@@ -140,7 +140,7 @@ class YieldSpec:
     """What happens to a service's CAPABILITY when the arbiter reclaims its VRAM.
 
     `degraded_service` / `degraded_via` name the migration target and the component that
-    reroutes to it — for llama.cpp, `llamacpp-cpu` and `model-gateway`. Naming them here makes
+    reroutes to it — for the GPU chat slot, `inference-engine-cpu` and `model-gateway`. Naming them here makes
     the relationship a checkable property (tests/substrate asserts the target exists and serves
     the same context window) instead of folklore spread across a LiteLLM config comment and a
     plugin README.
@@ -343,7 +343,7 @@ class GpuClaim:
 # renders a GPU reservation and is missing from this table fails
 # tests/substrate/test_gpu_arbitration.py.
 #
-# llamacpp's footprint is deliberately 0.0 in the table: the real number is weights + KV at the
+# inference-engine-gpu's footprint is deliberately 0.0 in the table: the real number is weights + KV at the
 # RENDERED context, which only the render knows (RenderedConfig.resident_vram_gb). `inventory()`
 # fills it in, so it can never drift from what `.env` actually tells llama-server to load.
 CORE_GPU_ARBITRATION: dict[str, GpuArbitration] = {
@@ -351,16 +351,16 @@ CORE_GPU_ARBITRATION: dict[str, GpuArbitration] = {
     # from that residency never queue individually. Preemptible: an exclusive burst request
     # reclaims it and the Broker restores it when the work drains.
     #
-    # It does NOT die when it yields — it migrates to CPU. `llamacpp-cpu` runs the Qwen3.8-35B-A3B
+    # It does NOT die when it yields — it migrates to CPU. `inference-engine-cpu` runs the Qwen3.8-35B-A3B
     # Distill (the Qwen3.6 A3B base, distilled) at the same 131072 window and the model-gateway's LiteLLM config already fails
     # `local-chat` over to it, then routes back after the router's `cooldown_time` (litellm_config.yaml) once the GPU model is healthy.
     # `failover` records exactly that, and no more: today the reroute is error-driven (the Broker
     # stops the container, LiteLLM discovers it unhealthy), so completions streaming at that
     # instant are lost. The clean `handover` is the next change — see SUPPORTED_YIELD_STRATEGIES.
-    "llamacpp": GpuArbitration(mode="resident", enforcement="broker", vram_gb=0.0,
+    "inference-engine-gpu": GpuArbitration(mode="resident", enforcement="broker", vram_gb=0.0,
                                device="primary", preemptible=True,
                                yields=YieldSpec(strategy="failover",
-                                                degraded_service="llamacpp-cpu",
+                                                degraded_service="inference-engine-cpu",
                                                 degraded_via="model-gateway")),
     # Read-only `utility` capability only (nvidia-smi/NVML for VRAM detection and the live GPU
     # reader, ordo/render/gpu_live.py, that the dashboard's GPU widgets read through `GET /gpus`):
@@ -383,7 +383,7 @@ def inventory(
 ) -> list[GpuClaim]:
     """Every declared GPU claim on this box: core services + the enabled plugins' services.
 
-    This is what replaces `--resident-service llamacpp` and `COMFYUI_GUARDIAN_TARGET`: the
+    This is what replaces `--resident-service inference-engine-gpu` and `COMFYUI_GUARDIAN_TARGET`: the
     arbiter no longer knows any service by name, it reads this.
     """
     core = CORE_GPU_ARBITRATION if core is None else core

@@ -1,6 +1,6 @@
 """The CPU fallback reads images too, so vision survives a GPU lease.
 
-`local-chat` fails over to `llamacpp-cpu` while a render holds the GPU. Before 2026-10-04 that server
+`local-chat` fails over to `inference-engine-cpu` while a render holds the GPU. Before 2026-10-04 that server
 loaded no projector, so any image failed for the length of every render ("image input is not
 supported"). It now loads its model's own projector. These tests keep the three places that
 describe it in step: the catalog pins the file (so `ordo fetch` provisions it), the CPU service
@@ -35,8 +35,8 @@ def _fallback_projector_file() -> str:
 
 def _cpu_command() -> list[str]:
     rc = render(Source.from_dict({"hardware": PROFILE_5090, "model": "qwen3.8-27b-heretic-ara-ninfer",
-                                  "plugins": ["llamacpp-cpu"]}), CATALOG, REGISTRY)
-    return [str(arg) for arg in rc.compose_dict()["services"]["llamacpp-cpu"]["command"]], rc
+                                  "plugins": ["inference-engine-cpu"]}), CATALOG, REGISTRY)
+    return [str(arg) for arg in rc.compose_dict()["services"]["inference-engine-cpu"]["command"]], rc
 
 
 def test_the_cpu_service_loads_the_catalog_projector():
@@ -61,12 +61,12 @@ def test_the_cpu_service_drafts_tokens_with_the_models_mtp_head():
 
 def test_the_projector_is_a_required_model_file_so_fetch_provisions_it():
     _, rc = _cpu_command()
-    needed = required_model_files(rc.compose_dict(), rc.env, ["llamacpp-cpu"])
+    needed = required_model_files(rc.compose_dict(), rc.env, ["inference-engine-cpu"])
     assert _fallback_projector_file() in {n.file for n in needed if not n.optional}
 
 
 def test_the_gateway_advertises_vision_for_both_cpu_names():
     config = yaml.safe_load((ROOT / "services" / "model-gateway" / "litellm_config.yaml").read_text())
-    cpu = [m for m in config["model_list"] if m["litellm_params"].get("api_base", "").startswith("http://llamacpp-cpu")]
+    cpu = [m for m in config["model_list"] if m["litellm_params"].get("api_base", "").startswith("http://inference-engine-cpu")]
     assert len(cpu) == 2
     assert all(m["model_info"]["supports_vision"] is True for m in cpu)

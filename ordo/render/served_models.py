@@ -22,8 +22,8 @@ from .models_volume import CHAT_SERVICE, NeededFile, required_model_files
 SERVED_MODEL_IDS: dict[str, tuple[str, str]] = {
     # service: (model id, kind)
     CHAT_SERVICE: ("local-chat", "chat"),
-    "llamacpp-cpu": ("local-chat-cpu", "chat"),
-    "llamacpp-embed": ("local-embed", "embedding"),
+    "inference-engine-cpu": ("local-chat-cpu", "chat"),
+    "inference-engine-embed": ("local-embed", "embedding"),
     "comfyui": ("comfyui", "comfyui"),
     "stt": ("voice-stt", "stt"),
     "tts": ("voice-tts", "tts"),
@@ -78,7 +78,7 @@ def _config(service: str, env: Mapping[str, str]) -> dict[str, Any]:
         if env.get("LLAMACPP_MMPROJ"):
             config["mmproj"] = env["LLAMACPP_MMPROJ"]
         return config
-    if service == "llamacpp-cpu":
+    if service == "inference-engine-cpu":
         return {"ctx": _ctx(env.get("LLAMACPP_CPU_CTX"))}
     return {}
 

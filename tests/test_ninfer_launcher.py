@@ -60,7 +60,7 @@ def test_the_artifact_window_and_model_id_come_from_the_render() -> None:
     assert "--spec mtp --draft-tokens 3 --lm-head-draft" in joined
 
 
-def test_llamacpp_only_settings_and_metrics_never_reach_ninfer() -> None:
+def test_legacy_server_settings_and_metrics_never_reach_ninfer() -> None:
     args = _args(_run())
     for flag in ("--metrics", "--n-gpu-layers", "--flash-attn", "--mmproj", "--cache-type-k", "--vision"):
         assert flag not in args, args

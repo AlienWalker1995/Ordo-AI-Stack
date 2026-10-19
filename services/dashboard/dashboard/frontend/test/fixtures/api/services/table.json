@@ -94,12 +94,12 @@
       "reason": null
     },
     {
-      "id": "ordo:llamacpp-cpu",
+      "id": "ordo:inference-engine-cpu",
       "name": "llama.cpp (CPU fallback)",
       "project": "ordo",
-      "container": "ordo-llamacpp-cpu-1",
-      "compose": "llamacpp-cpu",
-      "card_id": "llamacpp-cpu",
+      "container": "ordo-inference-engine-cpu-1",
+      "compose": "inference-engine-cpu",
+      "card_id": "inference-engine-cpu",
       "verdict": "up",
       "uptime": "3 hours",
       "status": "Up 3 hours (healthy)",
@@ -114,12 +114,12 @@
       "reason": null
     },
     {
-      "id": "ordo:llamacpp",
+      "id": "ordo:inference-engine-gpu",
       "name": "llama.cpp (GPU)",
       "project": "ordo",
-      "container": "ordo-llamacpp-1",
-      "compose": "llamacpp",
-      "card_id": "llamacpp",
+      "container": "ordo-inference-engine-gpu-1",
+      "compose": "inference-engine-gpu",
+      "card_id": "inference-engine-gpu",
       "verdict": "up",
       "uptime": "3 hours",
       "status": "Up 3 hours (healthy)",

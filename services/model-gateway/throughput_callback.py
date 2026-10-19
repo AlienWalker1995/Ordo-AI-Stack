@@ -150,7 +150,7 @@ def _served_api_base(kwargs: dict[str, Any]) -> str:
 
 def _detect_backend(kwargs: dict[str, Any]) -> str:
     """Backend service that served the request, from the deployment api_base host
-    (e.g. 'llamacpp' vs 'llamacpp-cpu' — the failover distinction). '' if unknown."""
+    (e.g. 'inference-engine-gpu' vs 'inference-engine-cpu' — the failover distinction). '' if unknown."""
     try:
         return (urlparse(_served_api_base(kwargs)).hostname or "")[:64]
     except ValueError:

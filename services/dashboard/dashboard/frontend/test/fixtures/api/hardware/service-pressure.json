@@ -10,7 +10,7 @@
   },
   "services": [
     {
-      "id": "llamacpp",
+      "id": "inference-engine-gpu",
       "name": "llama.cpp (GPU)",
       "cpu_pct": 12.4,
       "mem_gb": 3.2,
@@ -34,7 +34,7 @@
       "reason": null
     },
     {
-      "id": "llamacpp-cpu",
+      "id": "inference-engine-cpu",
       "name": "llama.cpp (CPU fallback)",
       "cpu_pct": 0.4,
       "mem_gb": 21.7,

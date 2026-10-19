@@ -3,7 +3,7 @@
 router_settings.fallbacks sends ANY error from the GPU deployment to the CPU model;
 the gate (services/model-gateway/gpu_lease_fallback_gate.py) always allows that hop, so
 a GPU failure degrades to the CPU model instead of failing the caller. It still reads
-ops-controller's /metrics (ordo_gpu_resident_evicted{resident="llamacpp"},
+ops-controller's /metrics (ordo_gpu_resident_evicted{resident="inference-engine-gpu"},
 ordo_gpu_chat_up) and logs the lease state for observability.
 
 litellm is not a test dependency (huge tree); the gate only needs its CustomLogger
@@ -48,12 +48,12 @@ METRICS_NORMAL = (
     "ordo_gpu_chat_up 1\n"
     "# HELP ordo_gpu_resident_evicted 1 while a GPU resident is stopped for a lease.\n"
     "# TYPE ordo_gpu_resident_evicted gauge\n"
-    'ordo_gpu_resident_evicted{resident="llamacpp"} 0\n'
-    'ordo_gpu_resident_evicted{resident="llamacpp-embed"} 0\n'
+    'ordo_gpu_resident_evicted{resident="inference-engine-gpu"} 0\n'
+    'ordo_gpu_resident_evicted{resident="inference-engine-embed"} 0\n'
 )
 METRICS_LEASED = METRICS_NORMAL.replace(
-    'ordo_gpu_resident_evicted{resident="llamacpp"} 0',
-    'ordo_gpu_resident_evicted{resident="llamacpp"} 1',
+    'ordo_gpu_resident_evicted{resident="inference-engine-gpu"} 0',
+    'ordo_gpu_resident_evicted{resident="inference-engine-gpu"} 1',
 )
 METRICS_CHAT_DOWN = METRICS_NORMAL.replace("ordo_gpu_chat_up 1", "ordo_gpu_chat_up 0")
 
@@ -104,7 +104,7 @@ def _deployments() -> list:
 # --- fallback_allowed: the pure metrics parsing ---------------------------------
 
 
-def test_fallback_allowed_when_llamacpp_evicted():
+def test_fallback_allowed_when_inference_engine_gpu_evicted():
     assert gate.fallback_allowed(METRICS_LEASED) is True
 
 

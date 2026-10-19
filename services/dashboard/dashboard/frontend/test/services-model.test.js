@@ -148,7 +148,7 @@ describe('sortRows', () => {
     // The backend sends the evicted resident as stopped with lent: true, never a "lent" verdict;
     // its severity is info, so it sorts behind the genuine stopped rows, not among them.
     const evicted = ordo().map((r) => {
-      if (r.id === 'ordo:llamacpp') return { ...r, verdict: 'stopped', lent: true }
+      if (r.id === 'ordo:inference-engine-gpu') return { ...r, verdict: 'stopped', lent: true }
       if (r.id === 'ordo:caddy' || r.id === 'ordo:ops-controller') return { ...r, verdict: 'stopped' }
       return r
     })
@@ -204,7 +204,7 @@ describe('displayIdentifier', () => {
     const byId = Object.fromEntries(rows().map((r) => [r.id, r]))
     expect(displayIdentifier(byId['ordo:comfyui'])).toBe('comfyui')
     expect(displayIdentifier(byId['ordo:open-webui'])).toBe('open-webui')
-    expect(displayIdentifier(byId['ordo:llamacpp'])).toBe('llamacpp')
+    expect(displayIdentifier(byId['ordo:inference-engine-gpu'])).toBe('inference-engine-gpu')
   })
 
   it('strips the project prefix and -1 suffix from the container otherwise', () => {

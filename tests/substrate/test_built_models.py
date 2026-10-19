@@ -63,7 +63,7 @@ class FakeRunner:
 
 
 def _stack(file="b.ninfer"):
-    doc = {"services": {"llamacpp": {"image": "x", "volumes": ["models-gguf:/models:ro"]}}}
+    doc = {"services": {"inference-engine-gpu": {"image": "x", "volumes": ["models-gguf:/models:ro"]}}}
     return doc, {"LLAMACPP_MODEL": file, "LLAMACPP_MMPROJ": ""}
 
 
@@ -152,7 +152,7 @@ def test_installing_a_local_file_mounts_only_its_directory_read_only(tmp_path):
 def test_up_verifies_a_built_model_even_when_it_is_present():
     doc, env = _stack()
     runner = FakeRunner(files={"b.ninfer"})
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=Catalog([_built()]), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=Catalog([_built()]), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 0
     [argv] = runner.helper_runs()
     assert f"ORDO_FETCH_SHA256={DATA_SHA}" in argv
@@ -162,7 +162,7 @@ def test_up_verifies_a_built_model_even_when_it_is_present():
 def test_up_refuses_a_missing_or_wrong_built_model_with_the_rebuild_commands(files, capsys):
     doc, env = _stack()
     runner = FakeRunner(files=files, helper_exit=fetch.EXIT_NOT_BUILT)
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=Catalog([_built()]), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=Catalog([_built()]), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 1
     err = capsys.readouterr().err
     assert "services/ninfer/convert/run.sh qwen3.8-27b-heretic-ara" in err
@@ -173,7 +173,7 @@ def test_up_refuses_a_missing_or_wrong_built_model_with_the_rebuild_commands(fil
 def test_dry_run_says_it_would_verify_a_built_model(capsys):
     doc, env = _stack()
     runner = FakeRunner(files={"b.ninfer"})
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=Catalog([_built()]), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=Catalog([_built()]), project="ordo",
                                secrets={}, runner=runner, dry_run=True) == 0
     assert runner.helper_runs() == []
     assert "would verify b (b.ninfer)" in capsys.readouterr().out

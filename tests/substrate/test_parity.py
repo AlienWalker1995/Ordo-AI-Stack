@@ -16,7 +16,7 @@ def _ultra_env():
     return render(src, CATALOG).env
 
 
-def test_full_llamacpp_surface_rendered():
+def test_full_llama_cpp_env_surface_rendered():
     env = _ultra_env()
     for k in ["LLAMACPP_MODEL", "LLAMACPP_CTX_SIZE", "LLAMACPP_MMPROJ", "LLAMACPP_EXTRA_ARGS",
               "LLAMACPP_N_PREDICT", "LLAMACPP_FLASH_ATTN", "LLAMACPP_KV_CACHE_TYPE_K"]:

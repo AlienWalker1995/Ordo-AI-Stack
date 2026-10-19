@@ -28,9 +28,9 @@ shrink/expand API). Retire a patch when upstream ships its fix, not when it stop
 ## Build
 From the repo root, while the active model uses this build:
 ```
-ordo build llamacpp
+ordo build inference-engine-gpu
 python -m ordo render
-ordo recreate llamacpp        # outside a GPU lease; it refuses during one
+ordo recreate inference-engine-gpu        # outside a GPU lease; it refuses during one
 ```
 `ordo up` also builds it when Docker lacks the tag the compose names. It is a CUDA compile, so
 the first build takes a while. Never `docker build` it by hand: a hand tag is invisible to the

@@ -39,18 +39,18 @@
 #   vram_reserve_gb the VRAM the sizer keeps free beside it (default 4.0); only for a model whose
 #                   vram_gb is its measured footprint including compute buffers
 #   auto: false     pinnable only: `model: auto` never picks it
-# Each is also an `overrides.llamacpp` key (n_cpu_moe, threads, load_mode, n_predict).
+# Each is also an `overrides.inference-engine-gpu` key (n_cpu_moe, threads, load_mode, n_predict).
 #
 # gateway: how model-gateway (LiteLLM) adapts client requests to this model's server. Unknown keys are
 # a load error.
 #   drop_tool_strict: true   remove `strict` from every tool definition (tools[].function.strict)
 #                            before the request reaches a server that refuses strict tools
-# backend: the engine the single GPU chat service (`llamacpp`) runs. `llama.cpp` (the default) serves
+# backend: the engine the single GPU chat service (`inference-engine-gpu`) runs. `llama.cpp` (the default) serves
 # GGUF files through scripts/llamacpp/run-llama-server.sh. `ninfer` serves one .ninfer artifact through
 # scripts/llamacpp/run-ninfer-serve.sh and must name its engine image (backend_image: ordo/ninfer).
 # Same service name, alias, port and models volume either way; rolling back is a `model:` change.
 #   vision: { enabled, max_context }  ninfer only: load the artifact's vision encoder, which caps the
-#                                     window at max_context. Also `overrides.llamacpp.vision`.
+#                                     window at max_context. Also `overrides.inference-engine-gpu.vision`.
 # build: in place of `source`, a file built locally by the tracked recipe of that name in
 # services/ninfer/convert/inputs/ (every input pinned by revision and sha256). It must pin sha256 and
 # size_bytes. Nothing downloads it: `ordo fetch`, `ordo up` and `ordo apply` verify the file in the
@@ -213,7 +213,7 @@ models:
     cpu_threads: 12
     # vram_gb is the MEASURED footprint at that placement minus the KV cache: 30.2GiB on the card at
     # 106496 tokens, less 1.57GiB of KV. It already includes compute buffers and CUDA overhead, so
-    # the reserve beside it is only the other declared resident on this card (llamacpp-embed, 1.0GB).
+    # the reserve beside it is only the other declared resident on this card (inference-engine-embed, 1.0GB).
     # ram_gb is the expert weights held in RAM (10.2GiB) plus headroom.
     requires: { vram_gb: 28.6, ram_gb: 12, cpu_ok: false, min_compute_cap: "12.0" }
     vram_reserve_gb: 1.0
@@ -252,7 +252,7 @@ models:
     # Measured on the 5090 (2026-09-30 eval, engine d44ab584): 29.3GiB on the card at 262,144 tokens
     # with fp8 KV and MTP3, of which the KV pool is 16.6KiB per token (9.19GiB runtime at 262,144 vs
     # 8.84GiB at 240,000). vram_gb is the rest: weights 19.7GiB plus the engine's fixed buffers. The
-    # reserve beside it is the other declared resident on this card, llamacpp-embed's 1.0GB.
+    # reserve beside it is the other declared resident on this card, inference-engine-embed's 1.0GB.
     # ram_gb: the engine pins 8GiB of host KV plus checkpoint state by default.
     requires: { vram_gb: 25.2, ram_gb: 12, cpu_ok: false, min_compute_cap: "12.0" }
     vram_reserve_gb: 1.0
@@ -441,7 +441,7 @@ models:
 # Support models: weights the rendered stack reads from the same models-gguf volume that are NOT
 # chat-model candidates (the sizer never picks them). Pinned here so `ordo fetch` / `ordo up` can
 # provision them. The file names match the defaults the plugin manifests load
-# (`${LLAMACPP_CPU_MODEL:-...}` in services/llamacpp-cpu, `${LLAMACPP_EMBED_MODEL:-...}` in
+# (`${LLAMACPP_CPU_MODEL:-...}` in services/inference-engine-cpu, `${LLAMACPP_EMBED_MODEL:-...}` in
 # services/rag). sha256 = the Hugging Face LFS oid of each file.
 support_models:
   - id: qwen3.8-35b-a3b-distill-cpu-iq4xs
@@ -456,7 +456,7 @@ support_models:
     size_bytes: 19627788160
     # The distill's own F16 vision projector, so images keep working while the fallback serves.
     # Stored under a model-specific name (upstream: mmproj-Qwen3.8-35B-A3B-F16.gguf); sha256 = its HF
-    # LFS oid. services/llamacpp-cpu passes it as --mmproj (tests/substrate/test_cpu_fallback_vision.py).
+    # LFS oid. services/inference-engine-cpu passes it as --mmproj (tests/substrate/test_cpu_fallback_vision.py).
     mmproj:
       file: Qwen3.8-35B-A3B-Distill-mmproj-F16.gguf
       source: https://huggingface.co/empero-ai/Qwen3.8-35B-A3B-Distill-GGUF/resolve/b1f9d1dcc3de8aa867669b0ab919384aeeb9b8d5/mmproj-Qwen3.8-35B-A3B-F16.gguf

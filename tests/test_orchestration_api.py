@@ -232,7 +232,7 @@ def test_orch_registry_list_models_ok(dash_client, monkeypatch):
     import dashboard.routes_orchestration as ro
     monkeypatch.setattr(ro, "OPS_CONTROLLER_TOKEN", "tok")
 
-    payload = {"models": {"local-chat": {"kind": "chat", "service": "llamacpp"}}}
+    payload = {"models": {"local-chat": {"kind": "chat", "service": "inference-engine-gpu"}}}
 
     def _mk_client(*a, **k):
         return _MockAsyncClient({"/registry/models": _MockResp(payload)})

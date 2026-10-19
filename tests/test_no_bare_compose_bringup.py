@@ -3,7 +3,7 @@
 `ordo up` / `ordo recreate` are the only bring-up verbs: they share ops-controller's argv builder (both
 env files, every profile, `--no-deps` for named services, caddy's netns members named alongside it) and
 refuse while the GPU lease would be violated. A bare `docker compose up -d agent` starts the agent's
-whole dependency closure, which contains `llamacpp`: during a leased render that puts the evicted GPU
+whole dependency closure, which contains `inference-engine-gpu`: during a leased render that puts the evicted GPU
 resident back beside the render (the 2026-09-23 near-miss shape). A bare `docker compose restart`
 starts a stopped (evicted) container the same way.
 

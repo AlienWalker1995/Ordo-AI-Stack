@@ -96,7 +96,7 @@ def test_external_agents_declared_out_of_band():
     assert RESOLVE("ordo/agent-openai-agent:latest") == buildspec.EXTERNAL
 
 
-def test_patched_llamacpp_resolves_via_substrate_not_substring():
+def test_patched_build_resolves_via_substrate_not_substring():
     """The patched llama.cpp build (named by a catalog `backend_image`, not a manifest) resolves through
     the substrate map: the generic replacement for the deleted `'llamacpp-patched' in image` special-case."""
     assert RESOLVE("ordo/llamacpp-patched:0123456789ab") == "services/llamacpp-patched"

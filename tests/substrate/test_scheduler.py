@@ -107,7 +107,7 @@ def test_there_is_no_cloud_fallback():
 def _sched_with_resident(total=32, resident_gb=25):
     """A scheduler with the resident LLM registered as idle-cached (the serve-startup wiring)."""
     s = Scheduler(total_vram_gb=total)
-    s.cache_idle("llamacpp", resident_gb)   # ~weights+KV footprint — leaves too little for a media job
+    s.cache_idle("inference-engine-gpu", resident_gb)   # ~weights+KV footprint — leaves too little for a media job
     return s
 
 
@@ -116,20 +116,20 @@ def test_media_job_evicts_resident_and_records_it_for_restore():
     s.submit(Job("render", 18, "media"))
     admitted, evicted = s.pump()
     assert admitted == ["render"]
-    assert evicted == ["llamacpp"]                       # resident stopped to free VRAM
-    assert "llamacpp" in s.evicted_residents             # tracked with its footprint for restore
-    assert s.evicted_residents["llamacpp"] == 25
-    assert "llamacpp" not in s.idle_cached               # no longer cached (it's stopped)
+    assert evicted == ["inference-engine-gpu"]                       # resident stopped to free VRAM
+    assert "inference-engine-gpu" in s.evicted_residents             # tracked with its footprint for restore
+    assert s.evicted_residents["inference-engine-gpu"] == 25
+    assert "inference-engine-gpu" not in s.idle_cached               # no longer cached (it's stopped)
 
 
 def test_resident_restored_when_media_completes_and_queue_drains():
     s = _sched_with_resident()
     s.submit(Job("render", 18, "media"))
-    s.pump()                                             # evicts llamacpp, runs render
+    s.pump()                                             # evicts inference-engine-gpu, runs render
     s.complete("render")                                   # media done -> queue empty
     restored = s.take_restorable()
-    assert restored == {"llamacpp": 25}                  # resident restarted with its footprint
-    assert "llamacpp" in s.idle_cached                   # re-armed as evictable for the next lease
+    assert restored == {"inference-engine-gpu": 25}                  # resident restarted with its footprint
+    assert "inference-engine-gpu" in s.idle_cached                   # re-armed as evictable for the next lease
     assert s.evicted_residents == {}
 
 
@@ -139,7 +139,7 @@ def test_no_restore_while_a_media_job_still_running():
     s.pump()
     # render still running — restoring the LLM now would immediately need re-eviction: don't.
     assert s.take_restorable() == {}
-    assert "llamacpp" in s.evicted_residents
+    assert "inference-engine-gpu" in s.evicted_residents
 
 
 def test_no_thrash_between_back_to_back_media_jobs():
@@ -148,7 +148,7 @@ def test_no_thrash_between_back_to_back_media_jobs():
     s = _sched_with_resident()
     s.submit(Job("render1", 18, "media"))
     s.submit(Job("render2", 18, "media"))
-    s.pump()                                             # render1 runs (evicts llamacpp); render2 queued
+    s.pump()                                             # render1 runs (evicts inference-engine-gpu); render2 queued
     assert s.running_ids == ["render1"] and s.queued_ids == ["render2"]
     s.complete("render1")                                  # render2 now admittable
     assert s.take_restorable() == {}                     # DON'T restore — render2 still needs the card
@@ -156,7 +156,7 @@ def test_no_thrash_between_back_to_back_media_jobs():
     assert s.running_ids == ["render2"]
     assert s.take_restorable() == {}                     # still no restore while render2 runs
     s.complete("render2")
-    assert s.take_restorable() == {"llamacpp": 25}       # only now — queue fully drained
+    assert s.take_restorable() == {"inference-engine-gpu": 25}       # only now — queue fully drained
 
 
 def test_lease_ttl_auto_completes_stranded_job():
@@ -171,7 +171,7 @@ def test_lease_ttl_auto_completes_stranded_job():
     s.tick(40)                                           # now 130s elapsed > 120s TTL
     assert s.sweep_expired_leases() == ["render"]          # force-completed
     assert s.running_ids == []
-    assert s.take_restorable() == {"llamacpp": 25}       # resident restored after the stranded lease
+    assert s.take_restorable() == {"inference-engine-gpu": 25}       # resident restored after the stranded lease
 
 
 def test_lease_ttl_default_and_max_caps():
@@ -194,10 +194,10 @@ def test_recache_resident_clears_evicted_and_rearms():
     s = _sched_with_resident()
     s.submit(Job("render", 18, "media"))
     s.pump()
-    assert "llamacpp" in s.evicted_residents
-    s.cache_idle("llamacpp", 25)                         # re-registered as resident
-    assert "llamacpp" not in s.evicted_residents
-    assert s.idle_cached["llamacpp"] == 25
+    assert "inference-engine-gpu" in s.evicted_residents
+    s.cache_idle("inference-engine-gpu", 25)                         # re-registered as resident
+    assert "inference-engine-gpu" not in s.evicted_residents
+    assert s.idle_cached["inference-engine-gpu"] == 25
 
 
 def test_status_surfaces_lease_and_resident_fields():
@@ -205,7 +205,7 @@ def test_status_surfaces_lease_and_resident_fields():
     s.submit(Job("render", 18, "media", est_seconds=120))
     s.pump()
     st = s.status()
-    assert st["evicted_residents"] == {"llamacpp": 25}
+    assert st["evicted_residents"] == {"inference-engine-gpu": 25}
     assert st["idle_cached"] == {}
     assert st["running"][0]["lease_ttl_s"] == 240.0      # 120 * 2
     assert st["free_vram_gb"] == 32 - 18                 # evicted resident holds no VRAM
@@ -247,16 +247,16 @@ def test_heartbeat_unknown_or_completed_job_is_false_and_harmless():
 
 def test_heartbeat_lease_restores_resident_after_sweep():
     # end-to-end lease semantics survive: a heartbeating training job that dies is swept
-    # and the evicted resident becomes restorable again (llamacpp can never be stranded down).
+    # and the evicted resident becomes restorable again (inference-engine-gpu can never be stranded down).
     s = Scheduler(total_vram_gb=32)
-    s.cache_idle("llamacpp", 25)
+    s.cache_idle("inference-engine-gpu", 25)
     s.submit(Job("train", 30, "training"))
     s.pump()
-    assert "llamacpp" in s.evicted_residents
+    assert "inference-engine-gpu" in s.evicted_residents
     s.heartbeat("train")
     s.tick(901)                                # client died right after its beat
     assert s.sweep_expired_leases() == ["train"]
-    assert "llamacpp" in s.take_restorable()
+    assert "inference-engine-gpu" in s.take_restorable()
 
 
 def test_status_reports_lease_held_time():

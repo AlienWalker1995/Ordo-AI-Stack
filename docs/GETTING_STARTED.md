@@ -31,9 +31,9 @@ Alternatively, `ordo up --all` alone brings up the same services without re-rend
 
 Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` service.
 
-1. **Start the RAG profile** (adds Qdrant + `rag-ingestion`). `ordo up` downloads the embedding model (**EmbeddingGemma 2**) into the `models-gguf` volume that `llamacpp-embed` serves from the first time, checksum-verified (see [data.md: Model Pull](data.md#model-pull)):
+1. **Start the RAG profile** (adds Qdrant + `rag-ingestion`). `ordo up` downloads the embedding model (**EmbeddingGemma 2**) into the `models-gguf` volume that `inference-engine-embed` serves from the first time, checksum-verified (see [data.md: Model Pull](data.md#model-pull)):
    ```bash
-   ordo up qdrant llamacpp-embed rag-ingestion
+   ordo up qdrant inference-engine-embed rag-ingestion
    ```
 2. **Drop documents** under `data/rag-input/` (paths come from your `DATA_PATH` / `BASE_PATH`; default is `<repo>/data/rag-input/`). Supported types include `.txt`, `.md`, `.pdf`, and common code extensions — see `services/rag/ingest.py` for `SUPPORTED_EXTENSIONS`.
 3. **Open WebUI** → enable RAG for chat (vector DB is already pointed at Qdrant in compose).

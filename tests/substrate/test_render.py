@@ -81,7 +81,7 @@ def test_render_writes_and_drift_reverts(tmp_path):
 
 
 def test_override_survives_regeneration_and_stays_consistent():
-    src = _src(hardware=PROFILE_5090, overrides={"llamacpp": {"ctx_size": 65536}})
+    src = _src(hardware=PROFILE_5090, overrides={"inference-engine-gpu": {"ctx_size": 65536}})
     rc = render(src, CATALOG)
     assert rc.ctx_size == 65536
     d = rc.manifest()["derived"]
@@ -99,38 +99,38 @@ _LLAMACPP_OVERRIDE_KEYS = (
 )
 
 
-def test_override_for_a_service_other_than_llamacpp_is_a_render_error():
+def test_override_for_a_service_other_than_inference_engine_gpu_is_a_render_error():
     src = _src(hardware=PROFILE_5090, overrides={"comfyui": {"cap_add": ["SYS_NICE"]}})
     with pytest.raises(ValueError) as err:
         render(src, CATALOG)
     message = str(err.value)
-    assert "'comfyui'" in message and "'llamacpp'" in message
+    assert "'comfyui'" in message and "'inference-engine-gpu'" in message
 
 
-def test_unknown_llamacpp_override_key_is_a_render_error_naming_the_supported_keys():
-    src = _src(hardware=PROFILE_5090, overrides={"llamacpp": {"environment": {"FOO": "1"}}})
+def test_unknown_inference_engine_gpu_override_key_is_a_render_error_naming_the_supported_keys():
+    src = _src(hardware=PROFILE_5090, overrides={"inference-engine-gpu": {"environment": {"FOO": "1"}}})
     with pytest.raises(ValueError) as err:
         render(src, CATALOG)
     message = str(err.value)
-    assert "'environment'" in message and "llamacpp" in message
+    assert "'environment'" in message and "inference-engine-gpu" in message
     for key in _LLAMACPP_OVERRIDE_KEYS:
         assert key in message
 
 
-def test_llamacpp_override_must_be_a_mapping():
-    src = _src(hardware=PROFILE_5090, overrides={"llamacpp": "ctx_size=65536"})
-    with pytest.raises(ValueError, match="llamacpp"):
+def test_inference_engine_gpu_override_must_be_a_mapping():
+    src = _src(hardware=PROFILE_5090, overrides={"inference-engine-gpu": "ctx_size=65536"})
+    with pytest.raises(ValueError, match="inference-engine-gpu"):
         render(src, CATALOG)
 
 
-def test_every_supported_llamacpp_override_key_renders():
+def test_every_supported_inference_engine_gpu_override_key_renders():
     for key in _LLAMACPP_OVERRIDE_KEYS:
         baseline = render(_src(hardware=PROFILE_5090), CATALOG)
         pinned = {"ctx_size": 65536, "gpu_layers": 12, "parallel": 2, "rope_scale": 2,
                   "yarn_orig_ctx": 4096, "n_predict": 1024, "reasoning_budget": 1024,
                   "enable_kv_quant": 0, "n_cpu_moe": 4, "threads": 8,
                   "load_mode": "mmap-lazy"}.get(key, "override-probe")
-        rc = render(_src(hardware=PROFILE_5090, overrides={"llamacpp": {key: pinned}}), CATALOG)
+        rc = render(_src(hardware=PROFILE_5090, overrides={"inference-engine-gpu": {key: pinned}}), CATALOG)
         # every honoured key changes what the render writes, so none is a silent no-op
         assert rc.env != baseline.env, key
 

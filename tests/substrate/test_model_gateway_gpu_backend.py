@@ -61,7 +61,7 @@ def test_the_gpu_deployments_send_the_weights_file_as_the_model(tmp_path):
     for name in ("local-chat", "qwen3_8_27b_nvfp4"):
         params = _deployment(cfg, name)["litellm_params"]
         assert params["model"] == "openai/qwen3_8_27b_nvfp4.ninfer", name
-        assert params["api_base"] == "http://llamacpp:8080/v1"
+        assert params["api_base"] == "http://inference-engine-gpu:8080/v1"
 
 
 def test_a_gguf_model_keeps_its_alias_and_routes_the_same_way(tmp_path):

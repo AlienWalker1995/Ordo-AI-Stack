@@ -14,13 +14,13 @@ from dashboard import live_work
 T0 = 1_760_000_000.0
 
 
-def _started(call_id: str, caller: str = "agent-key", deployment: str = "llamacpp", at: float = T0, **extra) -> dict:
+def _started(call_id: str, caller: str = "agent-key", deployment: str = "inference-engine-gpu", at: float = T0, **extra) -> dict:
     return {"event": "started", "call_id": call_id, "caller": caller, "model_group": "local-chat",
             "model": "chat-model.gguf", "deployment": deployment, "prompt_tokens": 1200,
             "fallback": False, "started_at": at, **extra}
 
 
-def _ended(call_id: str, caller: str = "agent-key", deployment: str = "llamacpp", started: float = T0,
+def _ended(call_id: str, caller: str = "agent-key", deployment: str = "inference-engine-gpu", started: float = T0,
            ended: float = T0 + 4, outcome: str = "ok", **extra) -> dict:
     return {"event": "ended", "call_id": call_id, "caller": caller, "model_group": "local-chat",
             "model": "chat-model.gguf", "deployment": deployment, "prompt_tokens": 1180,
@@ -36,13 +36,13 @@ def test_a_started_request_is_in_flight_until_it_ends():
     snap = store.snapshot(now=T0 + 10)
     assert [r["call_id"] for r in snap["inflight"]] == ["a"]
     assert snap["inflight"][0]["running_s"] == 10.0
-    assert snap["engines"]["llamacpp"]["inflight"] == 1
-    assert snap["engines"]["llamacpp-cpu"]["inflight"] == 0
+    assert snap["engines"]["inference-engine-gpu"]["inflight"] == 1
+    assert snap["engines"]["inference-engine-cpu"]["inflight"] == 0
 
     store.ended(_ended("a", ended=T0 + 12), now=T0 + 12)
     snap = store.snapshot(now=T0 + 13)
     assert snap["inflight"] == []
-    assert snap["engines"]["llamacpp"]["inflight"] == 0
+    assert snap["engines"]["inference-engine-gpu"]["inflight"] == 0
     assert snap["recent"]["callers"][0]["requests"] == 1
 
 
@@ -65,10 +65,10 @@ def test_a_fallback_hop_under_the_same_call_id_is_in_flight_again():
     store = live_work.WorkStore()
     store.started(_started("c"), now=T0)
     store.ended(_ended("c", ended=T0 + 1, outcome="error", error="InternalServerError"), now=T0 + 1)
-    store.started(_started("c", deployment="llamacpp-cpu", at=T0 + 1.1, fallback=True), now=T0 + 1.1)
+    store.started(_started("c", deployment="inference-engine-cpu", at=T0 + 1.1, fallback=True), now=T0 + 1.1)
     snap = store.snapshot(now=T0 + 5)
-    assert [(r["deployment"], r["fallback"]) for r in snap["inflight"]] == [("llamacpp-cpu", True)]
-    assert snap["engines"]["llamacpp-cpu"]["inflight"] == 1
+    assert [(r["deployment"], r["fallback"]) for r in snap["inflight"]] == [("inference-engine-cpu", True)]
+    assert snap["engines"]["inference-engine-cpu"]["inflight"] == 1
     assert snap["recent"]["callers"][0]["errors"] == 1
 
 
@@ -77,11 +77,11 @@ def test_an_end_for_the_older_attempt_keeps_the_fallback_hop_in_flight():
     after the fallback hop's start; it must not pop the fallback out of the in-flight map."""
     store = live_work.WorkStore()
     store.started(_started("c", at=T0), now=T0)
-    store.started(_started("c", deployment="llamacpp-cpu", at=T0 + 1.1, fallback=True), now=T0 + 1.1)
+    store.started(_started("c", deployment="inference-engine-cpu", at=T0 + 1.1, fallback=True), now=T0 + 1.1)
     store.ended(_ended("c", started=T0, ended=T0 + 1, outcome="error", error="InternalServerError"), now=T0 + 1.2)
     snap = store.snapshot(now=T0 + 5)
-    assert [(r["deployment"], r["fallback"]) for r in snap["inflight"]] == [("llamacpp-cpu", True)]
-    assert snap["engines"]["llamacpp-cpu"]["inflight"] == 1
+    assert [(r["deployment"], r["fallback"]) for r in snap["inflight"]] == [("inference-engine-cpu", True)]
+    assert snap["engines"]["inference-engine-cpu"]["inflight"] == 1
     assert snap["recent"]["callers"][0]["errors"] == 1  # the older attempt's end still landed
 
 
@@ -179,8 +179,8 @@ def test_the_work_view_is_an_open_read(dashboard, monkeypatch):
     body = TestClient(dashboard.app).get("/api/work").json()
     assert body["inflight"] == []
     assert body["recent"] == {"window_s": 300, "callers": []}
-    assert body["engines"] == {"llamacpp": {"inflight": 0, "prefill": None},
-                               "llamacpp-cpu": {"inflight": 0, "prefill": None}}
+    assert body["engines"] == {"inference-engine-gpu": {"inflight": 0, "prefill": None},
+                               "inference-engine-cpu": {"inflight": 0, "prefill": None}}
     assert isinstance(body["generated_at"], float)
     slots.get.assert_not_awaited()
 
@@ -190,8 +190,8 @@ def test_the_cpu_engine_reports_its_prefill_while_the_fallback_serves(dashboard,
         {"id": 0, "is_processing": True, "n_prompt_tokens": 9000, "n_prompt_tokens_processed": 4096,
          "n_prompt_tokens_cache": 1024}])
     client = TestClient(dashboard.app)
-    client.post("/api/work/events", json=_started("cpu-1", deployment="llamacpp-cpu", at=time.time(), fallback=True))
-    cpu = client.get("/api/work").json()["engines"]["llamacpp-cpu"]
+    client.post("/api/work/events", json=_started("cpu-1", deployment="inference-engine-cpu", at=time.time(), fallback=True))
+    cpu = client.get("/api/work").json()["engines"]["inference-engine-cpu"]
     assert cpu == {"inflight": 1, "prefill": {"available": True, "processing": True, "prompt_tokens": 9000,
                                               "processed": 4096, "cached": 1024}}
     client.get("/api/work")
@@ -202,8 +202,8 @@ def test_the_cpu_engine_reports_its_prefill_while_the_fallback_serves(dashboard,
 def test_an_unreachable_cpu_engine_reads_as_unavailable(dashboard, monkeypatch):
     _slots_client(monkeypatch, dashboard, error=httpx.ConnectError("no route"))
     client = TestClient(dashboard.app)
-    client.post("/api/work/events", json=_started("cpu-1", deployment="llamacpp-cpu", at=time.time()))
+    client.post("/api/work/events", json=_started("cpu-1", deployment="inference-engine-cpu", at=time.time()))
     response = client.get("/api/work")
     assert response.status_code == 200
-    assert response.json()["engines"]["llamacpp-cpu"]["prefill"] == {
+    assert response.json()["engines"]["inference-engine-cpu"]["prefill"] == {
         "available": False, "processing": False, "prompt_tokens": 0, "processed": 0, "cached": 0}

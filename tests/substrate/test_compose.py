@@ -41,9 +41,9 @@ def test_isolated_no_port_clashes():
 
 def test_gpu_reservation_gated_by_hardware():
     with_gpu = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[])
-    assert "deploy" in with_gpu["services"]["llamacpp"]
+    assert "deploy" in with_gpu["services"]["inference-engine-gpu"]
     no_gpu = compose.render_compose(nvidia_gpu=False, llamacpp_backend=CPU, compose_profiles=[])
-    assert "deploy" not in no_gpu["services"]["llamacpp"]
+    assert "deploy" not in no_gpu["services"]["inference-engine-gpu"]
 
 
 def test_plugin_services_behind_profiles():
@@ -59,10 +59,10 @@ def test_plugin_services_behind_profiles():
     assert "comfyui" not in c2["services"]
 
 
-def test_llamacpp_emits_metrics():
+def test_inference_engine_gpu_emits_metrics():
     # render always emits --metrics so the monitoring plugin's prometheus can scrape :8080
     c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[])
-    assert c["services"]["llamacpp"]["command"] == ["--metrics"]
+    assert c["services"]["inference-engine-gpu"]["command"] == ["--metrics"]
 
 
 def test_monitoring_named_volumes_declared():
@@ -110,9 +110,9 @@ def test_ops_controller_has_utility_gpu_visibility():
 
 def test_plain_gpu_service_reserves_gpu_capability():
     # A regular compute GPU service (gpu=True) must reserve the `gpu` capability — the utility
-    # refactor must NOT change that (llamacpp/plugins get compute, not read-only visibility).
+    # refactor must NOT change that (inference-engine-gpu/plugins get compute, not read-only visibility).
     c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[])
-    devs = c["services"]["llamacpp"]["deploy"]["resources"]["reservations"]["devices"]
+    devs = c["services"]["inference-engine-gpu"]["deploy"]["resources"]["reservations"]["devices"]
     assert any(d.get("capabilities") == ["gpu"] for d in devs), \
         "a plain gpu:true service must reserve the compute `gpu` capability, not `utility`"
 
@@ -200,7 +200,7 @@ def test_an_nvidia_render_keeps_the_control_plane_utility_reservations():
                             "model": "auto", "plugins": "auto"})
     c = render(src, CATALOG, REGISTRY, dashboards=dashboards).compose_dict()
     reserved = _reserved_device_services(c)
-    assert {"ops-controller", "llamacpp"} <= set(reserved)
+    assert {"ops-controller", "inference-engine-gpu"} <= set(reserved)
     assert "dashboard" not in reserved
     assert c["services"]["ops-controller"]["environment"]["NVIDIA_DRIVER_CAPABILITIES"] == "utility"
 
@@ -216,17 +216,17 @@ def test_agent_swappable():
     assert "agent-someagent" in c["services"]["agent"]["image"]
 
 
-def test_llamacpp_image_defaults_to_the_backend_build():
+def test_inference_engine_gpu_image_defaults_to_the_backend_build():
     c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[])
-    assert c["services"]["llamacpp"]["image"] == CUDA.image
+    assert c["services"]["inference-engine-gpu"]["image"] == CUDA.image
     c = compose.render_compose(nvidia_gpu=False, llamacpp_backend=CPU, compose_profiles=[])
-    assert c["services"]["llamacpp"]["image"] == CPU.image
+    assert c["services"]["inference-engine-gpu"]["image"] == CPU.image
 
 
-def test_llamacpp_image_override():
+def test_inference_engine_gpu_image_override():
     patched = "ordo/llamacpp-patched:0123456789ab"
-    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], llamacpp_image=patched)
-    assert c["services"]["llamacpp"]["image"] == patched
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], inference_engine_gpu_image=patched)
+    assert c["services"]["inference-engine-gpu"]["image"] == patched
 
 
 def test_render_writes_runnable_compose(tmp_path):
@@ -234,9 +234,9 @@ def test_render_writes_runnable_compose(tmp_path):
                             "model": "auto", "plugins": "auto"})
     render(src, CATALOG, REGISTRY).write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
-    assert "llamacpp" in c["services"] and "agent" in c["services"]
+    assert "inference-engine-gpu" in c["services"] and "agent" in c["services"]
     assert c["services"]["comfyui"]["profiles"] == ["media"]   # media enabled on 5090
-    assert "deploy" in c["services"]["llamacpp"]               # GPU reserved
+    assert "deploy" in c["services"]["inference-engine-gpu"]               # GPU reserved
 
 
 def test_backend_image_flows_from_catalog_to_compose_and_env(tmp_path):
@@ -249,7 +249,7 @@ def test_backend_image_flows_from_catalog_to_compose_and_env(tmp_path):
     rc.write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
     # first-party: render pins the tag `ordo build` recorded (`current` before the first build)
-    assert c["services"]["llamacpp"]["image"] == rc.model.backend_image + ":current"
+    assert c["services"]["inference-engine-gpu"]["image"] == rc.model.backend_image + ":current"
 
 
 def _dual_gpu_src(plugins="auto"):
@@ -262,9 +262,9 @@ def _dual_gpu_src(plugins="auto"):
 
 # ── Defect class: PRIMARY GPU pin (compute services must be pinned to the primary card by uuid, not
 #    `count: all`, or on a dual-GPU WSL2 box they leak onto the 1070 — a live-only failure). ──
-def test_llamacpp_pinned_to_primary_gpu_uuid():
+def test_inference_engine_gpu_pinned_to_primary_gpu_uuid():
     c = render(_dual_gpu_src(plugins=[]), CATALOG, REGISTRY).compose_dict()
-    lc = c["services"]["llamacpp"]
+    lc = c["services"]["inference-engine-gpu"]
     devs = lc["deploy"]["resources"]["reservations"]["devices"][0]
     assert devs["device_ids"] == ["GPU-PRIMARY-uuid"]        # pinned by uuid, not count:all
     assert lc["environment"]["CUDA_VISIBLE_DEVICES"] == "GPU-PRIMARY-uuid"   # the WSL2-honored layer
@@ -276,8 +276,8 @@ def test_comfyui_pinned_to_primary_gpu_uuid_and_the_embedder_reserves_no_gpu():
     comfy = c["services"]["comfyui"]
     assert comfy["deploy"]["resources"]["reservations"]["devices"][0]["device_ids"] == ["GPU-PRIMARY-uuid"]
     assert comfy["environment"]["CUDA_VISIBLE_DEVICES"] == "GPU-PRIMARY-uuid"
-    # llamacpp-embed runs the CPU build: a GPU reservation would only claim a card it never uses.
-    embed = c["services"]["llamacpp-embed"]
+    # inference-engine-embed runs the CPU build: a GPU reservation would only claim a card it never uses.
+    embed = c["services"]["inference-engine-embed"]
     assert "devices" not in ((embed.get("deploy") or {}).get("resources") or {}).get("reservations", {})
     assert "CUDA_VISIBLE_DEVICES" not in (embed.get("environment") or {})
 
@@ -373,7 +373,7 @@ def test_model_without_backend_image_runs_the_hosts_cuda_build(tmp_path):
     assert rc.env["LLAMACPP_IMAGE"] == CUDA.image
     rc.write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
-    assert c["services"]["llamacpp"]["image"] == CUDA.image
+    assert c["services"]["inference-engine-gpu"]["image"] == CUDA.image
 
 
 def test_edge_security_mounts_fail_loud_on_empty_base_path():
@@ -569,14 +569,14 @@ def test_gguf_models_on_named_volume():
     # servers read); everything else RO.
     from ordo.render.dashboards import DashboardRegistry
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
-                            "model": "auto", "plugins": ["llamacpp-cpu", "rag"]})
+                            "model": "auto", "plugins": ["inference-engine-cpu", "rag"]})
     c = render(src, CATALOG, REGISTRY,
                dashboards=DashboardRegistry.load(ROOT / "services")).compose_dict()
     assert "models-gguf" in c["volumes"]
     expected = {
-        "llamacpp": "models-gguf:/models:ro",
-        "llamacpp-cpu": "models-gguf:/models:ro",
-        "llamacpp-embed": "models-gguf:/models:ro",
+        "inference-engine-gpu": "models-gguf:/models:ro",
+        "inference-engine-cpu": "models-gguf:/models:ro",
+        "inference-engine-embed": "models-gguf:/models:ro",
         "dashboard": "models-gguf:/gguf-models",
     }
     for name, mount in expected.items():
@@ -658,7 +658,7 @@ def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
     c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     mg = c["services"]["model-gateway"]
     assert mg["depends_on"]["litellm-db"] == {"condition": "service_healthy"}
-    assert mg["depends_on"]["llamacpp"] == {"condition": "service_started"}
+    assert mg["depends_on"]["inference-engine-gpu"] == {"condition": "service_started"}
     assert "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro" in mg["volumes"]
     assert mg["networks"] == ["ordo-net", "ordo-mcp-net"]
     env = mg["environment"]

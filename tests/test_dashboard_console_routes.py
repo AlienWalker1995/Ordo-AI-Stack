@@ -27,11 +27,11 @@ BIG, SMALL = "GPU-big", "GPU-small"
 
 OPS = {
     "/status": {"gpu": {"state": "busy", "running": [{"id": "gate-comfyui", "kind": "media"}],
-                        "queued": [], "evicted_residents": {"llamacpp": 27.5}, "rejected": []}},
+                        "queued": [], "evicted_residents": {"inference-engine-gpu": 27.5}, "rejected": []}},
     "/services": {"services": [
-        {"id": "llamacpp", "name": "ordo-llamacpp-1", "state": "exited", "health": None,
+        {"id": "inference-engine-gpu", "name": "ordo-inference-engine-gpu-1", "state": "exited", "health": None,
          "status": "Exited (137) 1 minute ago"},
-        {"id": "llamacpp-cpu", "name": "ordo-llamacpp-cpu-1", "state": "running", "health": "healthy",
+        {"id": "inference-engine-cpu", "name": "ordo-inference-engine-cpu-1", "state": "running", "health": "healthy",
          "status": "Up 3 hours (healthy)"},
         {"id": "open-webui", "name": "ordo-open-webui-1", "state": "running", "health": "healthy",
          "status": "Up 1 hour (healthy)"},
@@ -39,17 +39,17 @@ OPS = {
          "status": "Exited (0) 3 hours ago"},
     ]},
     "/registry/models": {"models": {
-        "local-chat": {"service": "llamacpp", "gpu_uuid": BIG, "source": {"file": GPU_FILE},
+        "local-chat": {"service": "inference-engine-gpu", "gpu_uuid": BIG, "source": {"file": GPU_FILE},
                        "config": {"mmproj": "/models/vision.gguf"}},
         "comfyui": {"service": "comfyui", "gpu_uuid": BIG},
         "voice-stt": {"service": "stt", "gpu_uuid": SMALL},
     }},
     "/model-config": {"source_model": "auto", "active_model": "turbo", "active_file": GPU_FILE, "ctx_size": 106496,
                       "active_mmproj": "vision.gguf",
-                      "model_files": [{"file": GPU_FILE, "service": "llamacpp", "optional": False},
-                                      {"file": "vision.gguf", "service": "llamacpp", "optional": True},
-                                      {"file": CPU_FILE, "service": "llamacpp-cpu", "optional": False},
-                                      {"file": EMBED_FILE, "service": "llamacpp-embed", "optional": False}],
+                      "model_files": [{"file": GPU_FILE, "service": "inference-engine-gpu", "optional": False},
+                                      {"file": "vision.gguf", "service": "inference-engine-gpu", "optional": True},
+                                      {"file": CPU_FILE, "service": "inference-engine-cpu", "optional": False},
+                                      {"file": EMBED_FILE, "service": "inference-engine-embed", "optional": False}],
                       "available": [{"id": "turbo", "tier": "ultra", "vram_gb": 24, "file": GPU_FILE},
                                     {"id": "absent", "tier": "ultra", "vram_gb": 24, "file": "absent.gguf"}]},
     "/jobs/history": {"history": [{"id": "train-lora", "kind": "train", "started": 100.0, "ended": 200.0,
@@ -155,7 +155,7 @@ def test_overview_status_counts_what_needs_attention(live):
 
 
 def test_overview_service_count_covers_every_project_and_leaves_out_finished_jobs(live):
-    """evals exited 0 (a finished job) and must not read as a service that is down; llamacpp,
+    """evals exited 0 (a finished job) and must not read as a service that is down; inference-engine-gpu,
     stopped by a GPU eviction, still counts against the total; the other projects' containers
     count too, per project."""
     body = live.get("/api/overview").json()
@@ -320,9 +320,9 @@ def test_without_the_host_wide_list_the_table_says_so_and_keeps_the_ordo_rows(li
 def test_a_model_evicted_for_a_render_cannot_be_started_from_the_table(live):
     # Starting it would put a second tenant on the leased GPU.
     rows = {r["compose"]: r for r in live.get("/api/services/table").json()["rows"] if r["compose"]}
-    assert rows["llamacpp"]["lent"] is True
-    assert rows["llamacpp"]["actions"] == []
-    assert rows["llamacpp-cpu"]["lent"] is False
+    assert rows["inference-engine-gpu"]["lent"] is True
+    assert rows["inference-engine-gpu"]["actions"] == []
+    assert rows["inference-engine-cpu"]["lent"] is False
 
 
 
@@ -543,7 +543,7 @@ def test_models_page_lists_slots_catalog_and_files(live):
     assert files["vision.gguf"] is True and files["spare.gguf"] is False
 
 
-APPLIED = {"dry_run": False, "recreated": ["llamacpp", "llamacpp-cpu", "model-gateway"], "stopped": [],
+APPLIED = {"dry_run": False, "recreated": ["inference-engine-gpu", "inference-engine-cpu", "model-gateway"], "stopped": [],
            "restart_required_on_host": ["agent"], "host_command": "ordo apply --only agent",
            "host_reasons": {"agent": "agent runs the control plane"}}
 
@@ -562,7 +562,7 @@ def test_the_switch_is_one_control_plane_call_that_reports_what_the_render_chang
     assert r.status_code == 200, r.text
     assert calls == [("POST", "/model-config", {"model": "turbo"})]
     body = r.json()
-    assert body["recreated"] == ["llamacpp", "llamacpp-cpu", "model-gateway"]
+    assert body["recreated"] == ["inference-engine-gpu", "inference-engine-cpu", "model-gateway"]
     assert body["restart_required_on_host"] == ["agent"]
     assert body["host_command"] == "ordo apply --only agent"
     assert "hermes_restart_needed" not in body
@@ -678,7 +678,7 @@ def test_a_failed_apply_reports_the_control_planes_rollback(live):
 
 def test_a_lease_refusal_from_the_apply_passes_through_as_409(live):
     async def ops_call(method, path, json=None):
-        return 409, {"error": "'llamacpp' is evicted for a GPU lease held by ['gate-comfyui']; ordo.yaml and "
+        return 409, {"error": "'inference-engine-gpu' is evicted for a GPU lease held by ['gate-comfyui']; ordo.yaml and "
                               "out/ were rolled back and the previous render re-applied", "rolled_back": True}
 
     with gpu_idle(), patch.object(routes_console, "_ops_call", side_effect=ops_call):
@@ -780,8 +780,8 @@ def test_comfyui_calls_are_skipped_when_no_gate_url_is_configured(monkeypatch):
 
 def test_perf_series_returns_gpu_and_cpu_rates(live):
     matrix = {"status": "success", "data": {"resultType": "matrix", "result": [
-        {"metric": {"job": "llamacpp"}, "values": [[1000, "12.5"], [1300, "20"]]},
-        {"metric": {"job": "llamacpp-cpu"}, "values": [[1000, "0"], [1300, "2.5"]]},
+        {"metric": {"job": "inference-engine-gpu"}, "values": [[1000, "12.5"], [1300, "20"]]},
+        {"metric": {"job": "inference-engine-cpu"}, "values": [[1000, "0"], [1300, "2.5"]]},
     ]}}
     with patch.object(routes_console, "_get_json", new=AsyncMock(return_value=matrix)):
         body = live.get("/api/perf/series").json()
@@ -791,15 +791,15 @@ def test_perf_series_returns_gpu_and_cpu_rates(live):
 
 def test_perf_series_reads_the_gpu_rate_from_the_gateway_not_llama_cpp(live):
     """NInfer serves no /metrics, so llama.cpp's counter left the GPU sparkline empty. The GPU
-    series is the gateway's output-token rate for the llamacpp:8080 deployment (either engine)."""
+    series is the gateway's output-token rate for the inference-engine-gpu:8080 deployment (either engine)."""
     from urllib.parse import parse_qs, urlsplit
 
     fetch = AsyncMock(return_value={"status": "success", "data": {"result": []}})
     with patch.object(routes_console, "_get_json", new=fetch):
         live.get("/api/perf/series")
     query = parse_qs(urlsplit(fetch.call_args.args[0]).query)["query"][0]
-    assert 'litellm_output_tokens_metric_total' in query and 'api_base="http://llamacpp:8080/v1"' in query
-    assert 'llamacpp:tokens_predicted_total{job="llamacpp-cpu"}' in query
+    assert 'litellm_output_tokens_metric_total' in query and 'api_base="http://inference-engine-gpu:8080/v1"' in query
+    assert 'llamacpp:tokens_predicted_total{job="inference-engine-cpu"}' in query
 
 
 def test_perf_series_without_prometheus_is_unavailable_not_empty(live):

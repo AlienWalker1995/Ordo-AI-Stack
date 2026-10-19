@@ -95,7 +95,7 @@ def test_every_checkout_bind_is_declared_config_or_a_reviewed_exception():
     under config_mounts, or through bind_configs.add_labels for a service compose.py builds) or read
     live (add it to READ_LIVE, with the reason). Covers every plugin manifest, whether or not a
     render enables it, and every service of a full render, which includes the core services
-    compose.py builds (llamacpp, ops-controller, dashboard, agent, the MCP servers)."""
+    compose.py builds (inference-engine-gpu, ops-controller, dashboard, agent, the MCP servers)."""
     undeclared: set[tuple[str, str]] = set()
     for plugin in REGISTRY.plugins:
         for service in plugin.services:
@@ -110,7 +110,7 @@ def test_every_checkout_bind_is_declared_config_or_a_reviewed_exception():
     for name, spec in doc["services"].items():
         labelled = {label[len(LABEL):] for label in (spec.get("labels") or {}) if label.startswith(LABEL)}
         undeclared |= _undeclared(name, spec.get("volumes") or [], labelled)
-    assert {"llamacpp", "ops-controller", "dashboard"} <= set(doc["services"]), "the render lacks core services"
+    assert {"inference-engine-gpu", "ops-controller", "dashboard"} <= set(doc["services"]), "the render lacks core services"
     assert undeclared == set(READ_LIVE), sorted(undeclared ^ set(READ_LIVE))
     # `ordo apply` restores the previous digests after recreating only ops-controller, which is
     # right only while ops-controller declares no config bind (ordo/host/apply.py).
@@ -156,7 +156,7 @@ def test_a_directory_digest_follows_names_and_content_and_skips_python_caches(tm
 
 
 def _checkout(tmp_path: Path) -> Path:
-    """A checkout holding the tracked config the monitoring services and llamacpp bind."""
+    """A checkout holding the tracked config the monitoring services and inference-engine-gpu bind."""
     base = tmp_path / "base"
     shutil.copytree(ROOT / "monitoring", base / "monitoring")
     shutil.copytree(ROOT / "scripts" / "llamacpp", base / "scripts" / "llamacpp")
@@ -181,7 +181,7 @@ def test_the_host_render_writes_each_declared_bind_s_digest(tmp_path):
     assert doc["services"]["prometheus"]["labels"][f"{LABEL}/etc/prometheus/rules"] == f"${{{PROM_VAR}:-}}"
     values = _values(out)
     assert values[PROM_VAR] == bind_configs.digest_path(base / "monitoring" / "prometheus" / "rules")
-    assert values[bind_configs.digest_var("llamacpp", "/llamacpp-scripts")] != bind_configs.ABSENT
+    assert values[bind_configs.digest_var("inference-engine-gpu", "/llamacpp-scripts")] != bind_configs.ABSENT
     assert "dashboard" not in {bind.service for bind in bind_configs.config_binds(doc)}
 
 

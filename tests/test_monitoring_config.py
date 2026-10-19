@@ -25,23 +25,26 @@ def _exprs():
 
 
 def test_the_cpu_fallback_is_scraped():
-    job = _jobs()["llamacpp-cpu"]
-    assert job["static_configs"][0]["targets"] == ["llamacpp-cpu:8080"]
+    job = _jobs()["inference-engine-cpu"]
+    assert job["static_configs"][0]["targets"] == ["inference-engine-cpu:8080"]
 
 
 def test_every_llama_cpp_query_names_its_server():
-    # A llama.cpp metric is `llamacpp:<name>`; `http://llamacpp:8080` in a gateway label is not one.
-    unfiltered = [e for e in _exprs() if re.search(r"(?<!/)llamacpp:[a-z]", e) and not re.search(r'job=~?"', e)]
+    # A llama.cpp metric is `llamacpp:<name>` (upstream binary prefix); `http://inference-engine-gpu:8080` in a gateway label is not one.
+    unfiltered = [e for e in _exprs() if re.search(r"(?<!/)inference-engine-gpu:[a-z]", e) and not re.search(r'job=~?"', e)]
     assert not unfiltered, f"these would merge the GPU and CPU servers: {unfiltered}"
 
 
 def test_the_dashboard_shows_the_cpu_fallback():
-    assert any('job="llamacpp-cpu"' in e or "llamacpp-cpu" in e for e in _exprs())
+    assert any('job="inference-engine-cpu"' in e or "inference-engine-cpu" in e for e in _exprs())
 
 
 def test_the_dashboard_shows_when_each_chat_server_was_up():
     """A render evicts the GPU server; `up` over time is what makes that visible."""
-    assert any(e.startswith("up{") and "llamacpp" in e for e in _exprs())
+    # The GPU engine exposes no /metrics endpoint; its liveness arrives as ops-controller's
+    # ordo_gpu_chat_up probe, while the CPU fallback is a plain scrape-target `up`.
+    assert any("ordo_gpu_chat_up" in e for e in _exprs())
+    assert any(e.startswith("up{") and 'job="inference-engine-cpu"' in e for e in _exprs())
 
 
 def test_panels_do_not_overlap():
@@ -60,10 +63,10 @@ def test_the_embed_uid_is_stable():
 
 def test_the_gpu_chat_panels_do_not_need_llama_cpp_metrics():
     """The GPU chat engine may be NInfer, which serves no /metrics: GPU chat panels read the model
-    gateway's per-backend metrics and ops-controller's health probe, never the llamacpp scrape job."""
-    assert not [e for e in _exprs() if 'job="llamacpp"' in e]
+    gateway's per-backend metrics and ops-controller's health probe, never the inference-engine-gpu scrape job."""
+    assert not [e for e in _exprs() if 'job="inference-engine-gpu"' in e]
     assert any("ordo_gpu_chat_up" in e for e in _exprs())
-    assert any('api_base="http://llamacpp:8080/v1"' in e for e in _exprs())
+    assert any('api_base="http://inference-engine-gpu:8080/v1"' in e for e in _exprs())
 
 
 def test_no_panel_uses_litellm_per_token_latency_as_a_speed():

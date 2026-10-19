@@ -1,6 +1,6 @@
 """The CPU fallback serves the chat model's whole window, and the render proves it can.
 
-`local-chat` fails over to `llamacpp-cpu` while a render holds the GPU. A failover that accepts less
+`local-chat` fails over to `inference-engine-cpu` while a render holds the GPU. A failover that accepts less
 than the primary rejects long conversations exactly when it is needed, so there is ONE window: the
 GPU backend, the fallback, Hermes' compaction and the gateway all read the same resolved value.
 
@@ -34,8 +34,8 @@ FULL_WINDOW = 262144
 GIB = 1024 ** 3
 
 
-def _render(window: int | None = None, plugins=("llamacpp-cpu",), site: dict | None = None):
-    overrides = {"llamacpp": {"ctx_size": window}} if window else {}
+def _render(window: int | None = None, plugins=("inference-engine-cpu",), site: dict | None = None):
+    overrides = {"inference-engine-gpu": {"ctx_size": window}} if window else {}
     return render(Source.from_dict({"hardware": PROFILE_5090, "model": "qwen3.8-27b-uncensored-q6",
                                     "plugins": list(plugins), "overrides": overrides,
                                     "site": site or {}}), CATALOG, REGISTRY)
@@ -58,7 +58,7 @@ def test_the_fallback_entry_declares_its_trained_window_and_kv_rate():
 
 
 @pytest.mark.parametrize("path,pattern", [
-    ("services/llamacpp-cpu/plugin.yaml", r"\$\{LLAMACPP_CPU_MODEL:-([^}]+)\}"),
+    ("services/inference-engine-cpu/plugin.yaml", r"\$\{LLAMACPP_CPU_MODEL:-([^}]+)\}"),
     ("services/model-gateway/entrypoint.sh", r"\$\{LLAMACPP_CPU_MODEL:-([^}]+)\}"),
 ])
 def test_the_render_checks_the_file_the_fallback_actually_loads(path, pattern):
@@ -89,7 +89,7 @@ def test_the_manifest_states_what_the_window_costs_the_fallback():
 
 def test_no_fallback_section_when_the_fallback_is_not_rendered():
     rc = _render(FULL_WINDOW, plugins=())
-    assert "llamacpp-cpu" not in rc.plugins_enabled
+    assert "inference-engine-cpu" not in rc.plugins_enabled
     assert rc.manifest()["cpu_fallback"] is None
 
 
@@ -101,7 +101,7 @@ def test_a_window_past_the_fallback_trained_window_is_a_render_error():
     message = str(e.value)
     assert f"{2 * FULL_WINDOW:,}" in message and f"{FULL_WINDOW:,}" in message
     assert "qwen3.8-35b-a3b-distill-cpu-iq4xs" in message
-    assert "overrides.llamacpp.ctx_size" in message
+    assert "overrides.inference-engine-gpu.ctx_size" in message
 
 
 def test_the_same_window_renders_when_no_fallback_is_enabled():
@@ -122,8 +122,8 @@ def test_an_uncatalogued_fallback_model_is_a_visible_warning():
 def test_doctor_bundle_carries_both_windows():
     bundle = doctor.collect_bundle(
         Source.from_dict({"hardware": PROFILE_5090, "model": "qwen3.8-27b-uncensored-q6",
-                          "plugins": ["llamacpp-cpu"],
-                          "overrides": {"llamacpp": {"ctx_size": FULL_WINDOW}}}), CATALOG, REGISTRY)
+                          "plugins": ["inference-engine-cpu"],
+                          "overrides": {"inference-engine-gpu": {"ctx_size": FULL_WINDOW}}}), CATALOG, REGISTRY)
     assert bundle["sizing"]["ctx_size"] == FULL_WINDOW
     assert bundle["sizing"]["cpu_fallback"]["ctx_size"] == FULL_WINDOW
     assert bundle["sizing"]["cpu_fallback"]["trained_ctx"] == FULL_WINDOW

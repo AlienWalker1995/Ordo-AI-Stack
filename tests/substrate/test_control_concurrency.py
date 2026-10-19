@@ -38,7 +38,7 @@ class BlockingBackend(MockBackend):
 
     def __init__(self) -> None:
         super().__init__()
-        self.compose_doc = {"services": {"slow": {"image": "busybox"}, "llamacpp": {"image": "llama"}}}
+        self.compose_doc = {"services": {"slow": {"image": "busybox"}, "inference-engine-gpu": {"image": "llama"}}}
         self.entered = threading.Event()
         self.release = threading.Event()
         self.events: list[str] = []
@@ -60,7 +60,7 @@ def _control_plane(tmp_path) -> tuple[ControlPlane, BlockingBackend, Scheduler]:
     source.write_text(yaml.safe_dump(
         {"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128}, "model": "auto", "plugins": "auto"}))
     scheduler = Scheduler(32)
-    scheduler.cache_idle("llamacpp", 20)
+    scheduler.cache_idle("inference-engine-gpu", 20)
     backend = BlockingBackend()
     broker = Broker(scheduler, backend)
     cp = ControlPlane(source, CATALOG, REGISTRY, tmp_path / "out", scheduler=scheduler, broker=broker)
@@ -123,7 +123,7 @@ def test_a_second_stack_verb_is_refused_with_409_while_one_runs(tmp_path):
             slow = asyncio.create_task(client.post("/services/slow/recreate", json=CONFIRM))
             await _wait_until_entered(backend)
             try:
-                second = await client.post("/services/llamacpp/restart", json=CONFIRM)
+                second = await client.post("/services/inference-engine-gpu/restart", json=CONFIRM)
                 still_running = _recreate_still_running(backend)
             finally:
                 backend.release.set()
@@ -168,13 +168,13 @@ def test_lease_calls_answer_at_once_during_a_verb_and_admit_only_after_it(tmp_pa
     assert lease.json()["running"] == []
     assert withdrawn.status_code == 200 and complete_in_time
     assert verb.status_code == 200
-    assert "stop llamacpp" not in backend.events  # nothing was evicted during the verb
+    assert "stop inference-engine-gpu" not in backend.events  # nothing was evicted during the verb
 
     cp.broker.sweep_leases()  # the lease loop's next tick
 
     assert scheduler.running_ids == ["gate-comfyui"]
     # `stop other-client` is the withdrawn job's own container (none here, so a no-op in docker).
-    assert backend.events == ["recreate slow begins", "stop other-client", "recreate slow ends", "stop llamacpp"]
+    assert backend.events == ["recreate slow begins", "stop other-client", "recreate slow ends", "stop inference-engine-gpu"]
 
 
 def test_a_lease_withdrawn_during_a_verb_is_never_admitted(tmp_path):
@@ -189,7 +189,7 @@ def test_a_lease_withdrawn_during_a_verb_is_never_admitted(tmp_path):
     broker.sweep_leases()
 
     assert scheduler.running_ids == [] and scheduler.queued_ids == []
-    assert "llamacpp" not in backend.stopped
+    assert "inference-engine-gpu" not in backend.stopped
 
 
 def test_a_deferred_rejection_is_still_recorded_in_the_lease_history(tmp_path):
@@ -217,7 +217,7 @@ def test_the_lease_sweep_skips_a_tick_while_a_verb_holds_the_operation_lock(tmp_
     assert scheduler.running_ids == ["stranded"]
 
     assert broker.sweep_leases() == ["stranded"]
-    assert "llamacpp" in backend.started  # restored once the lease was swept
+    assert "inference-engine-gpu" in backend.started  # restored once the lease was swept
 
 
 def _in_other_thread(call):
@@ -233,15 +233,15 @@ def test_enforce_evictions_never_stops_a_resident_restored_while_it_looked(tmp_p
     # restored (started) it, and the container listing then showed it running. Stopping it there
     # strands it down with nothing left to restore it.
     scheduler = Scheduler(32)
-    scheduler.cache_idle("llamacpp", 20)
+    scheduler.cache_idle("inference-engine-gpu", 20)
     scheduler.submit(Job("render", vram_gb=16.0))
-    scheduler.pump()  # evicts llamacpp
+    scheduler.pump()  # evicts inference-engine-gpu
     scheduler.complete("render")
 
     class RestoreDuringListing(MockBackend):
         def list_services(self) -> dict:
             scheduler.take_restorable()  # the concurrent restore lands while docker is listed
-            return {"services": [{"id": "llamacpp", "state": "running"}]}
+            return {"services": [{"id": "inference-engine-gpu", "state": "running"}]}
 
     backend = RestoreDuringListing()
     broker = Broker(scheduler, backend)

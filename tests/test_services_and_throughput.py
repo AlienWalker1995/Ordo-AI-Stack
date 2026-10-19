@@ -52,7 +52,7 @@ def test_services_returns_all_services(client):
     services = data["services"]
     assert len(services) >= 7
     ids = [s["id"] for s in services]
-    assert "llamacpp" in ids
+    assert "inference-engine-gpu" in ids
     assert "model-gateway" in ids
 
 
@@ -73,7 +73,7 @@ def test_background_flag_flows_through_services_endpoint(client, monkeypatch):
     so the plugin-gated voice/rag cards are present."""
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     by_id = {s["id"]: s for s in _service_cards()["services"]}
-    for bg_id in ("rag-ingestion", "llamacpp", "qdrant", "stt", "tts"):
+    for bg_id in ("rag-ingestion", "inference-engine-gpu", "qdrant", "stt", "tts"):
         assert by_id[bg_id]["background"] is True, f"{bg_id} should be background"
     # User-facing UIs (main grid) never carry a truthy background flag.
     for ui_id in ("webui", "comfyui", "hermes", "codebase-memory-ui", "model-gateway"):
@@ -274,7 +274,7 @@ def test_throughput_record_accepts_alias_and_backend(client):
         "output_tokens_per_sec": 41.0,
         "service": "hermes",
         "alias": "local-chat",
-        "backend": "llamacpp",
+        "backend": "inference-engine-gpu",
     })
     assert r.status_code == 200 and r.json()["ok"] is True
     stats = _throughput_stats()

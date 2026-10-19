@@ -33,7 +33,7 @@ logger = logging.getLogger("rag-ingestion")
 
 # EMBED_URL is the current name (matches its sibling, qdrant-rag-mcp/server.py); MODEL_GATEWAY_URL
 # is kept as a fallback for backward compat with plugins/rag/plugin.yaml's existing env, which
-# despite the name actually points this service straight at llamacpp-embed, not the LiteLLM gateway.
+# despite the name actually points this service straight at inference-engine-embed, not the LiteLLM gateway.
 EMBED_URL = os.environ.get("EMBED_URL", os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435")).rstrip("/")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "embeddinggemma-2-Q8_0.gguf").strip()
 # The embedding model's document prompt, prepended to every chunk before it is embedded (the stored

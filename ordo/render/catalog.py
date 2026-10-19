@@ -30,7 +30,7 @@ DEFAULT_VRAM_RESERVE_GB = 4.0
 # never occupy RAM or VRAM.
 LOAD_MODES = ("none", "mmap-lazy")
 
-# The engines the single GPU chat service (`llamacpp`) can run. llama.cpp serves GGUF files through
+# The engines the single GPU chat service (`inference-engine-gpu`) can run. llama.cpp serves GGUF files through
 # scripts/llamacpp/run-llama-server.sh; NInfer (services/ninfer) serves one `.ninfer` artifact through
 # scripts/llamacpp/run-ninfer-serve.sh. The service name, its network alias, port 8080 and the
 # OpenAI-compatible API stay the same, so the gateway, the scheduler and the dashboard see one service.
@@ -100,7 +100,7 @@ class Model:
     # this model (rendered as GATEWAY_DROP_TOOL_STRICT, see services/model-gateway/entrypoint.sh).
     gateway_drop_tool_strict: bool = False
     # NInfer only: the artifact carries its vision encoder, loaded with `--vision` (`vision.enabled`, or
-    # `overrides.llamacpp.vision`). It costs VRAM, so the window drops to `vision.max_context`.
+    # `overrides.inference-engine-gpu.vision`). It costs VRAM, so the window drops to `vision.max_context`.
     vision: bool = False
     vision_max_context: int | None = None
     # A locally built artifact (`build:`), in place of a download `source`: the name of a conversion

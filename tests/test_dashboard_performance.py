@@ -50,8 +50,8 @@ def _reset_store(dashboard_app):
 def test_role_classification_prefers_the_serving_backend():
     """Which server answered names the role; alias and file name are fallbacks for an old gateway."""
     import dashboard.app as dashboard_app
-    assert dashboard_app._role_for("Qwen3.8-27B.gguf", "local-chat", "llamacpp") == "gpu-chat"
-    assert dashboard_app._role_for("Qwen3.6-35B-A3B.gguf", "local-chat", "llamacpp-cpu") == "cpu-fallback"
+    assert dashboard_app._role_for("Qwen3.8-27B.gguf", "local-chat", "inference-engine-gpu") == "gpu-chat"
+    assert dashboard_app._role_for("Qwen3.6-35B-A3B.gguf", "local-chat", "inference-engine-cpu") == "cpu-fallback"
     assert dashboard_app._role_for("embeddinggemma-2-Q8_0.gguf", "local-embed", "") == "embed"
     assert dashboard_app._role_for("Qwen3.8-27B.gguf", "local-chat-cpu", "") == "cpu-fallback"
     # No signal at all: the primary engine.
@@ -65,7 +65,7 @@ def test_record_stores_the_sample_under_the_role_that_served_it():
     record = client.post(
         "/api/throughput/record",
         json={"model": "Qwen3.6-35B-A3B.gguf", "output_tokens_per_sec": 9.1,
-              "alias": "local-chat", "backend": "llamacpp-cpu"},
+              "alias": "local-chat", "backend": "inference-engine-cpu"},
     )
     assert record.status_code == 200
     stats = asyncio.run(dashboard_app.throughput_stats())
@@ -93,14 +93,14 @@ def test_v3_store_migrates_to_roles_and_persists_v4(tmp_path, monkeypatch):
     dashboard_app._load_throughput_state()
     assert dashboard_app._migration_pending is True
 
-    cfg = {"model_files": [{"file": "Qwen3.8-27B.gguf", "service": "llamacpp"},
-                           {"file": "Qwen3.6-35B-A3B.gguf", "service": "llamacpp-cpu"}],
+    cfg = {"model_files": [{"file": "Qwen3.8-27B.gguf", "service": "inference-engine-gpu"},
+                           {"file": "Qwen3.6-35B-A3B.gguf", "service": "inference-engine-cpu"}],
            "active_file": "Qwen3.8-27B.gguf"}
     with patch.object(dashboard_app, "_ops_request", new=AsyncMock(return_value=(200, cfg))):
         client = TestClient(dashboard_app.app)
         assert client.post("/api/throughput/record", json={
             "model": "Qwen3.8-27B.gguf", "output_tokens_per_sec": 30.0,
-            "alias": "local-chat", "backend": "llamacpp"}).status_code == 200
+            "alias": "local-chat", "backend": "inference-engine-gpu"}).status_code == 200
     data = json.loads(f.read_text())
     assert data["version"] == 4
     assert {s["tps"] for s in data["role_samples"]["gpu-chat"]} == {20.0, 30.0}
@@ -144,7 +144,7 @@ def test_saving_while_the_migration_is_pending_keeps_the_file_v3(tmp_path, monke
         client = TestClient(dashboard_app.app)
         assert client.post("/api/throughput/record", json={
             "model": "Qwen3.6-35B-A3B.gguf", "output_tokens_per_sec": 18.0,
-            "alias": "local-chat", "backend": "llamacpp-cpu"}).status_code == 200
+            "alias": "local-chat", "backend": "inference-engine-cpu"}).status_code == 200
     data = json.loads(f.read_text())
     assert data["version"] == 3
     assert {s["tps"] for s in data["samples"]["Qwen3.6-35B-A3B.gguf"]} == {19.3, 18.0}
@@ -152,7 +152,7 @@ def test_saving_while_the_migration_is_pending_keeps_the_file_v3(tmp_path, monke
     _reset_store(dashboard_app)
     dashboard_app._load_throughput_state()
     assert dashboard_app._migration_pending is True
-    cfg = {"model_files": [{"file": "Qwen3.6-35B-A3B.gguf", "service": "llamacpp-cpu"}],
+    cfg = {"model_files": [{"file": "Qwen3.6-35B-A3B.gguf", "service": "inference-engine-cpu"}],
            "active_file": "Qwen3.8-27B.gguf"}
     with patch.object(dashboard_app, "_ops_request", new=AsyncMock(return_value=(200, cfg))):
         asyncio.run(dashboard_app._migrate_throughput_store())
@@ -221,7 +221,7 @@ def test_samples_recorded_while_migration_waits_are_not_double_counted(tmp_path,
     monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
     _reset_store(dashboard_app)
     dashboard_app._load_throughput_state()
-    cfg = {"model_files": [{"file": "qwen3.8-27b.ninfer", "service": "llamacpp"}],
+    cfg = {"model_files": [{"file": "qwen3.8-27b.ninfer", "service": "inference-engine-gpu"}],
            "active_file": "qwen3.8-27b.ninfer"}
     ops = AsyncMock(return_value=(None, None))   # render down: the migration waits
     with patch.object(dashboard_app, "_ops_request", new=ops):
@@ -229,7 +229,7 @@ def test_samples_recorded_while_migration_waits_are_not_double_counted(tmp_path,
         for i in range(20):
             assert client.post("/api/throughput/record", json={
                 "model": "qwen3.8-27b.ninfer", "output_tokens_per_sec": 30.0 + i,
-                "alias": "local-chat", "backend": "llamacpp"}).status_code == 200
+                "alias": "local-chat", "backend": "inference-engine-gpu"}).status_code == 200
         assert dashboard_app._migration_pending is True
         # While pending the live roles view merges the per-file series on the fly: 21 samples,
         # none of them counted twice.
@@ -240,7 +240,7 @@ def test_samples_recorded_while_migration_waits_are_not_double_counted(tmp_path,
     with patch.object(dashboard_app, "_ops_request", new=ops):
         client.post("/api/throughput/record", json={
             "model": "qwen3.8-27b.ninfer", "output_tokens_per_sec": 99.0,
-            "alias": "local-chat", "backend": "llamacpp"})
+            "alias": "local-chat", "backend": "inference-engine-gpu"})
     assert dashboard_app._migration_pending is False
     # 1 pre-existing + 20 recorded while waiting + 1 that triggered the migration = 22, each once.
     gpu = dashboard_app._role_samples["gpu-chat"]
@@ -269,7 +269,7 @@ def test_migration_trims_role_buckets_to_the_sample_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
     _reset_store(dashboard_app)
     dashboard_app._load_throughput_state()
-    cfg = {"model_files": [{"file": f"model-{i}.gguf", "service": "llamacpp-cpu"}
+    cfg = {"model_files": [{"file": f"model-{i}.gguf", "service": "inference-engine-cpu"}
                            for i in range(3)],
            "active_file": "model-0.gguf"}
     with patch.object(dashboard_app, "_ops_request", new=AsyncMock(return_value=(200, cfg))):
@@ -313,7 +313,7 @@ def test_a_file_the_render_no_longer_names_gets_no_guessed_role():
     out before the migration looks like a departed CPU model); it keeps its per-file series only,
     instead of landing GPU-speed samples under the CPU median."""
     import dashboard.app as dashboard_app
-    cfg = {"model_files": [{"file": "current-cpu.gguf", "service": "llamacpp-cpu"}],
+    cfg = {"model_files": [{"file": "current-cpu.gguf", "service": "inference-engine-cpu"}],
            "active_file": "active.ninfer", "available": []}
     assert dashboard_app._classify_file("current-cpu.gguf", cfg) == "cpu-fallback"
     assert dashboard_app._classify_file("active.ninfer", cfg) == "gpu-chat"

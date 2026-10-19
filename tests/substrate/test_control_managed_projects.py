@@ -323,7 +323,7 @@ def test_logs_take_the_same_tail_and_since_as_service_logs(plane, client):
 def test_a_container_of_another_project_is_404_even_under_a_listed_one(plane, client):
     """The container must carry the listed project's label: a name is never trusted alone."""
     cp, _ = plane
-    assert _restart(client, "nas-stack", "ordo-llamacpp-1").status_code == 404
+    assert _restart(client, "nas-stack", "ordo-inference-engine-gpu-1").status_code == 404
     assert _restart(client, "nas-stack", "min-max-web-dev-1").status_code == 404
     assert cp.broker.backend.foreign_restarts == []
 

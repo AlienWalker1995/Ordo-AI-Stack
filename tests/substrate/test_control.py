@@ -117,7 +117,7 @@ def test_status_says_whether_the_lease_state_is_persisted(tmp_path):
 def _cp_with_resident(tmp_path, resident_gb=25):
     """A control plane whose scheduler has the resident LLM registered (the serve-startup wiring)."""
     cp, src = _cp(tmp_path)
-    cp.scheduler.cache_idle("llamacpp", resident_gb)     # 32 total - 25 resident -> 7 free
+    cp.scheduler.cache_idle("inference-engine-gpu", resident_gb)     # 32 total - 25 resident -> 7 free
     return cp, src
 
 
@@ -127,9 +127,9 @@ def test_status_exposes_evicted_residents_and_lease_ttl(tmp_path):
     code, body = cp.route("POST", "/jobs", {"id": "render", "vram_gb": 18, "kind": "media",
                                             "est_seconds": 120})
     assert code == 200
-    assert body["evicted_residents"] == {"llamacpp": 25.0}    # lease surface in the /jobs response
+    assert body["evicted_residents"] == {"inference-engine-gpu": 25.0}    # lease surface in the /jobs response
     st = cp.route("GET", "/status")[1]["gpu"]
-    assert st["evicted_residents"] == {"llamacpp": 25.0}      # and in /status
+    assert st["evicted_residents"] == {"inference-engine-gpu": 25.0}      # and in /status
     assert st["running"][0]["lease_ttl_s"] == 240.0           # 120 * 2 (TTL surfaced per running job)
     assert st["free_vram_gb"] == 32 - 18                      # evicted resident frees its VRAM
 
@@ -137,12 +137,12 @@ def test_status_exposes_evicted_residents_and_lease_ttl(tmp_path):
 def test_complete_job_restores_resident_over_control_plane(tmp_path):
     cp, _ = _cp_with_resident(tmp_path)
     cp.route("POST", "/jobs", {"id": "render", "vram_gb": 18, "kind": "media"})
-    assert cp.scheduler.evicted_residents == {"llamacpp": 25}
+    assert cp.scheduler.evicted_residents == {"inference-engine-gpu": 25}
     _, after = cp.route("POST", "/jobs/complete", {"id": "render"})
     # completing the media job drains the queue -> broker restores the resident; status reflects it
     assert after["evicted_residents"] == {}
-    assert after["idle_cached"] == {"llamacpp": 25.0}         # re-armed as evictable
-    assert "llamacpp" in cp.broker.backend.started            # broker actually issued the restart
+    assert after["idle_cached"] == {"inference-engine-gpu": 25.0}         # re-armed as evictable
+    assert "inference-engine-gpu" in cp.broker.backend.started            # broker actually issued the restart
 
 
 # ── renewable leases over the control plane ──────────────────────────────────────────────────────

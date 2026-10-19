@@ -27,9 +27,9 @@ GGUF_DIR = Path(os.environ.get("GGUF_MODELS_DIR", "/gguf-models"))
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 GRAFANA_URL = os.environ.get("GRAFANA_URL", "http://grafana:3000").rstrip("/")
-LLAMACPP_URL = os.environ.get("LLAMACPP_URL", "http://llamacpp:8080").rstrip("/")
-LLAMACPP_CPU_URL = os.environ.get("LLAMACPP_CPU_URL", "http://llamacpp-cpu:8080").rstrip("/")
-LLAMACPP_EMBED_URL = os.environ.get("LLAMACPP_EMBED_URL", "http://llamacpp-embed:8080").rstrip("/")
+LLAMACPP_URL = os.environ.get("LLAMACPP_URL", "http://inference-engine-gpu:8080").rstrip("/")
+LLAMACPP_CPU_URL = os.environ.get("LLAMACPP_CPU_URL", "http://inference-engine-cpu:8080").rstrip("/")
+LLAMACPP_EMBED_URL = os.environ.get("LLAMACPP_EMBED_URL", "http://inference-engine-embed:8080").rstrip("/")
 
 # The Grafana dashboard the Performance page embeds (monitoring/grafana/dashboards), kiosk mode.
 GRAFANA_EMBED_PATH = "/grafana/d/ordo-llm-gpu/ordo-performance?orgId=1&kiosk&theme=dark&refresh=10s"
@@ -37,16 +37,16 @@ GRAFANA_EMBED_PATH = "/grafana/d/ordo-llm-gpu/ordo-performance?orgId=1&kiosk&the
 # Tokens generated per second by each chat server, one series per `job` label. A rate over a
 # counter rather than an instantaneous gauge, because a gauge goes stale when a server is evicted
 # and a sparkline of stale samples draws a flat line that never happened.
-# GPU: the gateway's output-token counter for the deployment at llamacpp:8080, the same expression
+# GPU: the gateway's output-token counter for the deployment at inference-engine-gpu:8080, the same expression
 # as the Grafana GPU panels. It holds for either engine there; llama.cpp's own counter does not,
-# because NInfer serves no /metrics. Relabelled job="llamacpp" so both series parse alike.
+# because NInfer serves no /metrics. Relabelled job="inference-engine-gpu" so both series parse alike.
 # CPU: the llama.cpp CPU fallback's own counter.
 _GPU_TOKEN_RATE_QUERY = (
     'label_replace(sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() '
     '(max by (model_id) (litellm_deployment_latency_per_output_token_count'
-    '{api_base="http://llamacpp:8080/v1"}) * 0 + 1)), "job", "llamacpp", "", "")'
+    '{api_base="http://inference-engine-gpu:8080/v1"}) * 0 + 1)), "job", "inference-engine-gpu", "", "")'
 )
-_CPU_TOKEN_RATE_QUERY = 'sum by (job) (rate(llamacpp:tokens_predicted_total{job="llamacpp-cpu"}[5m]))'
+_CPU_TOKEN_RATE_QUERY = 'sum by (job) (rate(llamacpp:tokens_predicted_total{job="inference-engine-cpu"}[5m]))'
 _TOKEN_RATE_QUERY = f"{_GPU_TOKEN_RATE_QUERY} or {_CPU_TOKEN_RATE_QUERY}"
 
 # A switch is one ops-controller call that renders and recreates the changed set in one compose
@@ -409,7 +409,7 @@ async def perf_series(hours: int = Query(24, ge=1, le=168)) -> dict:
         return {"available": False, "gpu": [], "cpu": []}
     series: dict[str, list[list[Any]]] = {"gpu": [], "cpu": []}
     for result in data.get("data", {}).get("result", []):
-        key = {"llamacpp": "gpu", "llamacpp-cpu": "cpu"}.get(result.get("metric", {}).get("job"))
+        key = {"inference-engine-gpu": "gpu", "inference-engine-cpu": "cpu"}.get(result.get("metric", {}).get("job"))
         if key:
             series[key] = [[int(t), round(float(v), 2)] for t, v in result.get("values", [])]
     return {"available": True, **series}

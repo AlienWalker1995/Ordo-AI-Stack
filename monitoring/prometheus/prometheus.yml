@@ -28,22 +28,22 @@ scrape_configs:
   # When the active model's backend is NInfer this target is down by design (NInfer has no /metrics):
   # TargetDown excludes it, ops-controller's /health probe (ordo_gpu_chat_up) says whether chat is up,
   # and the Grafana GPU chat panels read the model gateway's per-backend metrics instead.
-  - job_name: llamacpp
+  - job_name: inference-engine-gpu
     metrics_path: /metrics
     static_configs:
-      - targets: ['llamacpp:8080']
+      - targets: ['inference-engine-gpu:8080']
         labels:
-          service: llamacpp
+          service: inference-engine-gpu
 
   # The CPU fallback llama.cpp server (same --metrics, same metric names). It answers chat while a
   # render has the GPU, so without it the performance view is blind exactly when it matters.
-  # Queries must filter by job: both servers export identical llamacpp:* names.
-  - job_name: llamacpp-cpu
+  # Queries must filter by job: both servers export identical llamacpp:* metric names.
+  - job_name: inference-engine-cpu
     metrics_path: /metrics
     static_configs:
-      - targets: ['llamacpp-cpu:8080']
+      - targets: ['inference-engine-cpu:8080']
         labels:
-          service: llamacpp-cpu
+          service: inference-engine-cpu
 
   # nvidia_gpu_exporter wraps nvidia-smi (works on consumer GPUs + WSL2, unlike
   # DCGM). Reports utilization, VRAM, temperature, power per GPU.

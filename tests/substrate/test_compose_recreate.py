@@ -2,7 +2,7 @@
 
 These pin `DockerBackend.recreate_service`'s exact command so a regression (a missing
 `secrets.env`, a dropped `--no-deps` that cascade-recreates dependencies, a whole-stack `up`) is
-caught offline. They are the guardrails the 2026-06-26 secret-less-recreate and the llamacpp
+caught offline. They are the guardrails the 2026-06-26 secret-less-recreate and the inference-engine-gpu
 pin-drop incidents demand, carried over from the retired ops-api's `compose_recreate` module when
 the verb moved onto the v2 control plane.
 
@@ -23,7 +23,7 @@ def capture(tmp_path, monkeypatch):
     """A backend whose compose dir is a tiny rendered stack, returning the argv it would run."""
     compose = {
         "services": {
-            "llamacpp": {"image": "x"},
+            "inference-engine-gpu": {"image": "x"},
             "open-webui": {"image": "x", "profiles": ["webui"]},
             "qdrant": {"image": "x", "profiles": ["rag"]},
             "prometheus": {"image": "x", "profiles": ["monitoring"]},
@@ -49,7 +49,7 @@ def capture(tmp_path, monkeypatch):
     return backend, recorded
 
 
-def _recreate(capture, service="llamacpp"):
+def _recreate(capture, service="inference-engine-gpu"):
     backend, recorded = capture
     backend.recreate_service(service)
     return recorded[-1]
@@ -85,7 +85,7 @@ def test_recreate_is_no_deps_and_force_recreate(capture):
 def test_recreate_names_only_the_requested_service(capture):
     cmd = _recreate(capture, "open-webui")
     assert cmd[-1] == "open-webui"
-    for other in ("llamacpp", "model-gateway", "ops-controller", "caddy", "oauth2-proxy"):
+    for other in ("inference-engine-gpu", "model-gateway", "ops-controller", "caddy", "oauth2-proxy"):
         assert other not in cmd
 
 
@@ -138,8 +138,8 @@ def test_the_real_rendered_stack_has_profiles_to_pass():
 
 
 def test_a_named_compose_up_never_starts_the_services_dependencies(capture):
-    # `up -d model-gateway` without --no-deps also starts llamacpp (its dependency). During a GPU
-    # lease llamacpp is evicted, and the lease guard only checks the NAMED service, so that
+    # `up -d model-gateway` without --no-deps also starts inference-engine-gpu (its dependency). During a GPU
+    # lease inference-engine-gpu is evicted, and the lease guard only checks the NAMED service, so that
     # call would put the resident back on the leased card beside the render.
     backend, recorded = capture
     backend.compose_up("open-webui")
@@ -155,18 +155,18 @@ def test_a_whole_stack_compose_up_is_unchanged(capture):
 
 def test_the_post_render_step_recreates_its_changed_set_in_one_compose_call(capture):
     backend, recorded = capture
-    backend.recreate_services(["llamacpp", "open-webui"])
+    backend.recreate_services(["inference-engine-gpu", "open-webui"])
     assert len(recorded) == 1
     cmd = recorded[0]
     tail = cmd[cmd.index("up"):]
-    assert tail == ["up", "-d", "--no-deps", "--force-recreate", "llamacpp", "open-webui"]
+    assert tail == ["up", "-d", "--no-deps", "--force-recreate", "inference-engine-gpu", "open-webui"]
 
 
 @pytest.mark.parametrize("service", ["agent", "ops-controller"])
 def test_the_post_render_step_never_recreates_the_control_plane(capture, service):
     backend, recorded = capture
     with pytest.raises(ValueError, match="control plane"):
-        backend.recreate_services(["llamacpp", service])
+        backend.recreate_services(["inference-engine-gpu", service])
     assert recorded == []
 
 
@@ -186,4 +186,4 @@ def test_stack_state_reads_the_render_in_its_own_compose_dir(capture, monkeypatc
     monkeypatch.setattr(changed_set.DockerState, "read", fake_read)
     assert backend.stack_state().compose_version == "5.1.0"
     assert seen == {"compose_dir": backend.COMPOSE_DIR, "project_directory": backend.COMPOSE_DIR,
-                    "services": ["llamacpp", "open-webui", "prometheus", "qdrant"], "project": "ordo"}
+                    "services": ["inference-engine-gpu", "open-webui", "prometheus", "qdrant"], "project": "ordo"}

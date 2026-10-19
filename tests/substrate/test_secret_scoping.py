@@ -33,7 +33,7 @@ REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.exam
 HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
                {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-bbbb"}], "ram_gb": 128, "cpu_cores": 32}
 # The same plugin set the operator's stack runs, so every secret-bearing service renders.
-PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "llamacpp-cpu", "open-webui",
+PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "inference-engine-cpu", "open-webui",
            "searxng-web", "searxng", "codebase-memory-ui", "codebase-memory", "comfyui-mcp",
            "orchestration", "hermes-dashboard", "monitoring", "memory-vault", "edge", "tailnet-names",
            "obsidian-livesync", "langfuse", "evals"]

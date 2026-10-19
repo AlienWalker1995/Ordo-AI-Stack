@@ -4,7 +4,7 @@ Service-wiring variables the render sets. Operator-set variables (paths, ports, 
 
 | Variable | Service | Description | Default |
 |----------|---------|-------------|---------|
-| `LLAMACPP_URL` | model-gateway, dashboard | llama.cpp internal URL | `http://llamacpp:8080` |
+| `LLAMACPP_URL` | model-gateway, dashboard | llama.cpp internal URL | `http://inference-engine-gpu:8080` |
 | `DASHBOARD_URL` | model-gateway | Dashboard for throughput recording | `http://dashboard:8080` |
 | `OPS_CONTROLLER_URL` | dashboard, agent, comfyui, mcp-comfyui, ltx-trainer | Control plane (`ops-controller`) URL: GPU leases, model switch, service lifecycle | `http://ops-controller:9000` |
 | `OPEN_WEBUI_DEFAULT_MODEL` | open-webui | Default model shown in Open WebUI chat (rendered into `DEFAULT_MODELS`) | `local-chat` |

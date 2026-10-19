@@ -13,7 +13,7 @@ both). Resolved read-only on 2026-10-11 with `docker buildx imagetools inspect`:
   server-rocm-b11552   amd64               ROCm 7.2.1
   server-vulkan-b11552 amd64 arm64         Vulkan (Mesa), reaches the GPU through /dev/dri
 
-The CPU pin is the same digest llamacpp-cpu and llamacpp-embed already run
+The CPU pin is the same digest inference-engine-cpu and inference-engine-embed already run
 (tests/substrate/test_llamacpp_backend.py holds the three together). Bump every backend to one
 new build together, re-resolving each digest.
 

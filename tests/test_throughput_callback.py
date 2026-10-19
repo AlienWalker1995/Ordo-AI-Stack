@@ -63,14 +63,14 @@ def _response(model: str = "local-chat", completion_tokens: int = 64, predicted_
 
 
 def test_resolves_model_to_served_gguf_not_alias():
-    kw = _kwargs(GPU_GGUF, "http://llamacpp:8080/v1")
+    kw = _kwargs(GPU_GGUF, "http://inference-engine-gpu:8080/v1")
     assert tc._resolve_model(kw, _response()) == "Qwen-GPU-Q6_K.gguf"
 
 
 def test_cpu_failover_attributes_to_cpu_gguf_and_backend():
-    kw = _kwargs(CPU_GGUF, "http://llamacpp-cpu:8080/v1")
+    kw = _kwargs(CPU_GGUF, "http://inference-engine-cpu:8080/v1")
     assert tc._resolve_model(kw, _response()) == "Qwen-CPU-A3B.gguf"
-    assert tc._detect_backend(kw) == "llamacpp-cpu"
+    assert tc._detect_backend(kw) == "inference-engine-cpu"
     assert tc._detect_alias(kw) == "local-chat"
 
 
@@ -83,18 +83,18 @@ def test_missing_router_info_falls_back_to_legacy_naming():
 def test_build_payload_includes_alias_and_backend():
     start = datetime(2026, 8, 17, 12, 0, 0)
     end = start + timedelta(seconds=2)
-    kw = _kwargs(GPU_GGUF, "http://llamacpp:8080/v1")
+    kw = _kwargs(GPU_GGUF, "http://inference-engine-gpu:8080/v1")
     payload = tc._build_payload(kw, _response(completion_tokens=64, predicted_per_second=32.0), start, end)
     assert payload["model"] == "Qwen-GPU-Q6_K.gguf"
     assert payload["alias"] == "local-chat"
-    assert payload["backend"] == "llamacpp"
+    assert payload["backend"] == "inference-engine-gpu"
     assert payload["output_tokens_per_sec"] == 32.0
 
 
 def test_build_payload_still_none_without_completion_tokens():
     start = datetime(2026, 8, 17, 12, 0, 0)
     end = start + timedelta(seconds=2)
-    kw = _kwargs(GPU_GGUF, "http://llamacpp:8080/v1")
+    kw = _kwargs(GPU_GGUF, "http://inference-engine-gpu:8080/v1")
     assert tc._build_payload(kw, _response(completion_tokens=0), start, end) is None
 
 
@@ -105,7 +105,7 @@ def test_a_queued_request_records_the_engines_speed_not_the_wait():
     206 tok/s. Dividing by the whole request reported 0.13 tok/s; the engine's timings say 206."""
     start = datetime(2026, 10, 12, 18, 0, 0)
     end = start + timedelta(seconds=239)
-    kw = _kwargs(GPU_GGUF, "http://llamacpp:8080/v1")
+    kw = _kwargs(GPU_GGUF, "http://inference-engine-gpu:8080/v1")
     payload = tc._build_payload(kw, _response(completion_tokens=30, predicted_per_second=206.48), start, end)
     assert payload["output_tokens_per_sec"] == 206.48
 
@@ -153,7 +153,7 @@ def test_a_streamed_reply_uses_the_final_chunks_engine_timings():
               (t0 + timedelta(seconds=312.3), _chunk(timings={"predicted_per_second": 217.15}))]
     passed = _stream_through_hook("call-timed", chunks)
     assert passed == [c for _, c in chunks]                  # every chunk passes through unchanged
-    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "litellm_call_id": "call-timed",
+    kw = {**_kwargs(GPU_GGUF, "http://inference-engine-gpu:8080/v1"), "litellm_call_id": "call-timed",
           "completion_start_time": t0}
     payload = tc._build_payload(kw, _response(completion_tokens=60), t0, t0 + timedelta(seconds=312.3))
     assert payload["output_tokens_per_sec"] == 217.15
@@ -165,7 +165,7 @@ def test_a_streamed_reply_without_timings_counts_from_the_first_token_bearing_ch
     chunks = [(t0, _chunk(content="")), (t0 + timedelta(seconds=300), _chunk(reasoning="Let me")),
               (t0 + timedelta(seconds=305), _chunk(content="done"))]
     _stream_through_hook("call-untimed", chunks)
-    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "litellm_call_id": "call-untimed",
+    kw = {**_kwargs(GPU_GGUF, "http://inference-engine-gpu:8080/v1"), "litellm_call_id": "call-untimed",
           "completion_start_time": t0}
     end = t0 + timedelta(seconds=310)
     payload = tc._build_payload(kw, _response(completion_tokens=1000), t0, end)
@@ -184,7 +184,7 @@ def test_no_sample_when_generation_time_is_unknown():
     first chunk of any kind) includes the queue, so skip it."""
     start = datetime(2026, 10, 12, 18, 0, 0)
     end = start + timedelta(seconds=239)
-    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "completion_start_time": start}
+    kw = {**_kwargs(GPU_GGUF, "http://inference-engine-gpu:8080/v1"), "completion_start_time": start}
     assert tc._build_payload(kw, _response(completion_tokens=30), start, end) is None
 
 
@@ -197,7 +197,7 @@ def test_a_streamed_reply_with_response_timings_does_not_leak_its_observation():
               (t0 + timedelta(seconds=2), _chunk(timings={"predicted_per_second": 217.15}))]
     _stream_through_hook("call-leak", chunks)
     assert "call-leak" in tc._STREAM_OBSERVATIONS
-    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "litellm_call_id": "call-leak",
+    kw = {**_kwargs(GPU_GGUF, "http://inference-engine-gpu:8080/v1"), "litellm_call_id": "call-leak",
           "completion_start_time": t0}
     payload = tc._build_payload(kw, _response(completion_tokens=60, predicted_per_second=180.0),
                                 t0, t0 + timedelta(seconds=2))
@@ -217,7 +217,7 @@ def test_a_tool_call_only_chunk_starts_the_stream_clock():
     t0 = datetime(2026, 10, 12, 19, 0, 0)
     chunks = [(t0, _chunk(content="")), (t0 + timedelta(seconds=400), tool_chunk)]
     _stream_through_hook("call-tool", chunks)
-    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "litellm_call_id": "call-tool",
+    kw = {**_kwargs(GPU_GGUF, "http://inference-engine-gpu:8080/v1"), "litellm_call_id": "call-tool",
           "completion_start_time": t0}
     end = t0 + timedelta(seconds=410)
     payload = tc._build_payload(kw, _response(completion_tokens=40), t0, end)
@@ -288,7 +288,7 @@ def test_a_stream_without_a_call_id_passes_through_unobserved():
     passed = _stream_through_hook("", chunks)
     assert passed == [c for _, c in chunks]
     assert "" not in tc._STREAM_OBSERVATIONS
-    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "completion_start_time": t0}
+    kw = {**_kwargs(GPU_GGUF, "http://inference-engine-gpu:8080/v1"), "completion_start_time": t0}
     assert tc._build_payload(kw, _response(completion_tokens=30), t0, t0 + timedelta(seconds=2)) is None
 
 
@@ -298,7 +298,7 @@ SECRET_KEY = "sk-not-a-real-key-0123456789"
 
 
 def _call_kwargs(*, alias: str | None = "agent-key", model_group: str = "local-chat",
-                 api_base: str = "http://llamacpp:8080/v1", original_group: str | None = None,
+                 api_base: str = "http://inference-engine-gpu:8080/v1", original_group: str | None = None,
                  no_log: bool = False) -> dict:
     """Request kwargs as LiteLLM 1.100.1 hands them to the pre-call and end hooks
     (Logging.model_call_details): the router/proxy metadata under litellm_params."""
@@ -322,7 +322,7 @@ def test_started_event_names_the_caller_group_and_engine_but_never_the_key():
     event = tc._started_event(_call_kwargs())
     assert {k: v for k, v in event.items() if k != "started_at"} == {
         "event": "started", "call_id": "call-1", "caller": "agent-key", "model_group": "local-chat",
-        "model": "Qwen-GPU-Q6_K.gguf", "deployment": "llamacpp", "fallback": False,
+        "model": "Qwen-GPU-Q6_K.gguf", "deployment": "inference-engine-gpu", "fallback": False,
     }
     assert isinstance(event["started_at"], float)
     assert SECRET_KEY not in json.dumps(event)
@@ -333,10 +333,10 @@ def test_a_keyless_caller_is_named_by_its_client():
 
 
 def test_the_fallback_hop_is_flagged_by_the_gates_test():
-    hop = tc._started_event(_call_kwargs(model_group="qwen-cpu", api_base="http://llamacpp-cpu:8080/v1",
+    hop = tc._started_event(_call_kwargs(model_group="qwen-cpu", api_base="http://inference-engine-cpu:8080/v1",
                                          original_group="local-chat"))
-    assert (hop["fallback"], hop["model_group"], hop["deployment"]) == (True, "qwen-cpu", "llamacpp-cpu")
-    direct = tc._started_event(_call_kwargs(model_group="qwen-cpu", api_base="http://llamacpp-cpu:8080/v1"))
+    assert (hop["fallback"], hop["model_group"], hop["deployment"]) == (True, "qwen-cpu", "inference-engine-cpu")
+    direct = tc._started_event(_call_kwargs(model_group="qwen-cpu", api_base="http://inference-engine-cpu:8080/v1"))
     assert direct["fallback"] is False
 
 

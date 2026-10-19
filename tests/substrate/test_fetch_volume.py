@@ -134,8 +134,8 @@ def test_the_whole_stack_needs_the_chat_cpu_fallback_and_embed_models(tmp_path):
     needed = fetch.required_model_files(doc, env, list(doc["services"]))
     files = {n.file for n in needed if not n.optional}
     assert env["LLAMACPP_MODEL"] in files
-    assert "Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf" in files                   # llamacpp-cpu
-    assert "embeddinggemma-2-Q8_0.gguf" in files                # llamacpp-embed
+    assert "Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf" in files                   # inference-engine-cpu
+    assert "embeddinggemma-2-Q8_0.gguf" in files                # inference-engine-embed
 
 
 def test_a_service_that_reads_no_model_needs_nothing(tmp_path):
@@ -163,7 +163,7 @@ def _catalog(*models: Model) -> Catalog:
 
 
 def _stack(file="m.gguf") -> tuple[dict, dict[str, str]]:
-    doc = {"services": {"llamacpp": {"image": "x", "volumes": ["models-gguf:/models:ro"]},
+    doc = {"services": {"inference-engine-gpu": {"image": "x", "volumes": ["models-gguf:/models:ro"]},
                         "dashboard": {"image": "y"}}}
     return doc, {"LLAMACPP_MODEL": file, "LLAMACPP_MMPROJ": ""}
 
@@ -171,7 +171,7 @@ def _stack(file="m.gguf") -> tuple[dict, dict[str, str]]:
 def test_up_fetches_nothing_when_every_file_is_present(capsys):
     doc, env = _stack()
     runner = FakeRunner(files={"m.gguf"})
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model()), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model()), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 0
     assert runner.helper_runs() == []                                    # idempotent: probe only
 
@@ -179,7 +179,7 @@ def test_up_fetches_nothing_when_every_file_is_present(capsys):
 def test_up_fetches_a_missing_model_into_the_project_volume():
     doc, env = _stack()
     runner = FakeRunner(files=set())
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model()), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model()), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 0
     [(argv, _env_)] = runner.helper_runs()
     assert "ordo_models-gguf:/models" in argv
@@ -197,7 +197,7 @@ def test_up_skips_the_probe_entirely_when_nothing_starting_reads_a_model():
 def test_a_missing_volume_is_created_with_compose_labels_before_the_fetch():
     doc, env = _stack()
     runner = FakeRunner(volume_exists=False)
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model()), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model()), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 0
     create = next(argv for argv, _ in runner.calls if argv[:3] == ["docker", "volume", "create"])
     assert "com.docker.compose.project=ordo" in create
@@ -209,7 +209,7 @@ def test_a_missing_volume_is_created_with_compose_labels_before_the_fetch():
 def test_a_missing_file_with_no_catalog_entry_refuses(capsys):
     doc, env = _stack("hand-made.gguf")
     runner = FakeRunner()
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model()), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model()), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 1
     assert "hand-made.gguf" in capsys.readouterr().err
     assert runner.helper_runs() == []
@@ -218,7 +218,7 @@ def test_a_missing_file_with_no_catalog_entry_refuses(capsys):
 def test_an_unpinned_model_is_refused_on_up(capsys):
     doc, env = _stack()
     runner = FakeRunner()
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model(sha=None)), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model(sha=None)), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 1
     assert "sha256" in capsys.readouterr().err
     assert runner.helper_runs() == []
@@ -228,7 +228,7 @@ def test_a_missing_optional_projector_is_only_a_note(capsys):
     doc, env = _stack()
     env["LLAMACPP_MMPROJ"] = "/models/vision.gguf"
     runner = FakeRunner(files={"m.gguf"})
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model()), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model()), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 0
     assert "vision.gguf" in capsys.readouterr().out
     assert runner.helper_runs() == []
@@ -237,7 +237,7 @@ def test_a_missing_optional_projector_is_only_a_note(capsys):
 def test_a_gated_model_without_a_token_refuses_and_names_the_key(capsys):
     doc, env = _stack()
     runner = FakeRunner()
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model(gated=True)), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model(gated=True)), project="ordo",
                                secrets={"HF_TOKEN": ""}, runner=runner, dry_run=False,
                                process_env={}) == 1
     assert "HF_TOKEN" in capsys.readouterr().err
@@ -247,7 +247,7 @@ def test_a_gated_model_without_a_token_refuses_and_names_the_key(capsys):
 def test_a_gated_model_gets_the_token_through_the_environment_never_printed(capsys):
     doc, env = _stack()
     runner = FakeRunner()
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model(gated=True)), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model(gated=True)), project="ordo",
                                secrets={"HF_TOKEN": TOKEN}, runner=runner, dry_run=False,
                                process_env={}) == 0
     [(argv, child_env)] = runner.helper_runs()
@@ -260,7 +260,7 @@ def test_a_gated_model_gets_the_token_through_the_environment_never_printed(caps
 def test_an_ungated_model_does_not_hand_the_helper_a_token():
     doc, env = _stack()
     runner = FakeRunner()
-    fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model()), project="ordo",
+    fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model()), project="ordo",
                         secrets={"HF_TOKEN": TOKEN}, runner=runner, dry_run=False, process_env={})
     [(argv, child_env)] = runner.helper_runs()
     assert "HF_TOKEN" not in argv and "HF_TOKEN" not in (child_env or {})
@@ -269,7 +269,7 @@ def test_an_ungated_model_does_not_hand_the_helper_a_token():
 def test_a_checksum_mismatch_fails_loud(capsys):
     doc, env = _stack()
     runner = FakeRunner(helper_exit=fetch.EXIT_CHECKSUM_MISMATCH)
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model()), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model()), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 1
     assert "checksum" in capsys.readouterr().err
 
@@ -277,7 +277,7 @@ def test_a_checksum_mismatch_fails_loud(capsys):
 def test_dry_run_prints_the_helper_and_downloads_nothing(capsys):
     doc, env = _stack()
     runner = FakeRunner(volume_exists=False)
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(_model()), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(_model()), project="ordo",
                                secrets={}, runner=runner, dry_run=True) == 0
     assert runner.helper_runs() == []
     assert not any(argv[:3] == ["docker", "volume", "create"] for argv, _ in runner.calls)
@@ -316,9 +316,9 @@ def _capture_fetch(monkeypatch, code=0) -> list[set[str]]:
 def test_up_fetches_for_exactly_the_services_it_starts(monkeypatch, tmp_path, no_docker):
     out = _write_out(tmp_path)
     seen = _capture_fetch(monkeypatch)
-    assert bringup.bring_up(str(out), "ordo", ["llamacpp"], whole_stack=False, with_profiles=True,
+    assert bringup.bring_up(str(out), "ordo", ["inference-engine-gpu"], whole_stack=False, with_profiles=True,
                             force_recreate=False, dry_run=False, models_catalog=CATALOG_PATH) == 0
-    assert seen == [{"llamacpp"}]
+    assert seen == [{"inference-engine-gpu"}]
     assert no_docker                                                     # compose ran after
 
 
@@ -505,7 +505,7 @@ def test_up_fetches_a_missing_pinned_projector():
     doc, env = _stack()
     env["LLAMACPP_MMPROJ"] = "/models/m-vision.gguf"
     runner = FakeRunner(files={"m.gguf"})
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=Catalog([_with_projector()]), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=Catalog([_with_projector()]), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 0
     (argv, _env_), = runner.helper_runs()
     values = dict(argv[i + 1].split("=", 1) for i, arg in enumerate(argv) if arg == "-e" and "=" in argv[i + 1])
@@ -557,7 +557,7 @@ def test_up_fetches_only_the_missing_shard_of_a_sharded_model():
     doc, env = _stack("m-00001-of-00002.gguf")
     env["LLAMACPP_MODEL_SHARDS"] = "m-00002-of-00002.gguf"
     runner = FakeRunner(files={"m-00001-of-00002.gguf"})
-    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(sharded), project="ordo",
+    assert fetch.ensure_models(doc, env, ["inference-engine-gpu"], catalog=_catalog(sharded), project="ordo",
                                secrets={}, runner=runner, dry_run=False) == 0
     [(argv, _env_)] = runner.helper_runs()
     assert "ORDO_FETCH_FILE=m-00002-of-00002.gguf" in argv

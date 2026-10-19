@@ -17,7 +17,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | `out/model-gateway/keys.json` (rendered from the manifests' `litellm_key:` blocks) | Per-consumer virtual keys plus their model and MCP grants | `model-gateway-keys` (one-shot bootstrap) |
 | `data/rag-input/` | Drop zone for RAG documents | `rag-ingestion` watch directory |
 | `models/gguf/` | Optional host copy of GGUFs (`ordo fetch --models-dir models/gguf`, the native path) | Not mounted by any service |
-| `models-gguf` named volume | llama.cpp GGUF files at runtime (ext4 inside the Docker VM) | `llamacpp` / `llamacpp-cpu` / `llamacpp-embed` (`/models:ro`), dashboard (`/gguf-models`, lists and deletes model files) |
+| `models-gguf` named volume | llama.cpp GGUF files at runtime (ext4 inside the Docker VM) | `inference-engine-gpu` / `inference-engine-cpu` / `inference-engine-embed` (`/models:ro`), dashboard (`/gguf-models`, lists and deletes model files) |
 | `comfyui-models` named volume | ComfyUI checkpoints, LoRAs, VAEs, encoders | `comfyui` (RO), `ops-controller` (RW, `/models/comfyui`: downloads) |
 
 ### Sinks
@@ -44,7 +44,7 @@ Every state-changing call to ops-controller (every `POST`, whatever the route) l
 
 ```json
 {"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"searxng","result":"ok","method":"POST","path":"/services/searxng/restart","status":200,"dry_run":false,"confirm":true}
-{"ts":1790281810.4,"caller":"hermes","action":"start","target":"llamacpp","result":"refused","method":"POST","path":"/services/llamacpp/start","status":409,"dry_run":false,"confirm":true,"error":"'llamacpp' is evicted for a GPU lease held by ['gate-comfyui']; ..."}
+{"ts":1790281810.4,"caller":"hermes","action":"start","target":"inference-engine-gpu","result":"refused","method":"POST","path":"/services/inference-engine-gpu/start","status":409,"dry_run":false,"confirm":true,"error":"'inference-engine-gpu' is evicted for a GPU lease held by ['gate-comfyui']; ..."}
 {"ts":1790281815.0,"caller":"gpu-gate","action":"lease.request","target":"gate-comfyui","result":"ok","method":"POST","path":"/jobs","status":200,"dry_run":false,"confirm":false,"detail":"granted"}
 ```
 
@@ -141,14 +141,14 @@ All directories created this way persist across restarts and rebuilds.
 
 **llama.cpp GGUF:** runtime models live in the `models-gguf` **named volume** (ext4 inside the Docker VM; Windows bind mounts ride the 9p bridge, which wedges under a 20GB+ sequential model load). Files get there by download, straight into the volume:
 
-- `ordo up` fetches every model file the services it starts load that the volume lacks: the chat model and its vision projector (`llamacpp`), the CPU fallback (`llamacpp-cpu`) and the embedder (`llamacpp-embed`). `--no-fetch` skips it. Its host preflight first checks there is disk for every one of those files not already in the volume.
+- `ordo up` fetches every model file the services it starts load that the volume lacks: the chat model and its vision projector (`inference-engine-gpu`), the CPU fallback (`inference-engine-cpu`) and the embedder (`inference-engine-embed`). `--no-fetch` skips it. Its host preflight first checks there is disk for every one of those files not already in the volume.
 - `ordo fetch` does the same for the whole rendered stack and also re-verifies files already present (`ordo fetch <catalog-id>` for one entry plus its projector, `--all` for the catalog, `--plan-only` to list present/missing).
 
 Both run a short-lived helper container (`curlimages/curl`, digest-pinned in `ordo/render/models_volume.py`) that mounts only the volume, downloads with resume into a hidden `.<file>.part`, verifies the catalog sha256 and renames the file into place. A checksum mismatch deletes the download and fails; an interrupted download resumes on the next run. Sources and checksums come from `catalog/models.yaml` (`models:` for chat, `support_models:` for the CPU fallback and embedder); an unpinned entry is refused unless `ordo fetch --allow-unverified`. A catalog entry marked `gated: true` gets `HF_TOKEN` from `out/secrets.env`, passed to the helper by name, never printed.
 
-A vision projector is pinned in the model's `mmproj:` mapping (`file`, `source`, `sha256`, `size_bytes`) and fetched like the weights, under its model-specific `file` name. A model whose `mmproj:` is a bare path has no pinned source: without that file `llamacpp` starts with vision off; copy it in by hand: `docker run --rm -v ordo_models-gguf:/dst -v "$(pwd)/models/gguf:/src:ro" alpine cp /src/<file>.gguf /dst/`.
+A vision projector is pinned in the model's `mmproj:` mapping (`file`, `source`, `sha256`, `size_bytes`) and fetched like the weights, under its model-specific `file` name. A model whose `mmproj:` is a bare path has no pinned source: without that file `inference-engine-gpu` starts with vision off; copy it in by hand: `docker run --rm -v ordo_models-gguf:/dst -v "$(pwd)/models/gguf:/src:ro" alpine cp /src/<file>.gguf /dst/`.
 
-A model switch (the dashboard's Models page, or `POST /model-config` on `ops-controller`) never recreates `llamacpp` onto a file the volume lacks: it answers 409 naming the missing files and the `ordo fetch <catalog-id>` to run on the host, and changes nothing.
+A model switch (the dashboard's Models page, or `POST /model-config` on `ops-controller`) never recreates `inference-engine-gpu` onto a file the volume lacks: it answers 409 naming the missing files and the `ordo fetch <catalog-id>` to run on the host, and changes nothing.
 
 **ComfyUI:** add a model with the `download_comfyui_model` MCP tool (`url` plus `category`, e.g. `checkpoints`, `loras`, `vae`). It calls `ops-controller` `POST /models/download`, which writes into the `comfyui-models` **named volume** (the same volume ComfyUI reads RO), so the file lands where ComfyUI looks with no copy step. One download runs at a time; poll `get_comfyui_model_download_status`. Music3 weight URLs are listed under `weights:` in `services/song-gen/plugin.yaml`.
 

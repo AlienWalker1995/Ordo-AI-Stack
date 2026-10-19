@@ -162,7 +162,7 @@ OPS_SERVICE_MAP = {s["id"]: s["ops_service"] for s in SERVICES if s.get("ops_ser
 
 # Dashboard service id -> clean per-service tailnet subdomain label (the tailnet-names
 # sidecar plugin serves each UI as https://<label>.<domain>/), derived from each card's
-# `tailnet_label`. Only UI services have a sidecar; backend-only services (llamacpp/mcp/
+# `tailnet_label`. Only UI services have a sidecar; backend-only services (inference-engine-gpu/mcp/
 # qdrant) have no clean name and keep their internal URLs. hermes/graph land on their
 # port's root, which 302s to the /hermes/ and /codebase-memory/ subpaths, so a bare
 # https://<label>.<domain>/ works. model-gateway's `llm` sidecar (caddy :8449) serves the
@@ -182,7 +182,7 @@ TAILNET_LABELS = {s["id"]: s["tailnet_label"] for s in SERVICES if s.get("tailne
 # portless workers (rag-ingestion, livesync-bridge — no port, no check; the grid reads
 # their true up/down from ops-controller container health, see routes_hub) it ALSO tags the
 # infra/backend services that have a port & health check but no browsable UI a person
-# visits: llamacpp, llamacpp-cpu, mcp, qdrant, stt, tts, couchdb. The main grid is ONLY
+# visits: inference-engine-gpu, inference-engine-cpu, mcp, qdrant, stt, tts, couchdb. The main grid is ONLY
 # the user-facing UIs (webui/comfyui/hermes/codebase-memory-ui/langfuse) plus
 # model-gateway (its Open link points at the LiteLLM admin UI at /ui/ through the edge; see
 # service_open_url() above).
@@ -195,13 +195,13 @@ TAILNET_LABELS = {s["id"]: s["tailnet_label"] for s in SERVICES if s.get("tailne
 # Plugins that are expected to surface a service card. This is the drift tripwire:
 # visible_services() warns if the render enables one of these but no catalog fragment
 # claims it — so an enabled service can never be silently omitted from the grid. Core
-# services (llamacpp/model-gateway/mcp) carry plugin=null and are intentionally NOT here.
+# services (inference-engine-gpu/model-gateway/mcp) carry plugin=null and are intentionally NOT here.
 # Kept EXPLICIT (not derived from the fragments) on purpose: deriving it from the same
 # fragments it guards would blind the tripwire to a deleted fragment.
 CARD_PLUGINS = frozenset({
     "open-webui", "comfyui", "rag",
     "hermes-dashboard", "codebase-memory-ui", "voice",
-    "llamacpp-cpu", "langfuse",
+    "inference-engine-cpu", "langfuse",
 })
 
 

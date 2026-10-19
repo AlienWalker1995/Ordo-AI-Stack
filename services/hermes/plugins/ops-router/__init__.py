@@ -452,7 +452,7 @@ COMPOSE_UP_SCHEMA = {
             "service": {
                 "type": "string",
                 "description": (
-                    "Compose service name (e.g. `llamacpp`, `model-gateway`). Required: "
+                    "Compose service name (e.g. `inference-engine-gpu`, `model-gateway`). Required: "
                     "stack-wide calls are refused."
                 ),
             },
@@ -480,7 +480,7 @@ ENABLE_SERVICE_SCHEMA = {
     "name": "enable_service",
     "description": (
         "Install / enable an OPTIONAL Ordo stack service that is NOT yet running (open-webui, "
-        "comfyui, rag, voice, searxng-web, monitoring, obsidian-livesync, llamacpp-cpu). "
+        "comfyui, rag, voice, searxng-web, monitoring, obsidian-livesync, inference-engine-cpu). "
         "This RE-RENDERS the stack to include the service (adding it to ordo.yaml when needed) and "
         "ops-controller recreates exactly what the render changed, the new service included: the "
         "correct verb when the service isn't rendered/running yet. If a service already exists but is "
