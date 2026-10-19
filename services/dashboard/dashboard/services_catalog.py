@@ -88,8 +88,9 @@ def tailnet_open_url(service_id: str) -> str | None:
 # Caddy port root, used by service_open_url() as the Open link when the sidecar layer is
 # off; `sso_port` is added by `ordo render` from the owner's `edge_site`, never declared in a
 # fragment), plus `order` (curated grid order - aggregation sorts by it so glob order never
-# reshuffles the UI). `notes` is rationale for humans reading the fragment; the
-# API/frontend ignore it.
+# reshuffles the UI). `runs_in` names the compose service whose container serves a card with no
+# `ops_service` (Hermes runs inside `agent`), so the Services table shows the two as one row.
+# `notes` is rationale for humans reading the fragment; the API/frontend ignore it.
 #
 # `port`/`url` are the FRONTEND's last-resort direct-link fallback and only make sense for a
 # service that actually publishes a host port. A service reached solely through the edge
@@ -151,7 +152,8 @@ SERVICES = _load_catalog_cards()
 # test_service_catalog_wiring.) Cards without `ops_service` (e.g. couchdb) fall back to
 # their own id at the call sites (OPS_SERVICE_MAP.get(id, id)). NB: Hermes has no entry:
 # its dashboard is an s6 service inside the agent, and the agent is never a lifecycle
-# target (a self-restart mid-tool-call), so its card is probe-only.
+# target (a self-restart mid-tool-call); the card binds to the agent container via
+# `runs_in`, so the table shows one Host-only row with no lifecycle controls.
 OPS_SERVICE_MAP = {s["id"]: s["ops_service"] for s in SERVICES if s.get("ops_service")}
 
 # Dashboard service id -> clean per-service tailnet subdomain label (the tailnet-names

@@ -74,6 +74,13 @@ All notable changes to this project are documented here. The format is loosely b
   notification when the GPU model is back.
 
 ### Fixed
+- **The Services page says when its data is stale, shows Hermes once, and works by keyboard.** A
+  failed refresh keeps the list and reads "Last updated HH:MM:SS, retrying" (the reason on hover);
+  CPU and memory do the same, also once nothing has replaced them for 60 s. An unmeasured value is
+  a dash that says why, and an unavailable pressure source is one note with its reason. A catalog
+  card can name the container it runs in (`runs_in`), so the Hermes card and the `agent` container
+  are one row (Open link, the container's state, Host only). Table headers carry `scope="col"`, the
+  notes describe the list, Clear returns focus to the filter, and text inputs keep the focus ring.
 - **The Services logs drawer reads only what is new and keeps the reader's place.** It reads the
   newest 300 lines once, then every 3 s only the lines after the last answer's `last_ts` (the
   dashboard's logs proxies now forward `since` as well as `tail`, and answer 400 for a bad one),

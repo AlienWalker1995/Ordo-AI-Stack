@@ -11,8 +11,9 @@
       "plugin": "hermes-dashboard",
       "category": "agent",
       "tailnet_label": "hermes",
+      "runs_in": "agent",
       "hint": "Runs inside the agent container (s6 service `dashboard`). Logs: docker compose logs agent",
-      "notes": "Probe-only card, probed through the edge (`edge_check`): Caddy :8447 with the tailnet certificate, so it goes red when the site you open is down, not only when the process is. The dashboard is an s6 service inside the agent container, and the agent is never a lifecycle target (restarting it from here would kill Hermes mid-tool-call). Restart the dashboard or a gateway from the Hermes UI itself (s6), or `ordo recreate agent` when Hermes is idle."
+      "notes": "Card bound to the agent container via runs_in; its health is probed through the edge (`edge_check`): Caddy :8447 with the tailnet certificate, so it goes red when the site you open is down, not only when the process is. The dashboard is an s6 service inside the agent container, and the agent is never a lifecycle target (restarting it from here would kill Hermes mid-tool-call). Restart the dashboard or a gateway from the Hermes UI itself (s6), or `ordo recreate agent` when Hermes is idle."
     }
   ]
 }

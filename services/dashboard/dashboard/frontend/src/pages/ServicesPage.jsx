@@ -62,6 +62,64 @@ function formatCpu(pct) {
   return pct >= 100 ? `${(pct / 100).toFixed(1)} cores` : `${pct.toFixed(pct < 10 ? 1 : 0)}%`
 }
 
+function formatMem(gb) {
+  return `${gb.toFixed(1)} GB`
+}
+
+// One CPU or memory reading. A container the pressure read did not list shows a bare dash; one it
+// listed without a value says on hover why it has none.
+function Reading({ usage, value, format }) {
+  if (!usage) return '—'
+  if (value == null) return <span title={`not measured: ${usage.reason || 'no value reported'}`}>—</span>
+  return format(value)
+}
+
+// Pressure that nothing has replaced for this long is stale even before a refresh fails: it polls
+// every 20 s, so this is three missed readings.
+const PRESSURE_STALE_MS = 60000
+// How often a data's age is checked against its limit.
+const STALE_CHECK_MS = 5000
+
+// "14:03:27", local time.
+function clockTime(ms) {
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+}
+
+// A poll's data is stale when the latest refresh failed while earlier data is still shown, or (with
+// `maxAgeMs`) when nothing has replaced it for that long. Coming back to a hidden tab fires a
+// refresh at once, so the age clock restarts then: the data is merely old, not failing, and the
+// in-flight read gets its full window before any note. Null while fresh, else when the shown data
+// was read and why it is stale.
+function useStale(poll, maxAgeMs) {
+  const [now, setNow] = useState(() => Date.now())
+  // When the tab last came into view (or the page mounted): the age limit runs from here, not from
+  // a reading made while the tab was hidden.
+  const [visibleSince, setVisibleSince] = useState(() => Date.now())
+  useEffect(() => {
+    if (!maxAgeMs) return undefined
+    const timer = setInterval(() => setNow(Date.now()), STALE_CHECK_MS)
+    const onVisibility = () => { if (!document.hidden) setVisibleSince(Date.now()) }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisibility) }
+  }, [maxAgeMs])
+  if (!poll.data || !poll.lastUpdated) return null
+  if (poll.error) return { at: poll.lastUpdated, reason: poll.error.message }
+  const since = Math.max(poll.lastUpdated, visibleSince)
+  if (maxAgeMs && now - since > maxAgeMs) {
+    return { at: poll.lastUpdated, reason: `no new reading for over ${maxAgeMs / 1000} s` }
+  }
+  return null
+}
+
+// The data stays on screen, marked with when it was read; the reason is on hover.
+function StaleNote({ label, stale }) {
+  return (
+    <span className="text-caption text-muted" title={stale.reason}>
+      {label} {clockTime(stale.at)}, retrying<span className="sr-only"> ({stale.reason})</span>
+    </span>
+  )
+}
+
 // How close to the end of the log (in px) still counts as reading the newest line.
 const AT_BOTTOM_SLACK = 8
 
@@ -248,8 +306,8 @@ function ServiceRow({ row, usage, onLogs, onAction, action }) {
       <td className="px-2 py-2"><ServiceName row={row} action={action} /></td>
       <td className="whitespace-nowrap px-2 py-2 text-caption text-fg-muted">{row.project || '—'}</td>
       <td className="whitespace-nowrap px-2 py-2 text-caption tabular-nums text-muted">{row.uptime || '—'}</td>
-      <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{usage ? formatCpu(usage.cpu_pct) : '—'}</td>
-      <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{usage?.mem_gb != null ? `${usage.mem_gb.toFixed(1)} GB` : '—'}</td>
+      <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.cpu_pct} format={formatCpu} /></td>
+      <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.mem_gb} format={formatMem} /></td>
       <td className="py-2 pl-2 pr-3">
         {row.control === 'none'
           ? <NotManaged row={row} />
@@ -278,8 +336,8 @@ function ServiceCard({ row, usage, onLogs, onAction, action }) {
       <dl className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted">
         <div className="flex gap-1"><dt>Project</dt><dd className="text-fg-muted">{row.project || '—'}</dd></div>
         <div className="flex gap-1"><dt>Up for</dt><dd className="tabular-nums text-fg-muted">{row.uptime || '—'}</dd></div>
-        <div className="flex gap-1"><dt>CPU</dt><dd className="font-mono tabular-nums text-fg-muted">{usage ? formatCpu(usage.cpu_pct) : '—'}</dd></div>
-        <div className="flex gap-1"><dt>Memory</dt><dd className="font-mono tabular-nums text-fg-muted">{usage?.mem_gb != null ? `${usage.mem_gb.toFixed(1)} GB` : '—'}</dd></div>
+        <div className="flex gap-1"><dt>CPU</dt><dd className="font-mono tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.cpu_pct} format={formatCpu} /></dd></div>
+        <div className="flex gap-1"><dt>Memory</dt><dd className="font-mono tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.mem_gb} format={formatMem} /></dd></div>
       </dl>
       <div className="flex flex-wrap items-center gap-1.5">
         {row.control === 'none'
@@ -419,7 +477,10 @@ export default function ServicesPage() {
   const toast = useToast()
   const table = usePolling(() => api.get('/api/services/table'), 10000)
   const pressure = usePolling(() => api.get('/api/hardware/service-pressure'), 20000)
+  const tableStale = useStale(table)
+  const pressureStale = useStale(pressure, PRESSURE_STALE_MS)
   const [filter, setFilter] = useState('')
+  const filterRef = useRef(null)
   const [logsFor, setLogsFor] = useState(null)
   // The stop or restart waiting on the confirmation dialog: { row, action }.
   const [asking, setAsking] = useState(null)
@@ -451,6 +512,11 @@ export default function ServicesPage() {
   }, [asking, run])
 
   const closeLogs = useCallback(() => setLogsFor(null), [])
+  // Clear removes the zero-match message it sits in, so focus goes back to the filter.
+  const clearFilter = useCallback(() => {
+    setFilter('')
+    filterRef.current?.focus()
+  }, [])
 
   if (!table.data) {
     return table.error
@@ -462,43 +528,56 @@ export default function ServicesPage() {
   const rows = table.data.rows.filter((row) => !query || matches(row, query))
   const usageFor = (row) => usageById[row.compose] || usageById[row.card_id]
 
+  // Every note on how far the list can be trusted, keyed by the id the list's aria-describedby names.
+  const notes = []
+  if (table.data.control_plane === 'down') {
+    notes.push({ id: 'services-control-plane', note: <Unavailable>The control plane is not answering; states may be stale.</Unavailable> })
+  }
+  if (table.data.control_plane === 'up' && table.data.host_containers === 'down') {
+    notes.push({ id: 'services-host-containers', note: <span className="text-caption text-muted">Containers outside ordo are unavailable right now.</span> })
+  }
+  if (tableStale) notes.push({ id: 'services-stale', note: <StaleNote label="Last updated" stale={tableStale} /> })
+  if (pressure.data?.unavailable) {
+    notes.push({ id: 'services-pressure-unavailable', note: <Unavailable>CPU and memory are unavailable: {pressure.data.reason}</Unavailable> })
+  } else if (!pressure.data && pressure.error) {
+    notes.push({ id: 'services-pressure-error', note: <span className="text-caption text-muted" title={pressure.error.message}>CPU and memory are unavailable right now.</span> })
+  }
+  if (pressureStale) notes.push({ id: 'services-pressure-stale', note: <StaleNote label="CPU and memory last updated" stale={pressureStale} /> })
+  const describedBy = notes.map((n) => n.id).join(' ') || undefined
+
   return (
     <div className="grid gap-3 [&>*]:min-w-0">
       <div className="flex flex-wrap items-center gap-3">
         <label htmlFor="service-filter" className="sr-only">Filter services</label>
-        <input id="service-filter" className={INPUT + ' w-full lg:w-72'} placeholder="Filter by name or project"
+        <input id="service-filter" ref={filterRef} className={INPUT + ' w-full lg:w-72'} placeholder="Filter by name or project"
                value={filter} onChange={(e) => setFilter(e.target.value)} />
-        {table.data.control_plane === 'down' && <Unavailable>The control plane is not answering; states may be stale.</Unavailable>}
-        {table.data.control_plane === 'up' && table.data.host_containers === 'down' && (
-          <span className="text-caption text-muted">Containers outside ordo are unavailable right now.</span>
-        )}
-        {pressure.error && <span className="text-caption text-muted">CPU and memory are unavailable right now.</span>}
+        {notes.map(({ id, note }) => <div key={id} id={id} className="contents">{note}</div>)}
       </div>
       {query && !rows.length ? (
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2.5">
           <span className="text-body text-fg-muted">No services match "{filter.trim()}"</span>
-          <button type="button" className={BTN} onClick={() => setFilter('')}>Clear</button>
+          <button type="button" className={BTN} onClick={clearFilter}>Clear</button>
         </div>
       ) : (
         <div className="min-w-0 rounded-md border border-border-subtle bg-bg-elevated">
           {/* Cards below lg: the table needs 52rem, more than a phone or a narrow tablet has. */}
-          <ul className="lg:hidden">
+          <ul className="lg:hidden" aria-label="Services" aria-describedby={describedBy}>
             {rows.map((row) => (
               <ServiceCard key={row.id} row={row} usage={usageFor(row)}
                            onLogs={setLogsFor} onAction={onAction} action={actionStates[row.id]} />
             ))}
           </ul>
           <div className="relative overflow-x-auto max-lg:hidden">
-            <table className="w-full min-w-[52rem] border-collapse">
+            <table className="w-full min-w-[52rem] border-collapse" aria-label="Services" aria-describedby={describedBy}>
               <thead>
                 <tr className="border-b border-border-subtle text-left text-micro uppercase tracking-[0.08em] text-muted">
-                  <th className="w-[8.5rem] py-2 pl-3 pr-2 font-semibold">Status</th>
-                  <th className="px-2 py-2 font-semibold">Service</th>
-                  <th className="w-[8rem] px-2 py-2 font-semibold">Project</th>
-                  <th className="w-[8rem] px-2 py-2 font-semibold">Up for</th>
-                  <th className="w-[6.5rem] px-2 py-2 text-right font-semibold">CPU</th>
-                  <th className="w-[6rem] px-2 py-2 text-right font-semibold">Memory</th>
-                  <th className="w-[13.5rem] py-2 pl-2 pr-3"><span className="sr-only">Actions</span></th>
+                  <th scope="col" className="w-[8.5rem] py-2 pl-3 pr-2 font-semibold">Status</th>
+                  <th scope="col" className="px-2 py-2 font-semibold">Service</th>
+                  <th scope="col" className="w-[8rem] px-2 py-2 font-semibold">Project</th>
+                  <th scope="col" className="w-[8rem] px-2 py-2 font-semibold">Up for</th>
+                  <th scope="col" className="w-[6.5rem] px-2 py-2 text-right font-semibold">CPU</th>
+                  <th scope="col" className="w-[6rem] px-2 py-2 text-right font-semibold">Memory</th>
+                  <th scope="col" className="w-[13.5rem] py-2 pl-2 pr-3"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>

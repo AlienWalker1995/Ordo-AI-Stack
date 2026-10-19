@@ -47,10 +47,12 @@ def _rendered_services() -> set[str]:
 
 # ── (a) Hermes ─────────────────────────────────────────────────────────────────
 
-def test_hermes_card_is_probe_only():
+def test_hermes_card_has_no_ops_service_and_probes_through_the_edge():
     """The Hermes dashboard is an s6 service inside the agent container, and the agent is never a
-    lifecycle target, so the card has no compose service. It probes the dashboard through the edge,
-    the route its users take, so a broken route reads red (tests/test_edge_check.py)."""
+    lifecycle target, so the card declares no ops_service of its own (it binds to the agent
+    container via runs_in instead — see test_the_hermes_card_names_the_container_it_runs_in).
+    It probes the dashboard through the edge, the route its users take, so a broken route reads
+    red (tests/test_edge_check.py)."""
     assert "hermes" not in OPS_SERVICE_MAP
     card = next(s for s in SERVICES if s["id"] == "hermes")
     assert card["edge_check"] == "/api/status" and "check" not in card
@@ -83,6 +85,21 @@ def test_every_ops_mapped_service_exists_in_the_rendered_stack():
         assert compose_id in rendered, (
             f"{display_id} -> {compose_id} is not a service in the rendered stack"
         )
+
+
+def test_every_runs_in_target_exists_in_the_rendered_stack():
+    """Each card's `runs_in` must name a real compose service, else `_card_container` merges the
+    card into a container that does not exist: the row reads Unknown/stopped while the real
+    container shows as its own row — the same drift class the ops_service check above stops."""
+    rendered = _rendered_services()
+    if not rendered:
+        __import__("pytest").skip("no rendered stack in this checkout")
+    for card in SERVICES:
+        runs_in = card.get("runs_in")
+        if runs_in:
+            assert runs_in in rendered, (
+                f"{card['id']} runs_in {runs_in} is not a service in the rendered stack"
+            )
 
 
 def test_no_card_targets_a_service_the_backend_refuses():
