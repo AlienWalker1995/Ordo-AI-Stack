@@ -25,6 +25,11 @@ assets/* text eol=lf
 *.md text eol=lf
 *.py text eol=lf
 
+# JSON catalogs/fixtures are the same class: PR #415 committed five of them CRLF from a
+# Windows-side edit, inflating the rename diff (one catalog showed as 67%-similar, another
+# as add+delete) until manually converted. `text eol=lf` normalizes checkin AND checkout.
+*.json text eol=lf
+
 # Patch files are COPYed into Linux image builds and fed to `git apply` — a CRLF
 # checkout on Windows (autocrlf=true) hands the builder a patch whose hunks no
 # longer byte-match the LF upstream sources. Keep them LF on both directions.
