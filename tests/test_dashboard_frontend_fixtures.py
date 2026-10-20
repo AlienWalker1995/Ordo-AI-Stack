@@ -57,7 +57,10 @@ OPS = {
                                       {"file": EMBED_FILE, "service": "inference-engine-embed", "optional": False}],
                       "available": [{"id": "turbo", "tier": "ultra", "vram_gb": 24, "file": GPU_FILE}]},
     "/jobs/history": {"history": [{"id": "train-lora", "kind": "train", "started": 100.0, "ended": 200.0,
-                                   "outcome": "completed"}]},
+                                   "outcome": "completed"},
+                                  {"id": "gate-comfyui", "kind": "media", "submitted": 300.0,
+                                   "started": 400.0, "ended": 580.0, "outcome": "completed",
+                                   "evicted": ["inference-engine-gpu"]}]},
     "/audit?limit=100": {"entries": [{"ts": 300.0, "caller": "dashboard", "action": "restart",
                                       "target": "n8n", "result": "ok"}]},
     "/projects": {"projects": [{"project": "media-stack", "containers": [

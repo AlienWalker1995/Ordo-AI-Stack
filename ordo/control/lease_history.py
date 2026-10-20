@@ -45,11 +45,14 @@ class LeaseHistory:
                 "started": None,
             }
 
-    def started(self, job_id: str) -> None:
+    def started(self, job_id: str, evicted: list[str] | None = None) -> None:
+        """`evicted`: the residents out of the GPU as the lease starts (put away for it, or still
+        away from an earlier lease), so the record says afterwards what the lease displaced."""
         with self._lock:
             rec = self._pending.get(job_id)
             if rec and rec["started"] is None:
                 rec["started"] = self.now_fn()
+                rec["evicted"] = sorted(evicted or [])
 
     def ended(self, job_id: str, outcome: str) -> None:
         with self._lock:

@@ -119,6 +119,88 @@ function medianEvidence(m) {
   return `${m.n} sample${m.n !== 1 ? 's' : ''}${span}`
 }
 
+// ---------------------------------------------------------------------------------------------
+// Activity feed: grouping and kind filters (spec 3.3). Pure, so the collapse rules are tested
+// without a page.
+// ---------------------------------------------------------------------------------------------
+
+// Consecutive identical events (same title) collapse into one row with a count and the span
+// they cover, while the gap between two members stays inside the grouping window: the same
+// restart twice a day apart is two rows, not one x2. The feed arrives newest first, so a group
+// keeps the NEWEST member's time and kind (the row is about what happened last), and the worst
+// severity of its members (a failed restart inside a run of good ones must not read as all
+// fine). A run of leases adds up: its duration is the GPU time lent across the run, and it says
+// the chat model was out when any member says so.
+const GROUP_WINDOW_S = 6 * 3600
+const SEVERITY_RANK = { info: 0, ok: 0, warning: 1, critical: 2 }
+
+/** @param {Array<object>} [items] */
+export function groupActivity(items) {
+  const groups = []
+  for (const item of items || []) {
+    const last = groups[groups.length - 1]
+    if (last && last.title === item.title && last.oldestTs - item.ts <= GROUP_WINDOW_S) {
+      last.count += 1
+      last.oldestTs = Math.min(last.oldestTs, item.ts)
+      if ((SEVERITY_RANK[item.severity] ?? 0) > (SEVERITY_RANK[last.severity] ?? 0)) {
+        last.severity = item.severity
+      }
+      if (typeof item.duration_s === 'number') last.duration_s = (last.duration_s ?? 0) + item.duration_s
+      if (item.evicted_chat) last.evicted_chat = true
+    } else {
+      groups.push({ ...item, count: 1, oldestTs: item.ts })
+    }
+  }
+  return groups
+}
+
+// The feed's kinds split into four scannable categories behind the chips. Model changes are
+// the action items that name a model switch; everything else an operator did is a service
+// change. Renders and leases stand on their own.
+export const ACTIVITY_CATEGORIES = ['all', 'render', 'gpu', 'service', 'model']
+
+/** @param {{ kind?: string, title?: string }} item */
+export function activityCategory(item) {
+  if (item.kind === 'render') return 'render'
+  if (item.kind === 'gpu') return 'gpu'
+  return String(item.title || '').startsWith('Switched model') ? 'model' : 'service'
+}
+
+/** @param {Array<object>} groups */
+export function filterActivity(groups, category) {
+  if (!category || category === 'all') return groups || []
+  return (groups || []).filter((g) => activityCategory(g) === category)
+}
+
+// The daily summary line above the list: today's counts from the same payload the list draws
+// from (the feed is capped at the request's limit, so the line covers exactly what the feed
+// covers). Nothing today means no line, not "Today: 0 renders".
+export function activityDaySummary(items, now = Date.now()) {
+  const dayStart = new Date(now)
+  dayStart.setHours(0, 0, 0, 0)
+  const start = dayStart.getTime() / 1000
+  let renders = 0
+  let failed = 0
+  let leases = 0
+  let actions = 0
+  for (const item of items || []) {
+    if (!(typeof item.ts === 'number' && item.ts >= start)) continue
+    if (item.kind === 'render') {
+      renders += 1
+      if (item.severity === 'critical') failed += 1
+    } else if (item.kind === 'gpu') {
+      leases += 1
+    } else {
+      actions += 1
+    }
+  }
+  if (!renders && !leases && !actions) return null
+  const parts = [`${renders} render${renders !== 1 ? 's' : ''}${failed ? `, ${failed} failed` : ''}`]
+  if (leases) parts.push(`${leases} lease${leases !== 1 ? 's' : ''}`)
+  if (actions) parts.push(`${actions} operator action${actions !== 1 ? 's' : ''}`)
+  return `Today: ${parts.join(' · ')}`
+}
+
 const ENGINE_LABEL = { gpu: 'GPU', cpu: 'CPU fallback', none: 'None' }
 
 // The six tiles of the KPI band, in the spec's order. Each is omitted when its source is

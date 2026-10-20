@@ -1231,7 +1231,7 @@ class Broker:
         for job_id in admitted:   # then start the newly-admitted jobs
             self.backend.start(job_id)
             if self.history:
-                self.history.started(job_id)
+                self.history.started(job_id, evicted=list(self.scheduler.evicted_residents))
         # Finally, restore any evicted resident whose GPU-heavy work has drained (the second half of
         # the media-lease contract). take_restorable() only returns residents that fit now with an
         # empty queue, so this never thrashes the LLM between back-to-back renders.

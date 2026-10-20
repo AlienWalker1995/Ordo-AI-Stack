@@ -30,7 +30,7 @@ _TENANT_LABELS = {
 # Audit actions that only read state. They are most of the log (Hermes polls) and none of them
 # is something a person would want in an activity feed.
 _READ_ONLY_ACTIONS = frozenset({
-    "containers.list", "container.logs", "diagnostics.dstate", "logs",
+    "containers.list", "container.logs", "diagnostics.dstate", "logs", "project.logs",
 })
 # GPU lease calls. The lease history already shows each lease once; its request, heartbeat and
 # release calls would repeat it several times over.
@@ -326,11 +326,20 @@ def summarise_renders(history: dict, limit: int) -> list[dict]:
     return renders[:limit]
 
 
+# The GPU chat service, by its compose id (#415 renamed it from `llamacpp`): the resident a lease
+# evicts when its VRAM demand cannot share the card.
+_CHAT_SERVICE = "inference-engine-gpu"
+
+
 def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], limit: int) -> list[dict]:
     """Renders, GPU leases and operator actions in one newest-first feed.
 
-    A gate's lease and the render it admitted are the same event, so gate leases are left out
-    and the render stands for both. Read-only audit entries are dropped.
+    Every item carries the same keys; the lease fields (holder, started, ended, duration_s,
+    evicted_chat) are null/false on non-lease items. Gate leases are kept: the render they
+    admitted stands beside them as its own item, and the lease says who held the GPU, for how
+    long, and whether the chat model was out of the GPU while it ran (the broker records the
+    evicted residents on the lease as it starts; an older record without them reads false).
+    Read-only audit entries are dropped.
     """
     items: list[dict] = []
     for r in renders or []:
@@ -338,17 +347,27 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
             continue
         title = f"Render finished · {r['kind']}" if r.get("ok") else "Render failed"
         items.append({"ts": r["ts"], "kind": "render", "title": title,
-                      "severity": "ok" if r.get("ok") else "critical"})
+                      "severity": "ok" if r.get("ok") else "critical",
+                      "holder": None, "started": None, "ended": None, "duration_s": None,
+                      "evicted_chat": False})
     for lease in leases or []:
         job_id = lease.get("id", "")
-        if job_id.startswith("gate-"):
-            continue
         ts = lease.get("ended") or lease.get("started")
         if ts is None:
             continue
-        items.append({"ts": float(ts), "kind": "gpu",
-                      "title": f"GPU lease {lease_label(job_id)} {lease.get('outcome', '')}".strip(),
-                      "severity": "ok" if lease.get("outcome") == "completed" else "warning"})
+        holder = lease_label(job_id)
+        started, ended = lease.get("started"), lease.get("ended")
+        duration = round(ended - started) if isinstance(started, int | float) \
+            and isinstance(ended, int | float) and ended >= started else None
+        outcome = lease.get("outcome", "")
+        if job_id.startswith("gate-"):
+            title = f"GPU lent to {holder}" + (" (rejected)" if outcome == "rejected" else "")
+        else:
+            title = f"GPU lease {holder} {outcome}".strip()
+        items.append({"ts": float(ts), "kind": "gpu", "title": title,
+                      "severity": "ok" if outcome == "completed" else "warning",
+                      "holder": holder, "started": started, "ended": ended, "duration_s": duration,
+                      "evicted_chat": _CHAT_SERVICE in (lease.get("evicted") or [])})
     for entry in audit or []:
         action = entry.get("action", "")
         if action in _READ_ONLY_ACTIONS or action in _LEASE_ACTIONS or entry.get("ts") is None:
@@ -361,7 +380,9 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
         elif entry.get("dry_run"):
             title += " (dry run)"
         items.append({"ts": float(entry["ts"]), "kind": "action", "title": title,
-                      "severity": "info" if ok else "warning"})
+                      "severity": "info" if ok else "warning",
+                      "holder": None, "started": None, "ended": None, "duration_s": None,
+                      "evicted_chat": False})
     items.sort(key=lambda i: i["ts"], reverse=True)
     return items[:limit]
 
