@@ -326,9 +326,9 @@ def summarise_renders(history: dict, limit: int) -> list[dict]:
     return renders[:limit]
 
 
-# The GPU chat service, by its compose id: the resident a lease evicts when its VRAM demand
-# cannot share the card.
-_CHAT_SERVICE = "llamacpp"
+# The GPU chat service, by its compose id (#415 renamed it from `llamacpp`): the resident a lease
+# evicts when its VRAM demand cannot share the card.
+_CHAT_SERVICE = "inference-engine-gpu"
 
 
 def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], limit: int) -> list[dict]:

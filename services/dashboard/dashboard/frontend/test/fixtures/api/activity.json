@@ -25,7 +25,7 @@
     {
       "ts": 1790678950.0,
       "kind": "action",
-      "title": "Restarted llamacpp",
+      "title": "Restarted inference-engine-gpu",
       "severity": "info",
       "holder": null,
       "started": null,

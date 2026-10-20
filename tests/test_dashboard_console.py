@@ -353,8 +353,8 @@ def test_every_activity_item_carries_the_lease_fields():
 
 
 @pytest.mark.parametrize("record, evicted", [
-    ({"evicted": ["llamacpp"]}, True),               # the broker put the chat model away for it
-    ({"evicted": ["llamacpp", "whisper"]}, True),
+    ({"evicted": ["inference-engine-gpu"]}, True),               # the broker put the chat model away for it
+    ({"evicted": ["inference-engine-gpu", "whisper"]}, True),
     ({"evicted": ["whisper"]}, False),               # another resident, the chat model stayed
     ({"evicted": []}, False),
     ({}, False),                                     # a record from before the broker kept this
@@ -364,7 +364,7 @@ def test_lease_says_whether_the_chat_model_was_out_from_its_own_record(record, e
     # reads that, never a guess from nearby restarts.
     leases = [{"id": "gate-comfyui", "kind": "media", "started": 1790171000.0,
                "ended": 1790171200.0, "outcome": "completed", **record}]
-    restart_after = {**_audit("restart", "llamacpp"), "ts": 1790171300.0}
+    restart_after = {**_audit("restart", "inference-engine-gpu"), "ts": 1790171300.0}
     items = console.merge_activity(leases, [restart_after], [], limit=10)
     [item] = [i for i in items if i["kind"] == "gpu"]
     assert item["evicted_chat"] is evicted

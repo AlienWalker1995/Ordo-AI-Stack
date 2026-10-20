@@ -108,11 +108,11 @@ describe('the grouped activity feed', () => {
     expect(screen.getByText('GPU lent to ComfyUI')).toBeTruthy()
     expect(screen.queryByText('Render finished · image')).toBeNull()
     fireEvent.click(within(chips).getByRole('button', { name: 'Service changes' }))
-    expect(screen.getByText('Restarted llamacpp')).toBeTruthy()
+    expect(screen.getByText('Restarted inference-engine-gpu')).toBeTruthy()
     expect(screen.queryByText('Switched model to qwen3.8-27b-turbo')).toBeNull()
     fireEvent.click(within(chips).getByRole('button', { name: 'Model changes' }))
     expect(screen.getByText('Switched model to qwen3.8-27b-turbo')).toBeTruthy()
-    expect(screen.queryByText('Restarted llamacpp')).toBeNull()
+    expect(screen.queryByText('Restarted inference-engine-gpu')).toBeNull()
   })
 
   it('widens the request to the endpoint cap on Show more', async () => {

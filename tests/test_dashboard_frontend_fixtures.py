@@ -60,7 +60,7 @@ OPS = {
                                    "outcome": "completed"},
                                   {"id": "gate-comfyui", "kind": "media", "submitted": 300.0,
                                    "started": 400.0, "ended": 580.0, "outcome": "completed",
-                                   "evicted": ["llamacpp"]}]},
+                                   "evicted": ["inference-engine-gpu"]}]},
     "/audit?limit=100": {"entries": [{"ts": 300.0, "caller": "dashboard", "action": "restart",
                                       "target": "n8n", "result": "ok"}]},
     "/projects": {"projects": [{"project": "media-stack", "containers": [

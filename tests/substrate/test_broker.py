@@ -170,7 +170,7 @@ def test_broker_records_lease_history_lifecycle(tmp_path):
     assert outcomes == {"train": "completed", "huge": "rejected"}
     train = next(r for r in hist.tail() if r["id"] == "train")
     assert train["started"] is not None and train["kind"] == "training"
-    assert train["evicted"] == ["llamacpp"]      # the record says what the lease displaced
+    assert train["evicted"] == ["inference-engine-gpu"]      # the record says what the lease displaced
 
 
 def test_lease_history_records_a_resident_still_out_from_an_earlier_lease(tmp_path):
@@ -179,15 +179,15 @@ def test_lease_history_records_a_resident_still_out_from_an_earlier_lease(tmp_pa
     from ordo.control.lease_history import LeaseHistory
     hist = LeaseHistory(tmp_path / "h.jsonl", now_fn=lambda: 42.0)
     sched = Scheduler(32)
-    sched.cache_idle("llamacpp", 25)
+    sched.cache_idle("inference-engine-gpu", 25)
     b = Broker(sched, MockBackend(), history=hist)
     b.request(Job("m1", 30, "media"))
     b.request(Job("m2", 30, "media"))            # queued behind m1
     b.complete("m1")                             # admits m2; the resident stays out
     b.complete("m2")                             # queue drained: the resident comes back
     records = {r["id"]: r for r in hist.tail()}
-    assert records["m1"]["evicted"] == ["llamacpp"]
-    assert records["m2"]["evicted"] == ["llamacpp"]
+    assert records["m1"]["evicted"] == ["inference-engine-gpu"]
+    assert records["m2"]["evicted"] == ["inference-engine-gpu"]
     b.request(Job("small", 4, "media"))          # fits beside the restored resident
     b.complete("small")
     assert next(r for r in hist.tail() if r["id"] == "small")["evicted"] == []
