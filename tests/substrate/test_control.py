@@ -26,6 +26,16 @@ def _cp(tmp_path, model="auto", with_broker=True):
     return ControlPlane(src, CATALOG, REGISTRY, tmp_path / "out", scheduler=sched, broker=broker), src
 
 
+def test_comfyui_reclaim_is_wired_with_both_lifecycle_verbs(tmp_path):
+    """A failed reclaim restart can leave ComfyUI killed-but-not-restarted (a docker daemon race,
+    observed live 2026-10-25); the sweeper must get the start verb too, or it cannot recover."""
+    cp, _ = _cp(tmp_path)
+    assert cp.comfyui_reclaim is not None
+    assert cp.comfyui_reclaim.start is not None
+    result = cp.comfyui_reclaim.start()
+    assert result.get("ok") is True and result.get("action") == "started"
+
+
 def test_status_merges_manifest_and_gpu(tmp_path):
     cp, _ = _cp(tmp_path)
     st = cp.route("GET", "/status")[1]
