@@ -199,6 +199,24 @@ def test_a_failed_restart_that_left_comfyui_stopped_starts_it_back_up():
                     "and left it stopped, so it was started back up")
 
 
+def test_a_failed_restart_with_comfyui_absent_from_stats_starts_it_back_up():
+    """Absent from docker stats counts as stopped ({} -> running False): the recovery start is a
+    harmless best-effort no-op if the container truly is gone, and the real fix if it is merely
+    stopped."""
+    sweeper, broker, _clock, restarts, starts = make()
+
+    def broken_restart() -> dict:
+        restarts.append(broker.operation_lock._is_owned())
+        broker.backend.stats = {"services": {}}  # comfyui missing entirely
+        return {"error": "kill race"}
+
+    sweeper.restart = broken_restart
+    line = sweeper.sweep()
+    assert restarts == [True] and starts == [True]
+    assert sweeper.reclaims == 1
+    assert "left it stopped, so it was started back up" in line
+
+
 def test_a_failed_restart_with_comfyui_still_running_does_not_start_again():
     sweeper, _broker, _clock, restarts, starts = make({"error": "restart timed out"})
     line = sweeper.sweep()
