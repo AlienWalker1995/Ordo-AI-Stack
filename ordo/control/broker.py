@@ -27,6 +27,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from typing import Protocol
 
@@ -683,6 +684,28 @@ class MockBackend:
                 self._cycle(self.project_containers[name])
 
 
+# --- stop/start at the CLI seam -----------------------------------------------------------
+#
+# `docker restart` is not atomic. On a daemon race ("tried to kill container, but did not receive
+# an exit event") the stop half lands -- the container is SIGKILLed -- and the start half never
+# runs, and the manual-stop mark from the stop phase keeps `unless-stopped` from reviving it.
+# Observed live 2026-10-25 (the idle-RAM reclaim left ComfyUI Exited(137) until a human noticed;
+# 94 such restart calls since 10-15 in /data/audit.log, several failing on the race) and
+# 2026-10-19 (a deploy's `docker stop` on inference-engine-gpu failed on the same race). Every
+# stop/restart below therefore goes through _docker_stop/_docker_start, which verify the end
+# state with `docker inspect` instead of trusting the CLI's exit code: a verb returns only once
+# the container has actually exited / actually come up, and raises otherwise.
+EXIT_EVENT_RACE_MARKER = "did not receive an exit event"
+STOP_EXIT_WAIT_S = 120.0   # bound for waiting out a raced stop's exit
+START_CONFIRM_S = 10.0     # bound for confirming a started container is actually running
+
+
+class ContainerLifecycleError(RuntimeError):
+    """A stop/start cycle could not guarantee its end state: the container was still running
+    after the exit-event-race bound, or it failed to come up after `docker start`. Carries the
+    docker output so a caller can report WHY without re-reading the container."""
+
+
 class DockerBackend:
     """Real backend, HARD-SCOPED to a compose project.
 
@@ -726,6 +749,73 @@ class DockerBackend:
         names = [n for n in proc.stdout.splitlines() if n.strip()]
         return names[0] if names else None
 
+    @staticmethod
+    def _container_running(container: str) -> str:
+        """`docker inspect --format {{.State.Running}}` as "running", "exited", or "unknown" when
+        docker cannot say (a transient daemon error, or the container is gone)."""
+        proc = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Running}}", container],
+            capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            return "exited" if "No such object" in (proc.stderr or "") else "unknown"
+        value = proc.stdout.strip().lower()
+        return "running" if value == "true" else ("exited" if value == "false" else "unknown")
+
+    def _wait_for_state(self, container: str, want: str, bound_s: float, poll_s: float) -> bool:
+        """Poll `_container_running` until it says `want`; True when it does, False when the bound
+        elapses first. A read docker cannot answer ("unknown") counts as not-yet, and the bound
+        still applies: a wedged daemon must not hang the verb forever."""
+        deadline = time.monotonic() + bound_s
+        while True:
+            if self._container_running(container) == want:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll_s)
+
+    def _docker_stop(self, container: str, timeout: int = 60) -> None:
+        """`docker stop` that cannot report done while the container is still running.
+
+        On the daemon's exit-event race the kill has landed but the client missed the event; the
+        stop then waits (bounded) for `docker inspect` to agree the container has exited before
+        calling it done. Any other failure keeps the plain CalledProcessError semantics."""
+        proc = subprocess.run(["docker", "stop", container], capture_output=True, text=True,
+                              timeout=timeout)
+        if proc.returncode == 0:
+            return
+        stderr = (proc.stderr or "").strip()
+        if EXIT_EVENT_RACE_MARKER in stderr:
+            if self._wait_for_state(container, "exited", STOP_EXIT_WAIT_S, 2.0):
+                return
+            raise ContainerLifecycleError(
+                f"docker stop {container!r} hit the exit-event race ({stderr}); the container was "
+                f"still running {STOP_EXIT_WAIT_S:.0f}s later, so it was left running")
+        raise subprocess.CalledProcessError(proc.returncode, ["docker", "stop", container],
+                                            output=proc.stdout, stderr=stderr)
+
+    def _docker_start(self, container: str, timeout: int = 60) -> None:
+        """`docker start` plus confirmation that the container is actually running: a zero exit is
+        not proof (a one-shot container exits immediately; a netns member whose owner is down
+        fails to join the namespace and stays stopped)."""
+        proc = subprocess.run(["docker", "start", container], capture_output=True, text=True,
+                              timeout=timeout)
+        if proc.returncode != 0:
+            raise ContainerLifecycleError(f"docker start {container!r} failed: "
+                                          f"{(proc.stderr or '').strip()}")
+        if not self._wait_for_state(container, "running", START_CONFIRM_S, 1.0):
+            raise ContainerLifecycleError(
+                f"docker start {container!r} returned success but the container is not running "
+                f"{START_CONFIRM_S:.0f}s later")
+
+    def _docker_restart(self, container: str, timeout: int = 60) -> None:
+        """`docker restart` as stop-then-start with verified end states: the stop half waits out
+        the exit-event race, the start half confirms the container is running. Returns only when
+        the container is provably running again; raises ContainerLifecycleError when the end
+        state cannot be guaranteed, so no caller can ever report a restart that left the
+        container stopped."""
+        self._docker_stop(container, timeout=timeout)
+        self._docker_start(container, timeout=timeout)
+
     def start(self, service: str) -> None:  # pragma: no cover - needs real docker
         container = self._resolve(self._lifecycle_guard(service))
         if container is None:
@@ -736,13 +826,13 @@ class DockerBackend:
         container = self._resolve(self._lifecycle_guard(service))
         if container is None:
             return  # abstract lease job — no container to stop
-        subprocess.run(["docker", "stop", container], check=True, timeout=60)
+        self._docker_stop(container)
 
     def restart(self, service: str) -> None:  # pragma: no cover - needs real docker
         container = self._resolve(self._lifecycle_guard(service))
         if container is None:
             return  # abstract lease job — no container to restart
-        subprocess.run(["docker", "restart", container], check=True, timeout=60)
+        self._docker_restart(container)
 
     def logs(self, service: str, tail: int = TAIL_DEFAULT, since: str | None = None) -> list[LogLine]:
         container = self._resolve(service)
@@ -844,7 +934,7 @@ class DockerBackend:
         return json.loads(proc.stdout)[0]
 
     def foreign_restart(self, project: str, name: str) -> None:  # pragma: no cover - needs real docker
-        subprocess.run(["docker", "restart", self._foreign_guard(project, name)], check=True, timeout=120)
+        self._docker_restart(self._foreign_guard(project, name), timeout=120)
 
     def netns_rows(self, project: str | None = None) -> list[dict]:  # pragma: no cover - needs real docker
         target = project or self.project
@@ -943,7 +1033,7 @@ class DockerBackend:
         return proc.stdout
 
     def container_restart(self, name: str) -> None:  # pragma: no cover - needs real docker
-        subprocess.run(["docker", "restart", self._container_guard(name)], check=True, timeout=120)
+        self._docker_restart(self._container_guard(name), timeout=120)
 
     def container_inspect(self, name: str) -> dict:  # pragma: no cover - needs real docker
         container = self._container_guard(name)

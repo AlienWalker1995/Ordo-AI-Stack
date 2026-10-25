@@ -26,14 +26,15 @@ def _cp(tmp_path, model="auto", with_broker=True):
     return ControlPlane(src, CATALOG, REGISTRY, tmp_path / "out", scheduler=sched, broker=broker), src
 
 
-def test_comfyui_reclaim_is_wired_with_both_lifecycle_verbs(tmp_path):
-    """A failed reclaim restart can leave ComfyUI killed-but-not-restarted (a docker daemon race,
-    observed live 2026-10-25); the sweeper must get the start verb too, or it cannot recover."""
+def test_comfyui_reclaim_is_wired_with_the_restart_verb(tmp_path):
+    """The idle-RAM sweeper must get the lifecycle restart verb, which refuses while a lease
+    conflicts. The daemon race that used to leave a failed restart killed-but-not-restarted is
+    resolved at the seam (the broker's restart verifies the container actually came up), so the
+    sweeper needs no separate start verb to recover."""
     cp, _ = _cp(tmp_path)
     assert cp.comfyui_reclaim is not None
-    assert cp.comfyui_reclaim.start is not None
-    result = cp.comfyui_reclaim.start()
-    assert result.get("ok") is True and result.get("action") == "started"
+    result = cp.comfyui_reclaim.restart()
+    assert result.get("ok") is True and result.get("action") == "restarted"
 
 
 def test_status_merges_manifest_and_gpu(tmp_path):

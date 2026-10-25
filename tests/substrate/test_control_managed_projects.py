@@ -514,7 +514,10 @@ class FakeDocker:
         if argv[:2] == ["docker", "ps"]:
             out = f"decoy\t{VICTIM_ID}\trunning\tUp 1 hour\talpine\t{DECOY_ID}\n"
         elif argv[:2] == ["docker", "inspect"]:
-            out = json.dumps([{"Id": argv[-1], "Config": {"Env": []}, "HostConfig": {}}])
+            if "--format" in argv:
+                out = "true\n"  # the seam's State.Running confirmation query
+            else:
+                out = json.dumps([{"Id": argv[-1], "Config": {"Env": []}, "HostConfig": {}}])
         else:
             out = ""
         return subprocess.CompletedProcess(argv, 0, out, "")
@@ -534,9 +537,11 @@ def test_the_backend_acts_on_the_labelled_containers_id_not_its_name(docker_back
     args = ("nas-stack", VICTIM_ID, 10) if verb == "foreign_logs" else ("nas-stack", VICTIM_ID)
     getattr(backend, verb)(*args)
     acted = [argv for argv in fake.calls if argv[:2] != ["docker", "ps"]]
-    assert len(acted) == 1
-    assert acted[0][-1] == DECOY_ID
-    assert VICTIM_ID not in acted[0]
+    # a restart is stop+start+inspect at the seam; logs/inspect are single calls
+    assert len(acted) == (3 if verb == "foreign_restart" else 1)
+    for argv in acted:
+        assert argv[-1] == DECOY_ID
+        assert VICTIM_ID not in argv
 
 
 def test_the_ps_query_is_label_filtered_and_untruncated(docker_backend):
