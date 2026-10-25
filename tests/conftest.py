@@ -36,6 +36,50 @@ os.environ.setdefault(
 )
 
 
+# ---------------------------------------------------------------------------
+# Session-level live-credential guard: pytest must never hold a real
+# ops-controller bearer.
+#
+# dashboard/settings.py, dashboard/app.py and dashboard/routes_orchestration.py all read
+# OPS_CONTROLLER_TOKEN at import time, and routes_orchestration builds a fresh
+# httpx.AsyncClient per request — so a full pytest run inside a container that carries the
+# admin token (ordo-agent-1) forwarded the auth-middleware tests' protected-route requests
+# to the LIVE ops-controller and restarted the live ComfyUI (~94 restarts since 2026-10-15,
+# audit log caller=orchestration). Check here, at conftest import — before any test module
+# imports the dashboard — instead of letting a test reach the control plane. Run with the
+# credential present only when every ops-controller client is stubbed
+# (tests/test_dashboard_auth_middleware.py does) and ORDO_TESTS_ALLOW_OPS_TOKEN=1 is set.
+# ---------------------------------------------------------------------------
+
+
+def _live_ops_credential() -> str | None:
+    """A non-empty live ops-controller credential in the environment, or None."""
+    token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
+    if token:
+        return f"OPS_CONTROLLER_TOKEN is set ({len(token)} chars)"
+    file_path = os.environ.get("OPS_CONTROLLER_TOKEN_FILE", "").strip()
+    if file_path:
+        try:
+            content = Path(file_path).read_text(encoding="utf-8").strip()
+        except OSError:
+            content = ""
+        if content:
+            return f"OPS_CONTROLLER_TOKEN_FILE points at a non-empty file ({file_path})"
+    return None
+
+
+_live_ops = _live_ops_credential()
+if _live_ops and os.environ.get("ORDO_TESTS_ALLOW_OPS_TOKEN") != "1":
+    raise RuntimeError(
+        "pytest detected a live ops-controller credential: "
+        f"{_live_ops}. Tests must never reach the live ops-controller — unset both "
+        "OPS_CONTROLLER_TOKEN and OPS_CONTROLLER_TOKEN_FILE before running pytest "
+        "(env -u OPS_CONTROLLER_TOKEN -u OPS_CONTROLLER_TOKEN_FILE), or set "
+        "ORDO_TESTS_ALLOW_OPS_TOKEN=1 for an intentional run whose fixtures stub every "
+        "ops-controller client."
+    )
+
+
 def _rendered_services_catalog() -> str:
     """Write the service catalog `ordo render` would write, and return its path.
 
