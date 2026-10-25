@@ -15,6 +15,13 @@ signal it cannot read counts as busy:
   - ComfyUI is running and holds at least RECLAIM_MIN_GB (docker stats);
   - ComfyUI's own queue is empty (read inside its container).
 A stack without ComfyUI never passes the memory check, so the sweep does nothing there.
+
+`docker restart` is not atomic. On a daemon race ("tried to kill container, but did not receive an
+exit event") the stop half lands -- the container is SIGKILLed -- and the start half never runs,
+and the manual-stop mark from the stop phase keeps `unless-stopped` from reviving it. Observed live
+2026-10-25: a reclaim restart left ComfyUI down until a human noticed. So after a FAILED restart
+the sweep re-reads the real state, and if ComfyUI is stopped it starts it back up (under the same
+lock) instead of leaving it down.
 """
 from __future__ import annotations
 
@@ -33,13 +40,16 @@ QUEUE_PROBE = ["python3", "-c",
 
 
 class ComfyUIReclaim:
-    """One sweep per call (ordo/control/serve.py runs it every SWEEP_SECONDS). `restart` is the
-    lifecycle verb's restart of ComfyUI, which also refuses while a lease conflicts."""
+    """One sweep per call (ordo/control/serve.py runs it every SWEEP_SECONDS). `restart` and
+    `start` are the lifecycle verbs for ComfyUI, which also refuse while a lease conflicts;
+    `start` is the recovery for a failed restart that left the container stopped."""
 
     def __init__(self, broker: Any, restart: Callable[[], dict[str, Any]],
+                 start: Callable[[], dict[str, Any]] | None = None,
                  clock: Callable[[], float] = time.monotonic):
         self.broker = broker
         self.restart = restart
+        self.start = start
         self.clock = clock
         # A fresh process has not watched the GPU yet, so it waits one quiet period first.
         self.last_busy = clock()
@@ -53,6 +63,14 @@ class ComfyUIReclaim:
         try:
             stats = (self.broker.backend.service_stats().get("services") or {}).get(SERVICE) or {}
             return float(stats["mem_gb"]) if stats.get("running") else None
+        except Exception:  # noqa: BLE001 - unreadable counts as busy
+            return None
+
+    def _running(self) -> bool | None:
+        """Whether ComfyUI's container is running right now, or None when docker cannot say."""
+        try:
+            stats = (self.broker.backend.service_stats().get("services") or {}).get(SERVICE) or {}
+            return bool(stats.get("running"))
         except Exception:  # noqa: BLE001 - unreadable counts as busy
             return None
 
@@ -84,10 +102,24 @@ class ComfyUIReclaim:
                 self.last_busy = now
                 return None
             result = self.restart()
+            recovery = None
+            if not result.get("ok") and self._running() is False:
+                # The kill half of the restart landed but the start half never ran (see the
+                # module note); unless-stopped will not revive it. Start it back up.
+                recovery = self.start() if self.start else None
         finally:
             self.broker.operation_lock.release()
         self.last_busy = now
         if result.get("ok"):
             self.reclaims += 1
             return f"restarted ComfyUI to release the {memory:.1f} GiB it held while idle"
-        return f"ComfyUI held {memory:.1f} GiB while idle, but its restart failed: {result.get('error', result)}"
+        failure = result.get("error", result)
+        if recovery is not None:
+            if recovery.get("ok"):
+                self.reclaims += 1
+                return (f"ComfyUI held {memory:.1f} GiB while idle; its restart failed ({failure}) "
+                        f"and left it stopped, so it was started back up")
+            return (f"ComfyUI held {memory:.1f} GiB while idle; its restart failed ({failure}) "
+                    f"and left it stopped, and the recovery start failed too: "
+                    f"{recovery.get('error', recovery)}")
+        return f"ComfyUI held {memory:.1f} GiB while idle, but its restart failed: {failure}"
