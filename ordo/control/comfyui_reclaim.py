@@ -46,7 +46,7 @@ class ComfyUIReclaim:
 
     def __init__(self, broker: Any, restart: Callable[[], dict[str, Any]],
                  start: Callable[[], dict[str, Any]] | None = None,
-                 clock: Callable[[], float] = time.monotonic):
+                 *, clock: Callable[[], float] = time.monotonic):
         self.broker = broker
         self.restart = restart
         self.start = start
