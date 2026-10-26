@@ -9,7 +9,7 @@ from __future__ import annotations
 import subprocess
 
 from ordo.control import metrics
-from ordo.control.broker import MockBackend, netns_member_rows
+from ordo.control.broker import ContainerLifecycleError, MockBackend, netns_member_rows
 from ordo.control.managed import RestartBudget
 from ordo.control.netns_repair import NetnsRepair, is_orphan, repairable
 
@@ -89,6 +89,27 @@ def test_a_failed_repair_is_counted_and_the_sweep_goes_on():
                                fail=True))
     assert repair.sweep() == []
     assert repair.stats() == {"repaired": 0, "failed": 2, "orphans": 2}
+
+
+def test_a_lifecycle_error_from_foreign_restart_is_counted_and_the_sweep_goes_on():
+    """The seam's ContainerLifecycleError must be counted like any other repair failure, not
+    abort the whole sweep: the most likely failure for a netns orphan is precisely owner-down ->
+    docker start cannot join the namespace -> ContainerLifecycleError, i.e. the case this sweep
+    exists for."""
+    class LifecycleFail(_Scripted):
+        def foreign_restart(self, project, name):
+            self.foreign_restarted.append((project, name))  # the attempt happened either way
+            if name == "qbittorrent":
+                raise ContainerLifecycleError(
+                    "docker start 'qbittorrent' failed: Error response from daemon: cannot join "
+                    "network namespace of a non running container")
+
+    backend = LifecycleFail({"nas-stack": [_row(service="qbittorrent", name="qbittorrent", owner="gluetun"),
+                                           _row(service="prowlarr", name="prowlarr", owner="gluetun")]})
+    repair = _repair(backend, ["nas-stack"])
+    assert repair.sweep() == ["nas-stack/prowlarr"]  # the second orphan is still reached
+    assert repair.stats() == {"repaired": 1, "failed": 1, "orphans": 1}  # the failed one stays down
+    assert backend.foreign_restarted == [("nas-stack", "qbittorrent"), ("nas-stack", "prowlarr")]
 
 
 def test_the_budget_stops_a_member_that_keeps_falling_over():

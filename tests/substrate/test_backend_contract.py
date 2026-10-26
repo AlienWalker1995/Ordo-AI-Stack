@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo.control.broker import DockerBackend, MockBackend, NoContainer
+from ordo.control.broker import ContainerLifecycleError, DockerBackend, MockBackend, NoContainer
 from ordo.control.netns_repair import NetnsRepair
 from ordo.render.changed_set import diff_services
 
@@ -649,7 +649,9 @@ def _orphan_member_like_a_daemon_restart(backend) -> None:
     start fails to join the stopped owner's namespace and it stays down (2026-10-06)."""
     backend.stop("member")
     backend.stop("owner")
-    with pytest.raises(subprocess.CalledProcessError):
+    # The seam reports a failed `docker start` as ContainerLifecycleError with docker's stderr
+    # embedded (a non-zero exit is the daemon saying the start did not happen).
+    with pytest.raises(ContainerLifecycleError, match="network namespace"):
         backend.start("member")
     backend.start("owner")
 

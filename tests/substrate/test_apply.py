@@ -880,3 +880,101 @@ def test_a_dry_run_never_touches_the_bind_config_digests():
     host = FakeHost(gpu=LEASED, want=_changed("inference-engine-gpu"))
     apply.run(host, only=None, dry_run=True)
     assert not any(c[0] in ("read_bind_configs", "restore_bind_configs") for c in host.calls)
+
+
+# --------------------------------------------------------------------------- #
+# The host-side stop end-state check (the 2026-10-19 deploy race): `docker stop`'s exit code is
+# confirmed against `docker inspect`, and a wedged daemon cannot abort the apply.
+# --------------------------------------------------------------------------- #
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+def _real_host(tmp_path):
+    return apply.RealHost(source_path=tmp_path / "ordo.yaml", catalog_path=tmp_path / "catalog.json",
+                           out=tmp_path, project="ordo", preflight=lambda services: True,
+                           materialize_secrets=lambda: 0, doctor=lambda: 0)
+
+
+class StopCli:
+    """Answers the docker calls RealHost.stop_containers makes: one scripted `docker stop` result,
+    then scripted `docker inspect` answers for the end-state confirmation."""
+
+    def __init__(self, stop_result, inspect_answers):
+        self.stop_result = stop_result
+        self.inspect_answers = list(inspect_answers)
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv, *args, **kwargs):
+        self.calls.append(list(argv))
+        if argv[1] == "stop":
+            if not kwargs.get("capture_output", False):
+                # Like the real subprocess.run without capture_output: the streams are inherited,
+                # so the CompletedProcess carries no output (this is what emptied the diagnostic).
+                return subprocess.CompletedProcess(argv, self.stop_result.returncode, None, None)
+            return self.stop_result
+        answer = self.inspect_answers.pop(0) if self.inspect_answers else "false\n"
+        if isinstance(answer, BaseException):
+            raise answer
+        return subprocess.CompletedProcess(argv, 0, answer, "")
+
+
+def test_stop_containers_reports_dockers_reason_when_it_confirms_the_exit(tmp_path, monkeypatch, capsys):
+    """The 2026-10-19 race during `ordo apply`: `docker stop` fails although the stop already
+    landed; the 'treating the stop as done' note must carry the daemon's reason, not an empty ()."""
+    cli_ = StopCli(subprocess.CompletedProcess(["docker", "stop"], 1, "",
+                                               "tried to kill container, but did not receive an exit event"),
+                   ["false\n"])
+    monkeypatch.setattr(apply.subprocess, "run", cli_)
+    assert apply.RealHost.stop_containers(_real_host(tmp_path), ["cid-raced"]) == 0
+    err = capsys.readouterr().err
+    assert "did not receive an exit event" in err
+    assert "treating the stop as done" in err
+
+
+def test_stop_containers_still_reports_the_failure_when_the_container_kept_running(tmp_path, monkeypatch):
+    """The confirmation is what flips the verdict: still running at the bound means the stop
+    really failed, and its exit code propagates."""
+    cli_ = StopCli(subprocess.CompletedProcess(["docker", "stop"], 1, "", "some other failure"),
+                   ["true\n"] * 100)
+    clock = _Clock()
+    monkeypatch.setattr(apply.subprocess, "run", cli_)
+    monkeypatch.setattr(apply.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(apply.time, "sleep", clock.sleep)
+    assert apply.RealHost.stop_containers(_real_host(tmp_path), ["cid-up"]) == 1
+    assert clock.now >= 30.0  # it waited out the bound before giving up
+
+
+@pytest.mark.parametrize("raise_error", [
+    pytest.param(lambda: subprocess.TimeoutExpired(["docker"], 30), id="inspect-timeout"),
+    pytest.param(lambda: FileNotFoundError(), id="missing-binary"),
+])
+def test_container_stopped_treats_an_unanswered_read_as_not_yet(monkeypatch, raise_error):
+    """A wedged daemon (the inspect past its 30 s timeout) or a missing binary counts as
+    not-yet-stopped, so the bound applies instead of the apply dying with a traceback."""
+    def wedged(*args, **kwargs):
+        raise raise_error()
+    monkeypatch.setattr(apply.subprocess, "run", wedged)
+    assert apply._container_stopped("cid") is False
+
+
+def test_all_stopped_waits_out_the_bound_when_reads_are_unanswered(monkeypatch):
+    """The docstring's promise: a wedged daemon cannot hang the apply — unanswered reads count as
+    not-yet until the bound elapses, then the stop is reported as unconfirmed."""
+    def wedged(*args, **kwargs):
+        raise subprocess.TimeoutExpired(["docker"], 30)
+    clock = _Clock()
+    monkeypatch.setattr(apply.subprocess, "run", wedged)
+    monkeypatch.setattr(apply.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(apply.time, "sleep", clock.sleep)
+    assert apply._all_stopped(["cid"], bound_s=4.0, poll_s=1.0) is False
+    assert clock.now >= 4.0

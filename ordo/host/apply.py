@@ -190,8 +190,18 @@ class RealHost:
     def stop_containers(self, containers: Sequence[str]) -> int:  # pragma: no cover - shells out
         """`docker stop` by container id: a service the render no longer defines is not in the
         rendered compose, so compose cannot name it. Stopped, not removed, as ops-controller's
-        disable does; its volumes and the container itself stay."""
-        return subprocess.run(["docker", "stop", *containers], timeout=120).returncode
+        disable does; its volumes and the container itself stay. On the daemon's exit-event race
+        the CLI can fail although the stop already landed (the 2026-10-19 deploy race), so a
+        non-zero exit is confirmed against `docker inspect` before being reported."""
+        proc = subprocess.run(["docker", "stop", *containers], capture_output=True, text=True,
+                              timeout=120)
+        if proc.returncode == 0:
+            return 0
+        if _all_stopped(containers):
+            print(f"docker stop reported a failure ({(proc.stderr or '').strip()}) but every "
+                  "container confirmed exited; treating the stop as done", file=sys.stderr)
+            return 0
+        return proc.returncode
 
     def wait_for_ops_controller(self) -> bool:  # pragma: no cover - polls docker
         deadline = time.monotonic() + OPS_CONTROLLER_READY_SECONDS
@@ -220,6 +230,34 @@ class RealHost:
 # --------------------------------------------------------------------------- #
 # The plan and its execution.
 # --------------------------------------------------------------------------- #
+
+
+def _container_stopped(name: str) -> bool:
+    """Whether docker reports the container exited (or gone). The end-state check the daemon's
+    exit-event race makes necessary: `docker stop` can report a stop that already happened as a
+    failure ('did not receive an exit event'), so the exit code alone cannot be trusted. A read
+    docker cannot answer (a wedged daemon past the inspect timeout, a missing binary) counts as
+    not-yet, so it cannot abort the apply with a traceback."""
+    try:
+        proc = subprocess.run(["docker", "inspect", "--format", "{{.State.Running}}", name],
+                              capture_output=True, text=True, timeout=30)
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    if proc.returncode != 0:
+        return "No such object" in (proc.stderr or "")
+    return (proc.stdout or "").strip() == "false"
+
+
+def _all_stopped(names: Sequence[str], bound_s: float = 30.0, poll_s: float = 2.0) -> bool:
+    """Poll until every named container reports exited; False when the bound elapses first. A
+    read docker cannot answer counts as not-yet, so a wedged daemon cannot hang the apply."""
+    deadline = time.monotonic() + bound_s
+    while True:
+        if all(_container_stopped(n) for n in names):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll_s)
 
 
 @dataclasses.dataclass

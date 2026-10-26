@@ -28,6 +28,7 @@ import subprocess
 from collections.abc import Callable
 from typing import Any
 
+from .broker import ContainerLifecycleError
 from .managed import RestartBudget
 
 # The error Docker records when a member's start cannot join its owner's namespace. Both forms:
@@ -108,7 +109,8 @@ class NetnsRepair:
                         self.backend.recreate_service(row["service"])
                     else:
                         self.backend.foreign_restart(project, name)
-                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, OSError) as exc:
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, OSError,
+                        ContainerLifecycleError) as exc:
                     self.failed += 1
                     still_down += 1
                     detail = getattr(exc, "stderr", "") or exc

@@ -146,11 +146,8 @@ class ControlPlane:
                              if broker else None)
         # Restarts an idle ComfyUI holding a lot of RAM, between leases (comfyui_reclaim.py).
         # ordo/control/serve.py drives the sweep.
-        self.comfyui_reclaim = (ComfyUIReclaim(broker,
-                                               lambda: self.lifecycle.service_restart(
-                                                   "comfyui", {"confirm": True}),
-                                               lambda: self.lifecycle.service_start(
-                                                   "comfyui", {"confirm": True}))
+        self.comfyui_reclaim = (ComfyUIReclaim(broker, lambda: self.lifecycle.service_restart(
+                                    "comfyui", {"confirm": True}))
                                 if broker else None)
         self.metrics = prom.MetricsCollector(scheduler, broker, disk_paths or {}, tls_cert_files or {},
                                              chat_health_url=chat_health_url,
