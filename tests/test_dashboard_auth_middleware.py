@@ -30,8 +30,15 @@ DASHBOARD_DOCKERFILE = (
 
 @pytest.fixture
 def ops_http(monkeypatch):
-    """Stub the dashboard's shared HTTP client; `.request` is what forwards to ops-controller."""
+    """Stub every dashboard path to ops-controller so no test can reach the live control plane.
+
+    Two layers: the shared client (``dashboard.app._http_client``) that most routes forward
+    through, and ``routes_orchestration``'s own clients — it reads OPS_CONTROLLER_TOKEN at
+    import and builds a fresh ``httpx.AsyncClient`` per request, which is how the
+    protected-route tests used to restart the LIVE ComfyUI on every full pytest run inside a
+    container carrying the admin token (audit log, caller=orchestration, 2026-10)."""
     import dashboard.app  # noqa: F401  (load the module before patching it)
+    import dashboard.routes_orchestration as routes_orchestration
 
     async def _stub_check(url: str, client=None, *, card_id: str = ""):
         return (True, "")
@@ -44,6 +51,38 @@ def ops_http(monkeypatch):
     mock_client.get = AsyncMock(return_value=MagicMock(status_code=200))
     mock_client.request = AsyncMock(return_value=ops_response)
     monkeypatch.setattr("dashboard.app._http_client", mock_client)
+
+    # routes_orchestration bypasses the shared client: pin its token to the test value (so the
+    # handlers run their full path past the 503 guard) and replace its httpx.AsyncClient with an
+    # inert stand-in that records calls instead of connecting.
+    raw_ops_calls: list[tuple[str, str]] = []
+
+    class _StubOpsResponse:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True, "services": [{"id": "comfyui", "state": "running"}]}
+
+    class _StubOpsAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def request(self, method, url, **kwargs):
+            raw_ops_calls.append((method, url))
+            return _StubOpsResponse()
+
+        async def get(self, url, **kwargs):
+            raw_ops_calls.append(("GET", url))
+            return _StubOpsResponse()
+
+    monkeypatch.setattr(routes_orchestration, "OPS_CONTROLLER_TOKEN", OPS_TOKEN)
+    monkeypatch.setattr(routes_orchestration.httpx, "AsyncClient", _StubOpsAsyncClient)
     return mock_client
 
 
