@@ -20,9 +20,11 @@ A stack without ComfyUI never passes the memory check, so the sweep does nothing
 exit event") the stop half lands -- the container is SIGKILLed -- and the start half never runs,
 and the manual-stop mark from the stop phase keeps `unless-stopped` from reviving it (observed
 live 2026-10-25: a reclaim restart left ComfyUI down until a human noticed). That race is handled
-at the seam: the broker's restart waits for the exit to actually land and confirms the container
-actually came up before reporting success (ordo/control/broker.py). A failed restart now carries
-that precise verdict, so the sweep only reports it -- it never guesses at the container's state.
+at the seam: the broker's restart waits for the exit to actually land, retries a failed start once
+after a short backoff (a transient failure otherwise leaves the container stopped with nothing to
+revive it), and confirms the container actually came up before reporting success
+(ordo/control/broker.py). A failed restart now carries that precise verdict, so the sweep only
+reports it -- it never guesses at the container's state.
 """
 from __future__ import annotations
 
