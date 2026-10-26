@@ -255,14 +255,16 @@ def test_activity_merges_sources_newest_first_and_drops_read_only_noise():
         {"ts": 1790171500.0, "caller": "dashboard", "action": "restart", "target": "n8n", "result": "ok"},
         {"ts": 1790171600.0, "caller": "hermes", "action": "containers.list", "target": "*", "result": "ok"},
         {"ts": 1790171700.0, "caller": "hermes", "action": "diagnostics.dstate", "target": "", "result": "ok"},
+        # Reading another project's logs is audited, but it changes nothing.
+        {"ts": 1790171750.0, "caller": "dashboard", "action": "project.logs", "target": "media/web", "result": "ok"},
     ]
     items = console.merge_activity(leases, audit, console.summarise_renders(HISTORY, 10), limit=10)
     titles = [i["title"] for i in items]
     assert titles[0].startswith("Render failed")
     assert any(t == "Restarted n8n" for t in titles)
     assert any("train-lora" in t for t in titles)
-    assert not any("containers.list" in t or "dstate" in t for t in titles)
-    assert not any(t.startswith("ComfyUI") for t in titles)  # gate leases are the renders themselves
+    assert not any("containers.list" in t or "dstate" in t or "project.logs" in t for t in titles)
+    assert "GPU lent to ComfyUI" in titles
     assert [i["ts"] for i in items] == sorted((i["ts"] for i in items), reverse=True)
 
 
@@ -301,6 +303,71 @@ def test_activity_is_capped():
     audit = [{"ts": float(i), "caller": "dashboard", "action": "restart", "target": f"s{i}", "result": "ok"}
              for i in range(40)]
     assert len(console.merge_activity([], audit, [], limit=25)) == 25
+
+
+def test_gate_leases_are_visible_with_holder_and_duration():
+    # The operator's ask: a render that borrowed the GPU must be readable afterwards, with who
+    # held it, when, and for how long.
+    leases = [{"id": "gate-comfyui", "kind": "media", "started": 1790171000.0,
+               "ended": 1790171180.0, "outcome": "completed"}]
+    [item] = console.merge_activity(leases, [], [], limit=10)
+    assert item["title"] == "GPU lent to ComfyUI"
+    assert item["kind"] == "gpu"
+    assert item["severity"] == "ok"
+    assert item["holder"] == "ComfyUI"
+    assert item["started"] == 1790171000.0
+    assert item["ended"] == 1790171180.0
+    assert item["duration_s"] == 180
+    assert item["evicted_chat"] is False
+
+
+def test_rejected_gate_lease_reads_as_rejected_without_a_duration():
+    # Rejected before it started: no start stamp, so no duration, and the row says why.
+    leases = [{"id": "gate-comfyui", "kind": "media", "submitted": 100.0, "started": None,
+               "ended": 200.0, "outcome": "rejected"}]
+    [item] = console.merge_activity(leases, [], [], limit=10)
+    assert item["title"] == "GPU lent to ComfyUI (rejected)"
+    assert item["severity"] == "warning"
+    assert item["duration_s"] is None
+    assert item["ts"] == 200.0
+
+
+def test_non_gate_lease_keeps_its_title_and_carries_the_same_fields():
+    leases = [{"id": "train-lora", "kind": "train", "started": 100.0, "ended": 700.0,
+               "outcome": "completed"}]
+    [item] = console.merge_activity(leases, [], [], limit=10)
+    assert item["title"] == "GPU lease train-lora completed"
+    assert item["holder"] == "train-lora"
+    assert item["duration_s"] == 600
+
+
+def test_every_activity_item_carries_the_lease_fields():
+    # One shape for every kind, so the page can read holder/duration without per-kind guards.
+    audit = [_audit("restart", "n8n")]
+    items = console.merge_activity([], audit, [], limit=10)
+    [item] = items
+    assert set(item) == {"ts", "kind", "title", "severity", "holder", "started", "ended",
+                         "duration_s", "evicted_chat"}
+    assert (item["holder"], item["started"], item["ended"], item["duration_s"]) == (None, None, None, None)
+    assert item["evicted_chat"] is False
+
+
+@pytest.mark.parametrize("record, evicted", [
+    ({"evicted": ["inference-engine-gpu"]}, True),               # the broker put the chat model away for it
+    ({"evicted": ["inference-engine-gpu", "whisper"]}, True),
+    ({"evicted": ["whisper"]}, False),               # another resident, the chat model stayed
+    ({"evicted": []}, False),
+    ({}, False),                                     # a record from before the broker kept this
+])
+def test_lease_says_whether_the_chat_model_was_out_from_its_own_record(record, evicted):
+    # The broker records which residents were out of the GPU as the lease started; the feed
+    # reads that, never a guess from nearby restarts.
+    leases = [{"id": "gate-comfyui", "kind": "media", "started": 1790171000.0,
+               "ended": 1790171200.0, "outcome": "completed", **record}]
+    restart_after = {**_audit("restart", "inference-engine-gpu"), "ts": 1790171300.0}
+    items = console.merge_activity(leases, [restart_after], [], limit=10)
+    [item] = [i for i in items if i["kind"] == "gpu"]
+    assert item["evicted_chat"] is evicted
 
 
 # --- models ---

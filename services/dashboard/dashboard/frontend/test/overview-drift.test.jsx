@@ -27,7 +27,7 @@ describe('the Drift callout', () => {
   ])('is absent with %s', async (_name, answer) => {
     mockApi({ 'GET /api/drift': answer })
     renderInShell(<OverviewPage />)
-    await screen.findByRole('heading', { name: 'GPUs right now' })
+    await screen.findByRole('heading', { name: 'Model usage' })
     expect(screen.queryByRole('heading', { name: 'Drift' })).toBeNull()
   })
 })
