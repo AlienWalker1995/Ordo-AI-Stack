@@ -4,7 +4,7 @@
 an exit event") the stop half lands and the start half never runs, and the manual-stop mark keeps
 unless-stopped from reviving the container (observed live 2026-10-25: the idle-RAM reclaim left
 ComfyUI Exited(137) until a human noticed; the 2026-10-19 deploy failed its `docker stop` on the
-same race). Every stop/restart therefore goes through the broker's helpers, which verify the end
+same race). Every stop/start/restart therefore goes through the broker's helpers, which verify the end
 state with `docker inspect` instead of trusting the CLI's exit code. A failed start gets one
 bounded retry (a transient failure otherwise leaves the container stopped with nothing to revive
 it), and a one-shot container that finishes its work and exits 0 counts as up.
@@ -79,6 +79,8 @@ class FakeDaemon:
                             else f"false\t0\t{OLD_FINISHED_AT}"))
             if answer == "gone":
                 return Result(1, "", f"Error: No such object: {cmd[-1]}")
+            if answer == "unknown":
+                return Result(1, "", "Error response from daemon: server connection is lost")
             return Result(0, answer + "\n")
         raise AssertionError(f"unexpected docker argv: {cmd}")
 
@@ -257,3 +259,24 @@ def test_finished_after_parses_docker_nanosecond_timestamps(seam):
     assert not backend._finished_after("2026-10-26T11:59:59.999999999Z", started)
     assert not backend._finished_after("", started)
     assert not backend._finished_after("not-a-timestamp", started)
+
+
+def test_the_service_start_verb_confirms_running_through_the_seam(seam):
+    """start() routes through _docker_start like stop()/restart(): the resolved container is
+    started and confirmed running, not fired-and-forgotten."""
+    backend, daemon, _clock = seam
+    daemon.ps_names = ["ordo-comfyui-1"]
+    backend.start("comfyui")
+    assert _verbs(daemon) == ["ps", "start", "inspect"]
+
+
+def test_a_raced_stop_with_a_wedged_daemon_reports_unknown_not_running(seam):
+    """When the last state read is a transient daemon error, the error must say the exit could
+    not be confirmed — not claim the container was still running."""
+    backend, daemon, clock = seam
+    daemon.stop_results.append(Result(1, "", RACE_STDERR))
+    daemon.inspect_answers.extend(["unknown"] * 1000)
+    with pytest.raises(ContainerLifecycleError, match="could not confirm"):
+        backend._docker_stop("c1")
+    assert "start" not in _verbs(daemon)
+    assert clock.now >= 120.0

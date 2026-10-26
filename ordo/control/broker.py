@@ -777,16 +777,20 @@ class DockerBackend:
         return {"running": True if running == "true" else (False if running == "false" else None),
                 "exit_code": exit_code, "finished_at": finished_at}
 
-    def _wait_for_exited(self, container: str, bound_s: float, poll_s: float) -> bool:
-        """Poll until the container is not running (exited or gone); True when it is, False when
-        the bound elapses first. A read docker cannot answer counts as not-yet, and the bound
-        still applies: a wedged daemon must not hang the verb forever."""
+    def _wait_for_exited(self, container: str, bound_s: float, poll_s: float) -> bool | None:
+        """Poll until the container is not running (exited or gone). Returns the last observed
+        State.Running: False when the exit is confirmed before the bound, True when it is still
+        running at the bound, None when docker could not say (a transient daemon error). A read
+        docker cannot answer counts as not-yet, and the bound still applies: a wedged daemon must
+        not hang the verb forever."""
         deadline = time.monotonic() + bound_s
+        running: bool | None = None
         while True:
-            if self._container_state(container)["running"] is False:
-                return True
-            if time.monotonic() >= deadline:
+            running = self._container_state(container)["running"]
+            if running is False:
                 return False
+            if time.monotonic() >= deadline:
+                return running
             time.sleep(poll_s)
 
     def _docker_stop(self, container: str, timeout: int = 60) -> None:
@@ -801,11 +805,17 @@ class DockerBackend:
             return
         stderr = (proc.stderr or "").strip()
         if EXIT_EVENT_RACE_MARKER in stderr:
-            if self._wait_for_exited(container, STOP_EXIT_WAIT_S, 2.0):
+            last = self._wait_for_exited(container, STOP_EXIT_WAIT_S, 2.0)
+            if last is False:
                 return
+            if last is True:
+                outcome = (f"the container was still running {STOP_EXIT_WAIT_S:.0f}s later, "
+                           f"so it was left running")
+            else:
+                outcome = (f"docker could not confirm the exit {STOP_EXIT_WAIT_S:.0f}s later "
+                           f"(last read: unknown), so the container was left as-is")
             raise ContainerLifecycleError(
-                f"docker stop {container!r} hit the exit-event race ({stderr}); the container was "
-                f"still running {STOP_EXIT_WAIT_S:.0f}s later, so it was left running")
+                f"docker stop {container!r} hit the exit-event race ({stderr}); {outcome}")
         raise subprocess.CalledProcessError(proc.returncode, ["docker", "stop", container],
                                             output=proc.stdout, stderr=stderr)
 
@@ -863,11 +873,13 @@ class DockerBackend:
             time.sleep(RESTART_START_RETRY_BACKOFF_S)
             self._docker_start(container, timeout=timeout)
 
-    def start(self, service: str) -> None:  # pragma: no cover - needs real docker
+    def start(self, service: str) -> None:
+        """The start verb through the seam: `docker start` plus confirmation that the container
+        came up, like stop/restart (a zero exit alone is not proof)."""
         container = self._resolve(self._lifecycle_guard(service))
         if container is None:
             return  # abstract lease job — nothing to start (caller owns its workload)
-        subprocess.run(["docker", "start", container], check=True, timeout=60)
+        self._docker_start(container)
 
     def stop(self, service: str) -> None:  # pragma: no cover - needs real docker
         container = self._resolve(self._lifecycle_guard(service))
