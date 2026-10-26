@@ -34,9 +34,10 @@ RACE_STDERR = ("Error response from daemon: Cannot restart container c1: tried t
 
 
 def _rfc3339(delta_seconds: float) -> str:
-    """An RFC3339 UTC timestamp offset from now, in the form docker reports FinishedAt."""
+    """An RFC3339 UTC timestamp offset from now, in the form docker reports FinishedAt
+    (nanosecond fractional part)."""
     ts = datetime.now(UTC) + timedelta(seconds=delta_seconds)
-    return ts.isoformat().replace("+00:00", "Z")
+    return ts.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ts.microsecond * 1000:09d}Z"
 
 
 # The fake's fallback for a not-running container: exited long ago, so a start confirmation
@@ -245,3 +246,14 @@ def test_a_crashed_one_shot_still_raises(seam):
     with pytest.raises(ContainerLifecycleError, match="not running"):
         backend._docker_start("c1")
     assert clock.now >= 10.0
+
+
+def test_finished_after_parses_docker_nanosecond_timestamps(seam):
+    """Docker reports FinishedAt with a 9-digit fractional part (2026-10-26T12:00:00.123456789Z);
+    the comparison must accept that exact form, not just Python's isoformat output."""
+    backend, _daemon, _clock = seam
+    started = datetime(2026, 10, 26, 12, 0, 0, tzinfo=UTC)
+    assert backend._finished_after("2026-10-26T12:00:00.123456789Z", started)
+    assert not backend._finished_after("2026-10-26T11:59:59.999999999Z", started)
+    assert not backend._finished_after("", started)
+    assert not backend._finished_after("not-a-timestamp", started)
