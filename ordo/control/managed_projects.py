@@ -110,9 +110,9 @@ class ManagedProjects:
             return error(409, f"refusing to restart {key}: {gpu_refusal}")
         # Reserve the slot BEFORE restarting (one lock: parallel callers cannot all pass the check).
         # Give it back ONLY when the backend's guard refused (ValueError, raised before docker ran).
-        # Any other failure may come after the container already restarted (`docker restart` timing
-        # out waiting for it, or exiting non-zero), so the slot stays spent: better one restart
-        # under-allowed than restarts nobody counted.
+        # Any other failure may come after the container already restarted (the stop half failing
+        # to confirm the exit, or the start half leaving it down), so the slot stays spent: better
+        # one restart under-allowed than restarts nobody counted.
         wait = self.restart_budget.reserve(key)
         if wait is not None:
             return error(429, f"{key} was restarted {self.restart_budget.limit} times in the last hour; "

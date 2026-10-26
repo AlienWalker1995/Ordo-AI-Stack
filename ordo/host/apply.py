@@ -193,7 +193,8 @@ class RealHost:
         disable does; its volumes and the container itself stay. On the daemon's exit-event race
         the CLI can fail although the stop already landed (the 2026-10-19 deploy race), so a
         non-zero exit is confirmed against `docker inspect` before being reported."""
-        proc = subprocess.run(["docker", "stop", *containers], timeout=120)
+        proc = subprocess.run(["docker", "stop", *containers], capture_output=True, text=True,
+                              timeout=120)
         if proc.returncode == 0:
             return 0
         if _all_stopped(containers):
@@ -234,9 +235,14 @@ class RealHost:
 def _container_stopped(name: str) -> bool:
     """Whether docker reports the container exited (or gone). The end-state check the daemon's
     exit-event race makes necessary: `docker stop` can report a stop that already happened as a
-    failure ('did not receive an exit event'), so the exit code alone cannot be trusted."""
-    proc = subprocess.run(["docker", "inspect", "--format", "{{.State.Running}}", name],
-                          capture_output=True, text=True, timeout=30)
+    failure ('did not receive an exit event'), so the exit code alone cannot be trusted. A read
+    docker cannot answer (a wedged daemon past the inspect timeout, a missing binary) counts as
+    not-yet, so it cannot abort the apply with a traceback."""
+    try:
+        proc = subprocess.run(["docker", "inspect", "--format", "{{.State.Running}}", name],
+                              capture_output=True, text=True, timeout=30)
+    except (subprocess.TimeoutExpired, OSError):
+        return False
     if proc.returncode != 0:
         return "No such object" in (proc.stderr or "")
     return (proc.stdout or "").strip() == "false"

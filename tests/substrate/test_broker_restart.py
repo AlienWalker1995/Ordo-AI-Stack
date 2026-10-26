@@ -261,6 +261,47 @@ def test_finished_after_parses_docker_nanosecond_timestamps(seam):
     assert not backend._finished_after("not-a-timestamp", started)
 
 
+@pytest.mark.parametrize("raw, want", [
+    ("2026-10-26T12:00:00.123456789Z", "2026-10-26T12:00:00.123456Z"),   # nanoseconds truncated
+    ("2026-10-26T12:00:00.1Z", "2026-10-26T12:00:00.100000Z"),           # padded to microseconds
+    ("2026-10-26T12:00:00.123Z", "2026-10-26T12:00:00.123000Z"),         # the millisecond form
+    ("2026-10-26T12:00:00.123456Z", "2026-10-26T12:00:00.123456Z"),      # already six digits
+    ("2026-10-26T12:00:00Z", "2026-10-26T12:00:00Z"),                    # no fraction
+])
+def test_the_fractional_part_is_normalized_to_six_digits(raw, want):
+    """3.10's fromisoformat (the floor of requires-python) accepts only 3- or 6-digit fractions;
+    the parser normalizes to six before parsing, so an RFC3339Nano FinishedAt parses on every
+    supported Python, not just the lenient 3.11+ ones."""
+    assert broker_module._normalize_fractional_seconds(raw) == want
+
+
+def test_finished_after_accepts_every_fraction_length(seam):
+    backend, _daemon, _clock = seam
+    started = datetime(2026, 10, 26, 12, 0, 0, tzinfo=UTC)
+    for ts in ("2026-10-26T12:00:00.1Z", "2026-10-26T12:00:00.123Z",
+               "2026-10-26T12:00:00.123456Z", "2026-10-26T12:00:00.123456789Z",
+               "2026-10-26T12:00:00Z"):
+        assert backend._finished_after(ts, started), ts
+    assert not backend._finished_after("2026-10-26T11:59:59.9Z", started)
+
+
+@pytest.mark.parametrize("raise_error", [
+    pytest.param(lambda cmd, timeout: subprocess.TimeoutExpired(cmd, timeout), id="inspect-timeout"),
+    pytest.param(lambda cmd, timeout: ConnectionResetError(), id="connection-reset"),
+])
+def test_a_wedged_inspect_counts_as_unknown_not_a_traceback(seam, monkeypatch, raise_error):
+    """A daemon that stops answering even `docker inspect` (past the 30 s timeout, or a dropped
+    connection) must report 'cannot say' (running=None) — the documented transient-error state —
+    instead of propagating out of the seam and taking the verb down."""
+    backend, _daemon, _clock = seam
+
+    def wedged(cmd, *args, **kwargs):
+        raise raise_error(cmd, kwargs.get("timeout", 30))
+
+    monkeypatch.setattr(broker_module.subprocess, "run", wedged)
+    assert backend._container_state("c1") == {"running": None, "exit_code": None, "finished_at": ""}
+
+
 def test_the_service_start_verb_confirms_running_through_the_seam(seam):
     """start() routes through _docker_start like stop()/restart(): the resolved container is
     started and confirmed running, not fired-and-forgotten."""

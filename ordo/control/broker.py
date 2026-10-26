@@ -393,11 +393,14 @@ class MockBackend:
             if failure:
                 # Docker records why the start failed in State.Error and leaves the container
                 # stopped. The exit code is not a signal: it keeps the previous stop's (143 after a
-                # `docker stop`); only a daemon boot's failed start reports 128.
+                # `docker stop`); only a daemon boot's failed start reports 128. The seam reports a
+                # failed start as ContainerLifecycleError with docker's stderr embedded (a non-zero
+                # exit is the daemon saying the start did not happen); the mock mirrors
+                # DockerBackend.start so the contract holds for both backends.
                 container.error = failure
                 if container.state == "running":
                     container.state = "exited"
-                raise subprocess.CalledProcessError(1, ["docker", "start", container.name], stderr=failure)
+                raise ContainerLifecycleError(f"docker start {container.name!r} failed: {failure}")
             container.joined_netns = owner.netns
         else:
             container.netns = next(self._namespaces)
@@ -713,6 +716,13 @@ class ContainerLifecycleError(RuntimeError):
     docker output so a caller can report WHY without re-reading the container."""
 
 
+def _normalize_fractional_seconds(timestamp: str) -> str:
+    """RFC3339Nano into a form every supported Python parses: Docker's fractional part may be any
+    length, but 3.10's fromisoformat (the floor of requires-python) accepts only 3 or 6 digits —
+    truncate longer fractions, pad shorter ones, to exactly 6."""
+    return re.sub(r"\.(\d+)", lambda m: "." + m.group(1)[:6].ljust(6, "0"), timestamp, count=1)
+
+
 class DockerBackend:
     """Real backend, HARD-SCOPED to a compose project.
 
@@ -762,10 +772,15 @@ class DockerBackend:
         `running` is True/False, or None when docker cannot say (a transient daemon error); a
         gone container reports running=False with no exit facts — certainly not running, but not
         credited with an exit either."""
-        proc = subprocess.run(
-            ["docker", "inspect", "--format",
-             "{{.State.Running}}\t{{.State.ExitCode}}\t{{.State.FinishedAt}}", container],
-            capture_output=True, text=True, timeout=30)
+        try:
+            proc = subprocess.run(
+                ["docker", "inspect", "--format",
+                 "{{.State.Running}}\t{{.State.ExitCode}}\t{{.State.FinishedAt}}", container],
+                capture_output=True, text=True, timeout=30)
+        except (subprocess.TimeoutExpired, OSError):
+            # A read docker cannot answer counts as unknown (the docstring's contract): a wedged
+            # daemon must not take the verb down with a traceback.
+            return {"running": None, "exit_code": None, "finished_at": ""}
         if proc.returncode != 0:
             if "No such object" in (proc.stderr or ""):
                 return {"running": False, "exit_code": None, "finished_at": ""}
@@ -853,7 +868,11 @@ class DockerBackend:
         if not finished_at:
             return False
         try:
-            finished = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+            # Docker emits RFC3339Nano (fractional part of any length); normalize before parsing,
+            # because 3.10's fromisoformat — the floor of requires-python — rejects fractions of
+            # any length other than 3 or 6 digits.
+            finished = datetime.fromisoformat(
+                _normalize_fractional_seconds(finished_at).replace("Z", "+00:00"))
         except ValueError:
             return False
         return finished >= started_at
