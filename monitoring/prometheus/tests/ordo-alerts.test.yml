@@ -147,7 +147,7 @@ tests:
                 on the CPU fallback. Check ops-controller's /status and logs.
 
   # Chat on the CPU fallback: the GPU model evicted for a render lease, local-chat served by the
-  # always-on CPU server inside the gateway. Warns after 2 minutes of eviction; the lease here
+  # CPU server inside the gateway. Warns after 2 minutes of eviction; the lease here
   # completes at 5 minutes, so the alert resolves once the GPU model is restored.
   - interval: 1m
     input_series:
@@ -169,7 +169,8 @@ tests:
               summary: Chat is on the CPU fallback (GPU chat model evicted)
               description: >-
                 The GPU chat model is evicted for a GPU lease (usually a media render), so local-chat
-                traffic is served by the always-on CPU fallback. Responses are slower while it lasts.
+                traffic is served by the CPU fallback, which unloads its model after 10 idle minutes, so
+                the first reply can take ~20 s longer while it reloads. Responses are slower while it lasts.
                 Resolves automatically when the lease completes and the GPU model is restored.
       - eval_time: 10m
         alertname: ChatServedByCpuFallback

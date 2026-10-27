@@ -30,7 +30,7 @@ litellm_key:
   # fallback while the GPU model is evicted or down). The two stable pins are granted for
   # deliberate pinning only: local-chat-gpu is the GPU model with no CPU failover (it errors
   # while the model is evicted for a render), for work that must run on the GPU; local-chat-cpu
-  # is the always-on CPU deployment, for work deliberately routed off the GPU (batch jobs,
+  # is the CPU deployment, for work deliberately routed off the GPU (batch jobs,
   # overnight crons). The CPU pin holds no VRAM, so a CPU-pinned run executes in parallel with
   # a GPU-pinned one instead of queueing on one llama.cpp slot. The 2026-10-16 decision to run
   # Hermes on local-chat-gpu with local-chat-cpu as its announced first fallback (brain config)
