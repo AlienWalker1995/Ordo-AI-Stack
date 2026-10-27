@@ -11,7 +11,7 @@
       "category": "inference",
       "background": true,
       "ops_service": "inference-engine-cpu",
-      "hint": "Always-on CPU fallback (Qwen3.8-35B-A3B Distill MoE) behind model-gateway's local-chat failover. Backend-only. Run: ordo up inference-engine-cpu",
+      "hint": "Load-on-demand CPU fallback (Qwen3.8-35B-A3B Distill MoE) behind model-gateway's local-chat failover. Backend-only. Run: ordo up inference-engine-cpu",
       "notes": "Separate compose service from the GPU inference-engine-gpu — local-chat's failover target while the scheduler leases the 5090 to a render. Down = profile not running (expected on renders without the plugin)."
     }
   ]

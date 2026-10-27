@@ -70,3 +70,10 @@ def test_the_gateway_advertises_vision_for_both_cpu_names():
     cpu = [m for m in config["model_list"] if m["litellm_params"].get("api_base", "").startswith("http://inference-engine-cpu")]
     assert len(cpu) == 2
     assert all(m["model_info"]["supports_vision"] is True for m in cpu)
+
+
+def test_the_cpu_service_unloads_its_model_when_idle():
+    # The fallback is not hot: llama.cpp frees the ~21GB of weights after 10 idle minutes and
+    # reloads them on the next request (plugin.yaml). Dropping the flag silently pins the RAM again.
+    command, _ = _cpu_command()
+    assert command[command.index("--sleep-idle-seconds") + 1] == "600"

@@ -276,7 +276,7 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
   per-service recreate button does exactly this against the existing `out/` compose (no re-render).
 
 **Which engine answered?** While a render holds the GPU lease, the GPU chat model is evicted and
-`local-chat` traffic is served by the always-on CPU fallback inside the gateway; the response
+`local-chat` traffic is served by the CPU fallback inside the gateway; the response
 still says `local-chat`. The gateway is the one place every client goes through, so it is where the
 answer lives: each request's trace in Langfuse (when the langfuse plugin is enabled) names the
 deployment that served it, every gateway response carries the `x-litellm-model-name` header, the

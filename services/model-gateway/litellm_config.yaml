@@ -61,7 +61,7 @@ model_list:
   # Explicit, pickable REAL models so callers/UI see WHICH model they're using, not just the
   # opaque `local-chat`. Their NAMES are derived from the deployed GGUFs by the entrypoint
   # (never hardcode a model generation here — it goes stale on the next swap):
-  # __GPU_MODEL_NAME__ = the GPU chat model; __CPU_MODEL_NAME__ = the always-on CPU
+  # __GPU_MODEL_NAME__ = the GPU chat model; __CPU_MODEL_NAME__ = the load-on-demand CPU
   # fallback (also local-chat's failover target). The CPU one is only reachable when the
   # opt-in `inference-engine-cpu` service is running; otherwise it just sits unavailable (harmless).
   # The stable aliases local-chat-gpu / local-chat-cpu make the same deployments addressable
@@ -166,7 +166,7 @@ model_list:
       supports_vision: true
       supports_reasoning: true
       description: >-
-        Always-on CPU fallback and local-chat's failover target (see weights_file for the
+        Load-on-demand CPU fallback and local-chat's failover target (see weights_file for the
         exact GGUF), running CPU-only on stock llama.cpp. Context matches the GPU window
         so failover never truncates a conversation. Only reachable while the opt-in
         cpu-fallback profile (inference-engine-cpu) is running. Slow but survives GPU eviction.
