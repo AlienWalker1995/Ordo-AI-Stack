@@ -299,7 +299,7 @@ same GPU deployment and does not appear in `/registry/models`:
 |---|---|---|
 | `local-chat` | the GPU chat model, failing over to the CPU fallback while a render holds the GPU | the default for every consumer: a turn is never lost to a GPU failure |
 | `local-chat-gpu` | the GPU chat model only, with no CPU failover | work that must run on the GPU and accepts an error while the model is evicted for a render |
-| `local-chat-cpu` | the always-on CPU fallback | work deliberately routed off the GPU (batch jobs, overnight crons); it holds no VRAM, so it runs in parallel with GPU work |
+| `local-chat-cpu` | the CPU fallback (unloads its model after 10 idle minutes; the next request reloads it in ~20 s) | work deliberately routed off the GPU (batch jobs, overnight crons); it holds no VRAM, so it runs in parallel with GPU work |
 
 ## Local Model Cost
 

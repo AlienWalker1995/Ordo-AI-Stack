@@ -132,8 +132,8 @@ groups:
           description: >-
             A GPU lease has kept {{ $labels.resident }} stopped for over 2 hours (the longest render
             observed took 54 minutes). Check the running lease on ops-controller's /status.
-      # While the GPU model is evicted for a lease, local-chat traffic is served by the always-on
-      # CPU fallback INSIDE the gateway: the caller still sees `local-chat`, so the switch is
+      # While the GPU model is evicted for a lease, local-chat traffic is served by the CPU
+      # fallback INSIDE the gateway: the caller still sees `local-chat`, so the switch is
       # invisible without this. The usual cause is a media render holding the GPU lease; two
       # minutes keeps sub-minute blips out. Resolves when the lease completes and the GPU model
       # is restored (the Discord receiver sends the resolved notification too).
@@ -146,7 +146,8 @@ groups:
           summary: Chat is on the CPU fallback (GPU chat model evicted)
           description: >-
             The GPU chat model is evicted for a GPU lease (usually a media render), so local-chat
-            traffic is served by the always-on CPU fallback. Responses are slower while it lasts.
+            traffic is served by the CPU fallback, which unloads its model after 10 idle minutes, so
+            the first reply can take ~20 s longer while it reloads. Responses are slower while it lasts.
             Resolves automatically when the lease completes and the GPU model is restored.
 
   - name: ordo-gpu-hardware

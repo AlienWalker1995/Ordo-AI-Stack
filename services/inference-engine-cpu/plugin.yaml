@@ -1,6 +1,7 @@
 # Plugin manifest (data-only) — CPU LLM fallback for local-chat.
 #
-# A second llama.cpp chat server pinned to CPU/RAM (never the GPU), always up. When the
+# A second llama.cpp chat server pinned to CPU/RAM (never the GPU), always up but not always
+# loaded: it unloads its model after 10 idle minutes and reloads it on the next request. When the
 # `ordo serve` scheduler evicts the GPU inference-engine-gpu to hand the 5090 to a media render, LiteLLM
 # fails `local-chat` over to THIS instance so chat/agent requests keep working (degraded)
 # instead of erroring — then routes back to the GPU model when it returns. Routing lives in
@@ -20,7 +21,7 @@
 # unreachable (harmless) until the profile is turned on.
 id: inference-engine-cpu
 name: CPU LLM Fallback (Qwen3.8-35B-A3B Distill)
-description: Always-on CPU llama.cpp chat server that LiteLLM fails local-chat over to while the GPU is busy.
+description: Load-on-demand CPU llama.cpp chat server that LiteLLM fails local-chat over to while the GPU is busy.
 requires:
   nvidia: false           # deliberately CPU-only — never contends for the 5090
   ram_gb: 25              # ~18GB A3B weights (IQ4_XS) + 0.9GB vision projector + KV cache
@@ -122,6 +123,15 @@ services:
       - --load-mode
       - none
       - --metrics
+      # Not hot: after 10 minutes without a request the server unloads the model (~21GB -> ~2-3GB
+      # RSS) and reloads it on the next request, which then waits ~20s longer (measured on this
+      # host 2026-10-26: 22.0s cold vs 2.5s warm on a short prompt). The container stays up and
+      # /health, /v1/models and /metrics keep answering 200 while asleep without waking it, so
+      # the healthcheck, the dashboard and Prometheus see it as healthy. 10 minutes keeps it loaded
+      # across the gaps between turns during a render lease; the ~20s reload is small next to a
+      # CPU turn, and the gateway's 1800s timeout covers it.
+      - --sleep-idle-seconds
+      - "600"
     resources:
       cpus: "${LLAMACPP_CPU_THREADS?LLAMACPP_CPU_THREADS is missing from the rendered .env}"
     volumes:
