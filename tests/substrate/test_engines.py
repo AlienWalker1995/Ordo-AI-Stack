@@ -38,8 +38,8 @@ def _models(hardware: dict, model: str | None = None, plugins="auto") -> dict:
 
 def test_a_manifest_declares_what_a_service_serves():
     ps = PluginService.from_dict({"name": "x", "image": "i", "serves": {"model": "my-chat", "kind": "chat",
-                                                                       "metrics": "llamacpp"}})
-    assert ps.serves == engines.Serves(model="my-chat", kind="chat", metrics="llamacpp")
+                                                                       "metrics": "llamacpp", "port": 8080}})
+    assert ps.serves == engines.Serves(model="my-chat", kind="chat", metrics="llamacpp", port=8080)
 
 
 @pytest.mark.parametrize("serves,message", [
@@ -48,6 +48,7 @@ def test_a_manifest_declares_what_a_service_serves():
     ({"model": "m", "kind": "chat", "metrics": "prometheus"}, "serves.metrics"),
     ({"model": "m", "kind": "chat", "metrics_path": "metrics"}, "metrics_path"),
     ({"model": "m", "kind": "chat", "device": "gpu"}, "unknown keys"),
+    ({"model": "m", "kind": "chat", "metrics": "llamacpp"}, "serves.port"),
 ])
 def test_a_bad_declaration_is_refused(serves, message):
     with pytest.raises(ValueError, match=message):
@@ -64,7 +65,8 @@ def test_labels_round_trip():
     svc: dict = {"image": "i"}
     engines.stamp(svc, engines.Serves(model="m", kind="chat", metrics="llamacpp", fallback_for="local-chat"))
     assert engines.read(svc["labels"]) == {"model": "m", "kind": "chat", "device": "cpu", "metrics": "llamacpp",
-                                           "metrics_path": "/metrics", "fallback_for": "local-chat", "model_env": ""}
+                                           "metrics_path": "/metrics", "port": "", "fallback_for": "local-chat",
+                                           "model_env": ""}
     assert engines.read({"com.example": "x"}) is None
 
 
@@ -73,12 +75,12 @@ def test_labels_round_trip():
 def test_an_engine_no_code_knows_about_is_served():
     """A third-party plugin's engine: only its labels say it serves a model."""
     svc: dict = {"image": "vendor/engine", "command": ["--ctx-size", "16384"]}
-    engines.stamp(svc, engines.Serves(model="vendor-chat", kind="chat", metrics="llamacpp"))
+    engines.stamp(svc, engines.Serves(model="vendor-chat", kind="chat", metrics="llamacpp", port=8080))
     models = served_models({"services": {"vendor-engine": svc}}, {}, [])
     assert models["vendor-chat"]["service"] == "vendor-engine"
     assert models["vendor-chat"]["device"] == "cpu"
     assert models["vendor-chat"]["config"] == {"ctx": 16384}
-    assert models["vendor-chat"]["metrics"] == {"format": "llamacpp", "path": "/metrics"}
+    assert models["vendor-chat"]["metrics"] == {"format": "llamacpp", "path": "/metrics", "port": 8080}
 
 
 def test_the_registry_keeps_no_list_of_engine_services():

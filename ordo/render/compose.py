@@ -882,7 +882,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     # wiring above (a CPU-only host runs it on CPU); NInfer has no metrics endpoint yet, so its
     # throughput is read from its request log (engines.METRICS_FORMATS).
     engines.stamp(gpu_chat_svc, engines.Serves(
-        model="local-chat", kind="chat",
+        model="local-chat", kind="chat", port=8080,
         metrics="llamacpp" if chat_backend == "llama.cpp" else "ninfer-log"))
     # model-gateway is the V1 custom-built LiteLLM config wrapper (+ the MCP gateway since 2026-09);
     # a first-party BUILDABLE image (build context services/model-gateway) so preflight reports

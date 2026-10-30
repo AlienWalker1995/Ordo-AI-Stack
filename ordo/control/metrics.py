@@ -26,6 +26,10 @@ import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+from .engine_metrics import COUNTERS as ENGINE_COUNTERS
+from .engine_metrics import GAUGES as ENGINE_GAUGES
+from .engine_metrics import EngineCollector, EngineSample
+
 if TYPE_CHECKING:
     from .broker import Broker
     from .scheduler import Scheduler
@@ -71,6 +75,10 @@ class Inputs:
     gpu_chat_up: bool | None = None
     # The netns-member repair sweep's counters (ordo/control/netns_repair.py); None when not wired.
     netns_repair: Mapping[str, int] | None = None
+    # One reading per measured model engine (ordo/control/engine_metrics.py); None when not wired
+    # (not reported) or when the engine list could not be read (`engines_failed`).
+    engines: Sequence[EngineSample] | None = None
+    engines_failed: bool = False
 
 
 def _escape(value: Any) -> str:
@@ -177,6 +185,34 @@ def _certs(w: _Writer, certs: Mapping[str, float]) -> None:
               "When the certificate expires, as a Unix time.", {"cert": name}, certs[name])
 
 
+_ENGINE_COUNTER_HELP = {
+    "prompt_tokens_processed": "Prompt tokens the engine computed (prefix-cache hits excluded).",
+    "prompt_tokens_cached": "Prompt tokens the engine reused from its cache.",
+    "output_tokens": "Tokens the engine generated.",
+    "prompt_seconds": "Seconds the engine spent computing prompts.",
+    "output_seconds": "Seconds the engine spent generating.",
+    "queue_seconds": "Seconds requests waited for the engine (only engines that report it).",
+}
+_ENGINE_GAUGE_HELP = {
+    "requests_running": "Requests the engine is working on.",
+    "requests_waiting": "Requests queued for the engine.",
+}
+
+
+def _engines(w: _Writer, samples: Iterable[EngineSample]) -> None:
+    """`ordo_engine_*`: every measured engine with the same definitions, whatever reads it."""
+    w.declare("ordo_engine_up", "gauge", "1 when the engine's metrics could be read and it is running.")
+    for sample in samples:
+        w.add("ordo_engine_up", "gauge", "", sample.labels, 1 if sample.up else 0)
+        for name in ENGINE_COUNTERS:
+            if name in sample.counters:
+                w.add(f"ordo_engine_{name}_total", "counter", _ENGINE_COUNTER_HELP[name],
+                      sample.labels, sample.counters[name])
+        for name in ENGINE_GAUGES:
+            if name in sample.gauges:
+                w.add(f"ordo_engine_{name}", "gauge", _ENGINE_GAUGE_HELP[name], sample.labels, sample.gauges[name])
+
+
 def render(inputs: Inputs) -> str:
     """The exposition text for one scrape."""
     w = _Writer()
@@ -211,6 +247,10 @@ def render(inputs: Inputs) -> str:
         w.add("ordo_netns_orphans", "gauge",
               "Network-namespace members left stopped after the last sweep (failed to join their owner).",
               {}, inputs.netns_repair.get("orphans", 0))
+    if inputs.engines is not None or inputs.engines_failed:
+        collectors["engines"] = inputs.engines is not None
+    if inputs.engines is not None:
+        _engines(w, inputs.engines)
     for collector in sorted(collectors):
         w.add("ordo_metrics_collector_ok", "gauge",
               "1 when this scrape could read the collector's source, 0 when it could not.",
@@ -239,8 +279,10 @@ class MetricsCollector:
 
     def __init__(self, scheduler: Scheduler | None, broker: Broker | None, disk_paths: Mapping[str, str],
                  tls_cert_files: Mapping[str, str], chat_health_url: str | None = None,
-                 netns_repair_stats: Callable[[], Mapping[str, int]] | None = None):
+                 netns_repair_stats: Callable[[], Mapping[str, int]] | None = None,
+                 engines: EngineCollector | None = None):
         self.scheduler = scheduler
+        self.engines = engines
         self.netns_repair_stats = netns_repair_stats
         self.broker = broker
         self.disk_paths = dict(disk_paths)
@@ -283,8 +325,19 @@ class MetricsCollector:
             except (OSError, ValueError) as e:
                 logger.warning("metrics: cannot read the %s certificate: %s", name, e)
                 certs[name] = None
+        engine_samples = None
+        engines_failed = False
+        if self.engines is not None:
+            running = ({row.get("id", "") for row in containers if row.get("state") == "running"}
+                       if containers is not None else None)
+            try:
+                engine_samples = self.engines.collect(running)
+            except Exception as e:  # noqa: BLE001 - the engine list could not be read: a failed collector
+                logger.warning("metrics: cannot read the model engines: %s", e)
+                engines_failed = True
         return render(Inputs(
             scheduler=self.scheduler.status() if self.scheduler else None,
             containers=containers, restarts=restarts, disks=disks, tls_certs=certs,
             gpu_chat_up=self._chat_up(),
-            netns_repair=self.netns_repair_stats() if self.netns_repair_stats else None))
+            netns_repair=self.netns_repair_stats() if self.netns_repair_stats else None,
+            engines=engine_samples, engines_failed=engines_failed))

@@ -34,6 +34,7 @@ services:
       model: local-chat-cpu
       kind: chat
       metrics: llamacpp
+      port: 8080
       fallback_for: local-chat
     # Same upstream llama.cpp server image as inference-engine-embed (and as the GPU chat backend when it uses llama.cpp).
     image: ghcr.io/ggml-org/llama.cpp:server-b11552@sha256:fc9b506e89c1a1cfdd7bc056480f54dc657c1c04d76839a08642dc280b8ed2f6
