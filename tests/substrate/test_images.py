@@ -667,3 +667,23 @@ def test_ninfer_compile_is_capped_and_targets_sm120a():
     assert re.search(r"^ARG NINFER_BUILD_JOBS=\d+$", NINFER_DOCKERFILE, re.M)
     assert '--parallel "${NINFER_BUILD_JOBS}"' in NINFER_DOCKERFILE
     assert "-DCMAKE_CUDA_ARCHITECTURES=120a" in NINFER_DOCKERFILE
+
+
+def test_a_transient_tag_failure_is_retried(monkeypatch):
+    """A lone transient `docker tag` failure failed a whole apply (2026-10-30); the same tag succeeded seconds later."""
+    answers = iter([False, True])
+    calls = []
+    docker = images.Docker()
+    monkeypatch.setattr(docker, "_run", lambda cmd, quiet: calls.append(cmd) or next(answers))
+    monkeypatch.setattr(images, "TAG_RETRY_WAIT_S", 0.0)
+    assert docker.tag("ordo/x:abc", "ordo/x:current") is True
+    assert len(calls) == 2
+
+
+def test_a_tag_that_keeps_failing_fails_after_the_attempts(monkeypatch):
+    docker = images.Docker()
+    calls = []
+    monkeypatch.setattr(docker, "_run", lambda cmd, quiet: calls.append(cmd) or False)
+    monkeypatch.setattr(images, "TAG_RETRY_WAIT_S", 0.0)
+    assert docker.tag("ordo/x:abc", "ordo/x:current") is False
+    assert len(calls) == images.TAG_ATTEMPTS

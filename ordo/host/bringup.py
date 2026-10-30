@@ -12,13 +12,22 @@ import json
 import shlex
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
 import yaml
 
 from ..render.changed_set import OPS_CONTROLLER_SERVICE
-from ..render.stack import COMPOSE_FILE, compose_argv, load_compose, plan_named, profiles_in, services_of
+from ..render.stack import (
+    COMPOSE_FILE,
+    compose_argv,
+    is_transient_docker_error,
+    load_compose,
+    plan_named,
+    profiles_in,
+    services_of,
+)
 from . import fetch, images
 
 # The ops-controller environment key naming its scheduler state file (ordo/render/compose.py sets it).
@@ -224,8 +233,32 @@ def bring_up(out_dir: str, project: str, services: Sequence[str], *, whole_stack
     print(f"$ {shlex.join(cmd)}")
     if dry_run:
         return 0
-    try:
-        return subprocess.run(cmd).returncode
-    except (OSError, subprocess.SubprocessError) as e:
-        print(f"docker compose failed to run: {e}", file=sys.stderr)
-        return 1
+    return run_compose(cmd)
+
+
+# A compose call that hit a Docker Desktop daemon race (stack.TRANSIENT_DOCKER_ERRORS) is retried
+# this many times, this long apart; any other failure returns at once. Compose `up` is idempotent,
+# so a retry finishes the recreate the race interrupted (2026-10-19 and 2026-10-30 left a deploy
+# half applied: a container killed but never replaced, then a half-renamed one blocking the next up).
+COMPOSE_RETRIES = 2
+COMPOSE_RETRY_WAIT_S = 20.0
+
+
+def run_compose(cmd: Sequence[str]) -> int:
+    """Run one compose command; retry it only on a known transient daemon error."""
+    for attempt in range(COMPOSE_RETRIES + 1):
+        try:
+            proc = subprocess.run(list(cmd), stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                  errors="replace")
+        except (OSError, subprocess.SubprocessError) as e:
+            print(f"docker compose failed to run: {e}", file=sys.stderr)
+            return 1
+        err = getattr(proc, "stderr", None) or ""
+        if err:
+            sys.stderr.write(err)
+        if proc.returncode == 0 or attempt == COMPOSE_RETRIES or not is_transient_docker_error(err):
+            return proc.returncode
+        print(f"docker compose hit a transient daemon error; retrying in {COMPOSE_RETRY_WAIT_S:.0f}s "
+              f"({attempt + 1}/{COMPOSE_RETRIES})", file=sys.stderr)
+        time.sleep(COMPOSE_RETRY_WAIT_S)
+    return 1

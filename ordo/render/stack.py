@@ -34,6 +34,22 @@ def expand_env(value: str, env: dict[str, str]) -> str:
     return COMPOSE_VAR_RE.sub(sub, value)
 
 
+# Docker Desktop daemon races that a bounded wait and retry get past. "did not receive an exit event":
+# a stop or recreate whose SIGKILL landed but whose exit the daemon never reported (2026-10-19 deploy,
+# 2026-10-25 ComfyUI reclaim). "is already in use by container": a recreate interrupted between
+# renaming the old container and removing it (2026-10-30), which the next `up` completes.
+EXIT_EVENT_RACE_MARKER = "did not receive an exit event"
+CONTAINER_NAME_CONFLICT_MARKER = "is already in use by container"
+TRANSIENT_DOCKER_ERRORS = (EXIT_EVENT_RACE_MARKER, CONTAINER_NAME_CONFLICT_MARKER)
+# How long a raced stop's exit is waited out (the daemon reports it within a minute or two).
+STOP_EXIT_WAIT_S = 120.0
+
+
+def is_transient_docker_error(text: str) -> bool:
+    """True when docker's error output is one of the daemon races a retry gets past."""
+    return any(marker in text for marker in TRANSIENT_DOCKER_ERRORS)
+
+
 def compose_argv(compose_dir: str, project: str, *args: str, profiles: Sequence[str] = ()) -> list[str]:
     """`docker compose` against the rendered stack in `compose_dir`, followed by `args`.
 
