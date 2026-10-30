@@ -105,6 +105,24 @@ Per-key scoping replaces the old per-client policy fields: a virtual key's
 LiteLLM namespaces tools `<litellm_name>-<tool>`, so Hermes sees
 `gateway__memory_vault-read_note`.
 
+### Model Engines (`serves:`)
+
+**Declared in:** a plugin service's `serves:` block (the core chat engine is declared by the render, `ordo/render/compose.py`). **Stamped as:** `ordo.serves.*` labels on the rendered service and its container (`ordo/render/engines.py`). **Read by:** `/registry/models` (`ordo/render/served_models.py`).
+
+```yaml
+services:
+  - name: my-engine
+    serves:
+      model: my-chat          # the id clients address it by
+      kind: chat              # chat | embedding | image | stt | tts
+      metrics: llamacpp       # llamacpp | ninfer-log | none
+      metrics_path: /metrics  # optional, default /metrics
+      fallback_for: local-chat  # optional: the model this one stands in for
+      model_env: MODEL_REPO   # optional: env key naming a model that is not a file
+```
+
+The device (`gpu` or `cpu`) is not declared: it is read from the service's rendered GPU wiring. Nothing keeps a list of engine service names, so a plugin that declares `serves:` is listed with no code change. `metrics` names how the engine's throughput is read. `ninfer-log` is temporary: NInfer has no metrics endpoint yet, so its throughput is read from its request log.
+
 ### RAG Chunk (Qdrant Point)
 
 Stored in Qdrant on the `qdrant-data` named volume. Collection name defaults to `documents` (`RAG_COLLECTION`).

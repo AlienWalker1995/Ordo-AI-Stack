@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING, Any
 
-from . import bind_configs, gpu
+from . import bind_configs, engines, gpu
 from .secret_files import SecretFileRef
 from .secret_files import add_to_service as _add_secret_files
 
@@ -730,6 +730,8 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
         resources["limits"] = dict(ps.resources)
     _add_secret_files(s, ps.secret_files)
     bind_configs.add_labels(ps.name, s, ps.config_mounts)
+    if ps.serves is not None:   # after the GPU wiring above, so the stamped device is the real one
+        engines.stamp(s, ps.serves)
     return s
 
 
@@ -876,6 +878,12 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     ]
     # Its entrypoint script is read at start: an edit recreates it (ordo/render/bind_configs.py).
     bind_configs.add_labels("inference-engine-gpu", gpu_chat_svc, ["/llamacpp-scripts"])
+    # The core chat engine is declared here, not in a manifest. Its device follows the backend
+    # wiring above (a CPU-only host runs it on CPU); NInfer has no metrics endpoint yet, so its
+    # throughput is read from its request log (engines.METRICS_FORMATS).
+    engines.stamp(gpu_chat_svc, engines.Serves(
+        model="local-chat", kind="chat",
+        metrics="llamacpp" if chat_backend == "llama.cpp" else "ninfer-log"))
     # model-gateway is the V1 custom-built LiteLLM config wrapper (+ the MCP gateway since 2026-09);
     # a first-party BUILDABLE image (build context services/model-gateway) so preflight reports
     # 'build first' not 'Docker will pull'. The V2-native ops-controller + dashboard remain the new control plane.

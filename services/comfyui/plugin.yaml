@@ -26,6 +26,10 @@ optional_secrets: [HF_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN]
 # compose service(s) — compose.py renders these from data (no hardcoded if-blocks)
 services:
   - name: comfyui
+    serves:
+      model: comfyui
+      kind: image
+      metrics: none
     # Parity with V1: the operator's ComfyUI runtime image. V1 sets this via overrides/compute.yml
     # to a digest-pinned yanwk/comfyui-boot (public, pullable; cu128-slim line — bump deliberately). The ComfyUI application code + custom
     # nodes live in the bind-mounted data/comfyui-storage checkout, and the models in models/comfyui

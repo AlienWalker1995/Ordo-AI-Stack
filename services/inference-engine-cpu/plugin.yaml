@@ -29,6 +29,12 @@ provides: [llm-cpu-fallback]
 compose_profile: cpu-fallback
 services:
   - name: inference-engine-cpu
+    # A model in its own right (`local-chat-cpu`) and local-chat's stand-in while the GPU is down.
+    serves:
+      model: local-chat-cpu
+      kind: chat
+      metrics: llamacpp
+      fallback_for: local-chat
     # Same upstream llama.cpp server image as inference-engine-embed (and as the GPU chat backend when it uses llama.cpp).
     image: ghcr.io/ggml-org/llama.cpp:server-b11552@sha256:fc9b506e89c1a1cfdd7bc056480f54dc657c1c04d76839a08642dc280b8ed2f6
     # Force CPU: CUDA_VISIBLE_DEVICES="" hides every GPU from this container so it can NEVER grab
