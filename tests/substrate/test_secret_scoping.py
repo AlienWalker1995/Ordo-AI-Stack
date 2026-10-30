@@ -78,7 +78,7 @@ FILE_SPEC: dict[str, set[str]] = {
 # the /c/dev mirror (so a file would hide nothing from it) and whose docker-exec'd CLI and skills
 # read these by name. Moving one to FILE_SPEC is the goal; adding one here needs a reason.
 ENV_SPEC: dict[str, set[str]] = {
-    "agent": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN", "HERMES_API_SERVER_KEY",
+    "agent": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN_HERMES", "HERMES_API_SERVER_KEY",
               "HERMES_DASHBOARD_OIDC_CLIENT_ID"} | LANGFUSE_PAIR,
     "comfyui": {"OPS_CONTROLLER_TOKEN", "LITELLM_MASTER_KEY", "HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"},
     "open-webui": {"LITELLM_KEY_OPEN_WEBUI"},
@@ -167,7 +167,8 @@ def test_the_ops_token_reaches_only_its_callers(rendered):
     by_file = {n for n, keys in _files(compose).items() if "OPS_CONTROLLER_TOKEN" in keys}
     holders = by_file | {n for n, svc in compose["services"].items()
                          if "OPS_CONTROLLER_TOKEN" in _delivered(svc, {"OPS_CONTROLLER_TOKEN"})}
-    assert holders == {"ops-controller", "dashboard", "agent", "comfyui", "comfyui-gate",
+    # Not the agent: it holds the hermes principal's scoped token (audit SEC-1, 2026-10-30).
+    assert holders == {"ops-controller", "dashboard", "comfyui", "comfyui-gate",
                        "mcp-comfyui", "mcp-orchestration", "evals"}
 
 

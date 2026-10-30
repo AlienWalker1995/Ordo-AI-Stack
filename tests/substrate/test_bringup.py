@@ -421,8 +421,12 @@ def test_the_rendered_stack_recreates_every_holder_of_the_control_plane_token():
     doc = render(source, Catalog.load(root / "catalog" / "models.yaml"),
                  PluginRegistry.load(root / "services")).compose_dict()
     readers = stack.readers_of(doc, ["OPS_CONTROLLER_TOKEN"])
-    assert {"ops-controller", "dashboard", "agent", "mcp-orchestration"} <= set(readers)
+    assert {"ops-controller", "dashboard", "mcp-orchestration"} <= set(readers)
     assert "evals" not in readers and "evals" in doc["services"]
+    # The agent holds its own scoped token (audit SEC-1): rotating that one recreates the agent, and
+    # rotating the admin token no longer needs to.
+    assert "agent" not in readers
+    assert {"agent", "ops-controller"} <= set(stack.readers_of(doc, ["OPS_CONTROLLER_TOKEN_HERMES"]))
 
 
 def test_a_status_without_the_leased_verdict_is_refused_not_guessed():
