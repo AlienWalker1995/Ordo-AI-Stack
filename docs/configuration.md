@@ -220,7 +220,7 @@ The build compiles CUDA kernels for sm_120 (Blackwell) only, so every catalog mo
 
 ### KV-cache quantization
 
-The `LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION` / `LLAMACPP_KV_CACHE_TYPE_K` / `LLAMACPP_KV_CACHE_TYPE_V` vars (set in `ordo.yaml`, re-render to apply) are real and wired into `scripts/llamacpp/run-llama-server.sh` as `--cache-type-k` / `--cache-type-v`. Both default to `q4_0` when quantization is enabled. Because this is a mainline build, only mainline's KV-cache types are valid (`q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `iq4_nl`, `f16`); TurboQuant `tbq*` types do not exist on this build and the server rejects them at startup.
+The KV-cache type is one value, `overrides.inference-engine-gpu.kv_cache_type` in `ordo.yaml` (default `q8_0`, with `enable_kv_quant: 1`; re-render to apply). The render writes it to both `LLAMACPP_KV_CACHE_TYPE_K` and `LLAMACPP_KV_CACHE_TYPE_V`, which `scripts/llamacpp/run-llama-server.sh` passes as `--cache-type-k` / `--cache-type-v`. A NInfer model sets its KV type in its catalog `extra_args` (`--kv-dtype fp8`) and ignores these. Because this is a mainline build, only mainline's KV-cache types are valid (`q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `iq4_nl`, `f16`); TurboQuant `tbq*` types do not exist on this build and the server rejects them at startup.
 
 ### Rollback to stock upstream
 
@@ -232,9 +232,9 @@ overrides:
 ```
 Re-render, then from the repo root: `ordo recreate inference-engine-gpu` (refused while a GPU lease has it evicted). This drops the two hybrid/recurrent patches above, so a `qwen35`-arch model may no longer load on it.
 
-### CPU fallback thread budget
+### CPU model thread budget
 
-`inference-engine-cpu` serves `local-chat` while a render holds the GPU, so its CPU load lands on top of the render's peak power draw. Unbounded, llama.cpp took about 24 of 48 threads, enough to trip the host UPS's overload alarm. Its budget is one source value:
+`inference-engine-cpu` is the CPU model: callers can use it directly as `local-chat-cpu`, and it is also `local-chat`'s fallback while a render holds the GPU, so its CPU load can land on top of the render's peak power draw. Unbounded, llama.cpp took about 24 of 48 threads, enough to trip the host UPS's overload alarm. A larger budget (24 on a 48-thread host) reads prompts about twice as fast; weigh it against the UPS headroom. Its budget is one source value:
 
 ```yaml
 overrides:
@@ -297,9 +297,9 @@ same GPU deployment and does not appear in `/registry/models`:
 
 | Alias | Serves | When to use |
 |---|---|---|
-| `local-chat` | the GPU chat model, failing over to the CPU fallback while a render holds the GPU | the default for every consumer: a turn is never lost to a GPU failure |
+| `local-chat` | the GPU chat model, failing over to the CPU model while a render holds the GPU or the GPU fails | the default for every consumer. A busy GPU is not a failure: requests wait their turn (one at a time, first come first served) instead of moving to the CPU |
 | `local-chat-gpu` | the GPU chat model only, with no CPU failover | work that must run on the GPU and accepts an error while the model is evicted for a render |
-| `local-chat-cpu` | the CPU fallback (unloads its model after 10 idle minutes; the next request reloads it in ~20 s) | work deliberately routed off the GPU (batch jobs, overnight crons); it holds no VRAM, so it runs in parallel with GPU work |
+| `local-chat-cpu` | the CPU model, a model in its own right and `local-chat`'s fallback (one request at a time, first come first served; unloads after 10 idle minutes, the next request reloads it in ~20 s) | work deliberately routed off the GPU (batch jobs, overnight crons); it holds no VRAM, so it runs in parallel with GPU work |
 
 ## Local Model Cost
 
@@ -470,7 +470,7 @@ carrying the MiniMax Music3 nodes that `services/song-gen` declares, so never ro
 
 ## Network Ports
 
-Caddy is still the **only** service with published host ports, every other service (dashboard, open-webui, model-gateway, litellm-db, comfyui, langfuse-web, the `mcp-*` servers, qdrant, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes the SSO-gated host ports below on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, codebase-memory nginx rewrites).
+With the edge on, Caddy is the **only** service with published host ports (with it off, Open WebUI and the dashboard publish on `127.0.0.1` only), every other service (dashboard, open-webui, model-gateway, litellm-db, comfyui, langfuse-web, the `mcp-*` servers, qdrant, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes the SSO-gated host ports below on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, codebase-memory nginx rewrites).
 
 One Google sign-in covers every port except Hermes's `:8447` (its own sign-in) **and the clean per-service tailnet names** — the oauth2-proxy session cookie is domain-scoped, the one OAuth callback stays on `:443`, and the SSO gate's `rd=` redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` in the edge plugin covers every port and every sidecar name. A first sign-in through a bare `:844x` port lands on the `:443` hub and the domain-scoped cookie then covers everything (one extra click); the clean tailnet names (`chat`/`dash`/… `.<tailnet>.ts.net`) return you straight to the service. No new Google OAuth redirect URIs are needed. See [deployment-models.md](deployment-models.md) for the clean-URL sidecar layer.
 

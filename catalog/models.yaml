@@ -265,7 +265,7 @@ models:
     # preset (1.0 / 0.95 / 20 / 0 / 0), which is the model card's.
     # Chat is one request at a time, first come first served: a request that arrives while one is running
     # waits in the engine's FIFO (up to 64 waiting, 20 minutes each) instead of failing over to the CPU
-    # fallback, which reads a ~100k-token prompt at a few tok/s. 64: the gateway peaked at 22 requests in
+    # model, which reads a ~100k-token prompt at about 60-140 tok/s (15-30 minutes) before it starts answering. 64: the gateway peaked at 22 requests in
     # flight (2026-10-30), and the old cap of 8 sent 26 requests a day to the CPU as "queue full". 20 minutes
     # stays under the 30-minute gateway and Hermes request timeouts, leaving room for the answer itself.
     extra_args: "--max-concurrency 1 --max-pending-requests 64 --pending-timeout-ms 1200000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"

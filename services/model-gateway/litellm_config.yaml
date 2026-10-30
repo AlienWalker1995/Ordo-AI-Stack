@@ -271,7 +271,10 @@ general_settings:
   maximum_spend_logs_cleanup_cron: "30 4 * * *"
 
 router_settings:
-  # Any GPU error (render lease, engine down, bad request, 5xx, mid-stream drop) fails over to
+  # A busy GPU queue is the one exception: NInfer's "queue is full" / "expired" errors are not moved
+  # to the CPU model (gpu_lease_fallback_gate refuses that hop); the request keeps its place in the
+  # one-at-a-time GPU queue and the caller retries. Every other GPU error
+  # (render lease, engine down, bad request, 5xx, mid-stream drop) fails over to
   # the CPU model, so no local-chat workload is ever lost to a GPU failure.
   # gpu_lease_fallback_gate (litellm_settings.callbacks) logs the lease state on each hop.
   # Only local-chat fails over: the stable pins (local-chat-gpu, local-chat-cpu) are deliberate
@@ -290,7 +293,7 @@ litellm_settings:
   json_logs: true
   # throughput_callback posts tok/s + TTFT to the dashboard; prometheus serves /metrics for the
   # monitoring plugin. gpu_lease_fallback_gate logs each local-chat CPU fallback hop with the
-  # GPU lease state it reads from ops-controller's /metrics; it never denies the hop.
+  # GPU lease state it reads from ops-controller's /metrics; it denies only a hop out of a busy GPU queue.
   # The endpoint runs unauthenticated (require_auth_for_metrics_endpoint
   # defaults to false) and is internal-network-only ONLY because the edge's SSO-bypassing
   # /llm/* route answers 404 for /metrics and /metrics/* (auth/caddy/Caddyfile). Its labels

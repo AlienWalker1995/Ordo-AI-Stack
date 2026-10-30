@@ -6,8 +6,8 @@ rendered output — edits to *derived* config never survive a re-render, so drif
 impossible.
 
 The stack runs entirely from `C:\dev\ordo-ai-stack` (`main` is the production branch) as compose
-project **`ordo`** (43 services in the current render, 36 plus the seven `tailnet-names` sidecars,
-verified by a fresh `ordo render` with this operator's full plugin set on 2026-09-12 — see `out/docker-compose.yml`) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
+project **`ordo`** (the service count follows the enabled plugins: count the services in
+`out/docker-compose.yml` after `ordo render`) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
 render substrate lives at the repo root (there is no `v2/` directory — there is one Ordo).
 
 ## Install & first run
@@ -146,6 +146,10 @@ deploy, it fast-forwards the checkout, runs `ordo build --all`, then `ordo apply
 - a GPU lease is held;
 - a one-off job container of the project is running (an eval);
 - the agent is busy: a turn in flight, or a `hermes` CLI session (`hermes -z`, `hermes chat`).
+  When a busy agent is the only thing holding a deploy for 30 minutes, the deploy drains it: `hermes pause`
+  holds new cron, kanban and chat work while in-flight work finishes, the deploy runs as soon as the agent
+  is idle, and `hermes resume` lifts that pause (never one the operator set). A drain still busy after 2 hours
+  is lifted and reported, and the deploy waits for an idle agent again.
 
 Changes made on the checkout's `main` outside a pull request (an agent's local commit, or edits to
 tracked files) are never discarded and never deployed as they are. Once they have been unchanged for
