@@ -116,6 +116,7 @@ services:
       model: my-chat          # the id clients address it by
       kind: chat              # chat | embedding | image | stt | tts
       metrics: llamacpp       # llamacpp | ninfer-log | none
+      port: 8080              # required when metrics is read over HTTP (llamacpp)
       metrics_path: /metrics  # optional, default /metrics
       fallback_for: local-chat  # optional: the model this one stands in for
       model_env: MODEL_REPO   # optional: env key naming a model that is not a file

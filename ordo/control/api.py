@@ -51,6 +51,7 @@ import json
 import logging
 import os
 import threading
+import urllib.request
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,7 @@ from .call_audit import ACTOR_HEADER, AUDITED_METHODS, CallAuditor, audit_actor,
 from .comfyui import ModelDownloads, NodeRequirements
 from .comfyui_reclaim import ComfyUIReclaim
 from .doctor import DriftReport
+from .engine_metrics import EngineCollector
 from .gpus import LeaseJobs
 from .lifecycle import LeaseGuard, Lifecycle
 from .managed_projects import ManagedProjects
@@ -91,6 +93,12 @@ COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"
 AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
 COMFYUI_CUSTOM_NODES_DIR = Path(os.environ.get("COMFYUI_CUSTOM_NODES_DIR", "/comfyui-app/ComfyUI/custom_nodes"))
 COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-1")
+
+
+def _http_get(url: str) -> str:
+    """A body from the project network, within 5 s; raises on any failure."""
+    with urllib.request.urlopen(url, timeout=5) as response:
+        return response.read().decode("utf-8", errors="replace")
 
 
 class ControlPlane:
@@ -149,9 +157,15 @@ class ControlPlane:
         self.comfyui_reclaim = (ComfyUIReclaim(broker, lambda: self.lifecycle.service_restart(
                                     "comfyui", {"confirm": True}))
                                 if broker else None)
+        # Per-engine model performance (engine_metrics.py): the engines are the registry's
+        # served models, read over the project network or from their container logs.
+        engines = (EngineCollector(self._served_models, _http_get,
+                                   lambda service, since, tail: broker.backend.logs(service, tail=tail, since=since))
+                   if broker else None)
         self.metrics = prom.MetricsCollector(scheduler, broker, disk_paths or {}, tls_cert_files or {},
                                              chat_health_url=chat_health_url,
-                                             netns_repair_stats=self.netns_repair.stats if self.netns_repair else None)
+                                             netns_repair_stats=self.netns_repair.stats if self.netns_repair else None,
+                                             engines=engines)
         # ComfyUI's files. Their locations are read from this module's settings when used, so a test
         # can repoint them after construction.
         # HF_TOKEN is the file secret the render delivers to ops-controller (compose.py

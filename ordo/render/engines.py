@@ -13,6 +13,7 @@ dashboard with no code change.
       model: local-chat-cpu      # the id clients address it by (a model-gateway alias for chat)
       kind: chat                 # chat | embedding | image | stt | tts
       metrics: llamacpp          # how its throughput is read: llamacpp | ninfer-log | none
+      port: 8080                 # the port it listens on (required for an HTTP metrics format)
       metrics_path: /metrics     # where an HTTP metrics format is served (default /metrics)
       fallback_for: local-chat   # optional: the model this one stands in for while it is down
       model_env: WHISPER__MODEL  # optional: the service env key naming its model (not a file)
@@ -30,12 +31,15 @@ KINDS = ("chat", "embedding", "image", "stt", "tts")
 # `ninfer-log` is a temporary reader: NInfer has no metrics endpoint yet, so its throughput is read
 # from its request log until it serves one upstream.
 METRICS_FORMATS = ("llamacpp", "ninfer-log", "none")
+# The formats read over HTTP from the service, so they need its port.
+HTTP_METRICS_FORMATS = frozenset({"llamacpp"})
 
 LABEL_MODEL = "ordo.serves.model"
 LABEL_KIND = "ordo.serves.kind"
 LABEL_DEVICE = "ordo.serves.device"
 LABEL_METRICS = "ordo.serves.metrics"
 LABEL_METRICS_PATH = "ordo.serves.metrics-path"
+LABEL_PORT = "ordo.serves.port"
 LABEL_FALLBACK_FOR = "ordo.serves.fallback-for"
 LABEL_MODEL_ENV = "ordo.serves.model-env"
 
@@ -46,6 +50,7 @@ class Serves:
     kind: str
     metrics: str = "none"
     metrics_path: str = "/metrics"
+    port: int = 0
     fallback_for: str = ""
     model_env: str = ""
 
@@ -55,7 +60,7 @@ class Serves:
             return None
         if not isinstance(raw, Mapping):
             raise ValueError(f"{where}: `serves` must be a mapping")
-        unknown = set(raw) - {"model", "kind", "metrics", "metrics_path", "fallback_for", "model_env"}
+        unknown = set(raw) - {"model", "kind", "metrics", "metrics_path", "port", "fallback_for", "model_env"}
         if unknown:
             raise ValueError(f"{where}: `serves` has unknown keys {sorted(unknown)}")
         model = str(raw.get("model") or "")
@@ -70,7 +75,13 @@ class Serves:
         metrics_path = str(raw.get("metrics_path") or "/metrics")
         if not metrics_path.startswith("/"):
             raise ValueError(f"{where}: `serves.metrics_path` must start with '/'")
-        return cls(model=model, kind=kind, metrics=metrics, metrics_path=metrics_path,
+        try:
+            port = int(raw.get("port") or 0)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"{where}: `serves.port` must be a number") from e
+        if metrics in HTTP_METRICS_FORMATS and not 0 < port < 65536:
+            raise ValueError(f"{where}: `serves.metrics: {metrics}` is read over HTTP, so `serves.port` is required")
+        return cls(model=model, kind=kind, metrics=metrics, metrics_path=metrics_path, port=port,
                    fallback_for=str(raw.get("fallback_for") or ""),
                    model_env=str(raw.get("model_env") or ""))
 
@@ -91,6 +102,8 @@ def stamp(svc: dict[str, Any], serves: Serves) -> None:
     labels[LABEL_DEVICE] = device_of(svc)
     labels[LABEL_METRICS] = serves.metrics
     labels[LABEL_METRICS_PATH] = serves.metrics_path
+    if serves.port:
+        labels[LABEL_PORT] = str(serves.port)
     if serves.fallback_for:
         labels[LABEL_FALLBACK_FOR] = serves.fallback_for
     if serves.model_env:
@@ -109,6 +122,7 @@ def read(labels: Mapping[str, Any] | None) -> dict[str, str] | None:
         "device": str(labels.get(LABEL_DEVICE, "cpu")),
         "metrics": str(labels.get(LABEL_METRICS, "none")),
         "metrics_path": str(labels.get(LABEL_METRICS_PATH, "/metrics")),
+        "port": str(labels.get(LABEL_PORT, "")),
         "fallback_for": str(labels.get(LABEL_FALLBACK_FOR, "")),
         "model_env": str(labels.get(LABEL_MODEL_ENV, "")),
     }

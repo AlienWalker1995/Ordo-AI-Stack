@@ -98,7 +98,8 @@ def served_models(doc: dict, env: Mapping[str, str], claims: Sequence[GpuClaim])
             "config": _config(service, spec, env),
             "est_vram_gb": vram_by_service.get(service, 0.0),
             "device": served["device"],
-            "metrics": {"format": served["metrics"], "path": served["metrics_path"]},
+            "metrics": {"format": served["metrics"], "path": served["metrics_path"],
+                        "port": int(served["port"]) if served["port"] else None},
             "fallback_for": served["fallback_for"] or None,
         }
     return records
