@@ -76,7 +76,7 @@ what was observed.
 | `DiskUsageHigh` | warning / critical | the Docker VM disk or the host disk is over 85% for 15 min / over 95% for 5 min |
 | `ContainerRestartLoop` | critical | a service restarted 2+ times in 5 min, for 10 min (a loop still going) |
 | `ContainerUnhealthy` | warning | a service's healthcheck is unhealthy for 10 min |
-| `ContainerExitedWithError` | critical | a service's container exited with a non-zero code, for 5 min (a finished one-shot exits 0) |
+| `ContainerExitedWithError` | critical | a service's container exited with a non-zero code, for 5 min (a finished one-shot exits 0; a GPU resident stopped for a lease is `GpuResidentEvictedLong`'s, not this) |
 | `NetnsMemberDown` | critical | a service sharing another's network namespace is still down 5 min after the netns sweep |
 | `ChatServedByCpuFallback` | warning | local-chat has been served by the CPU fallback for 2 min |
 | `GpuLeasePastTtl` | critical | a GPU lease sits past its TTL for 5 min (the lease sweep is failing) |

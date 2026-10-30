@@ -348,6 +348,27 @@ tests:
                 GET /metrics has not been able to read restarts for 15 minutes, so the alerts that
                 use it cannot fire. Check `docker logs ordo-ops-controller-1`.
 
+  # A GPU resident stopped by the scheduler for a lease exits 137 by design: not paged as a crash
+  # (GpuResidentEvictedLong owns it). The same exit with no eviction recorded still fires.
+  - interval: 1m
+    input_series:
+      - series: 'ordo_container_exited_with_error{service="inference-engine-gpu"}'
+        values: '0 1x10'
+      - series: 'ordo_gpu_resident_evicted{resident="inference-engine-gpu"}'
+        values: '0 1x10'
+      - series: 'ordo_container_exited_with_error{service="comfyui"}'
+        values: '0 1x10'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: ContainerExitedWithError
+        exp_alerts:
+          - exp_labels: {severity: critical, service: comfyui}
+            exp_annotations:
+              summary: comfyui has exited with an error
+              description: >-
+                comfyui's container stopped with a non-zero exit code 5 minutes ago and is not
+                running. Read `docker logs ordo-comfyui-1`, then `ordo apply --only comfyui`.
+
   # A service down with a non-zero exit code fires; a one-shot that finished (exit 0) does not.
   - interval: 1m
     input_series:
