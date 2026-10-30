@@ -54,9 +54,12 @@ depends_on:
 # Env the container reads (non-secret; secret VALUES come from secrets.env / secret_files below).
 # ${VAR:-default} refs resolve against the rendered .env at compose time (single source of truth).
 # Env secrets it reads (rendered KEY: ${KEY}): its LiteLLM key (the boot hook refuses to start
-# without it) and the control-plane token (ops-router tools, reel scripts). Nothing else from
-# secrets.env reaches the agent.
-secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
+# without it) and its own control-plane token. Nothing else from secrets.env reaches the agent.
+# OPS_CONTROLLER_TOKEN_HERMES maps to ops-controller's `hermes` principal (ordo/control/principals.py
+# HERMES_ROUTES): status, logs, confirmed restarts and the source writes Hermes has tools for, never
+# admin power. The agent reads untrusted input (Discord, web pages, MCP results), so it must not
+# hold the admin OPS_CONTROLLER_TOKEN (audit SEC-1, switched 2026-10-30).
+secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN_HERMES]
 
 # Derived keys it reads from the rendered .env (rendered `KEY: ${KEY?...}`; the agent never loads the
 # whole file). COMFYUI_URL is the ComfyUI admission gate: the dialogue/reel/image publishers and the
@@ -71,6 +74,9 @@ secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
 derived_env: [COMFYUI_URL, LLAMACPP_CTX_SIZE, HERMES_MAX_TOKENS, HERMES_COMPRESSION_THRESHOLD_PERCENT]
 
 environment:
+  # The name every Hermes tool and skill reads (ops_client.py, the ops-router plugin, brain skills),
+  # holding the scoped hermes token above, not the admin one.
+  OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN_HERMES}
   PYTHONIOENCODING: utf-8
   # Upstream's boot remaps its hermes user (built as 10000) to this UID/GID, so the brain volume
   # keeps the ownership it has had since the volume was created (1000:1000).

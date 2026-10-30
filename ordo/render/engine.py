@@ -97,7 +97,8 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
 
 # The core keys above the stack runs WITHOUT (they only unlock gated downloads). Listed so a blank
 # one is a preflight note, not a blocker; a plugin that reads one declares it in `optional_secrets:`.
-CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES")
+# OPS_CONTROLLER_TOKEN_HERMES is required: the agent runs on it (services/hermes/agent.yaml).
+CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
 
 # The SSO edge plugin (services/edge). Whether it is enabled is THE switch between the two access
 # modes; nothing else (no flag, no env var) selects the mode.
