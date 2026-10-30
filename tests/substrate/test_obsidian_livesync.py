@@ -77,3 +77,13 @@ def test_notes_capability_maps_to_the_plugin():
     kept = [c for c in wizard.CAPABILITIES if c != "notes"]
     result = wizard.plugins_from_capabilities(kept, all_ids)
     assert "obsidian-livesync" not in result
+
+
+def test_couchdb_is_the_database_server_not_a_variant_image():
+    """`couchdb:<version>-nouveau` is CouchDB's separate full-text search server: pinning it (an image
+    bump, #418) ran no database at all and the vault's sync answered 502. Only a plain release tag
+    is the server."""
+    import re
+
+    image = _render().compose_dict()["services"]["couchdb"]["image"]
+    assert re.fullmatch(r"couchdb:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}", image), image
