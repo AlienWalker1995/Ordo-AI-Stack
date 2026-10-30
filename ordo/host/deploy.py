@@ -830,7 +830,7 @@ class RealHost:
 
     def _docker(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         try:
-            proc = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=60)
+            proc = subprocess.run(["docker", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         except (OSError, subprocess.SubprocessError) as e:
             raise GateUnknown(f"docker {args[0]}: {e}") from e
         if proc.returncode != 0:
@@ -923,7 +923,7 @@ $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -Execution
 Register-ScheduledTask -TaskName $env:ORDO_TASK_NAME -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 """
     proc = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                          capture_output=True, text=True, env=env)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     if proc.returncode != 0:
         print(f"could not register the scheduled task: {(proc.stderr or proc.stdout).strip()}", file=sys.stderr)
         return 1

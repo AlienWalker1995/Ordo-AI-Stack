@@ -17,7 +17,7 @@ def dstate() -> dict[str, Any]:
     try:
         proc = subprocess.run(
             ["docker", "ps", "-a", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         container_names = [n.strip() for n in proc.stdout.splitlines() if n.strip()]
         for name in container_names:
@@ -25,7 +25,7 @@ def dstate() -> dict[str, Any]:
             try:
                 top = subprocess.run(
                     ["docker", "top", name, "-eo", "pid,stat,wchan:40,comm"],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 )
                 lines = top.stdout.strip().splitlines()
                 if len(lines) < 2:

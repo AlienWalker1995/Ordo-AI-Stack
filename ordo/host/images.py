@@ -136,7 +136,7 @@ class Git:
     def _git(self, *args: str) -> str:
         try:
             proc = subprocess.run(["git", "-C", str(self.repo_root), *args],
-                                  capture_output=True, text=True, timeout=60)
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         except (OSError, subprocess.SubprocessError) as e:
             raise RuntimeError(f"`ordo build` needs git and a git checkout: {e}") from e
         if proc.returncode != 0:

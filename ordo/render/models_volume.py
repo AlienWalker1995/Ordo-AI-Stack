@@ -41,7 +41,7 @@ class DockerRunner:  # pragma: no cover - shells to docker
             capture: bool = False) -> RunResult:
         try:
             proc = subprocess.run(list(argv), env=dict(env) if env is not None else None,
-                                  capture_output=capture, text=True)
+                                  capture_output=capture, text=True, encoding="utf-8", errors="replace")
         except (OSError, subprocess.SubprocessError) as e:
             print(f"cannot run docker: {e}", file=sys.stderr)
             return RunResult(127, "")

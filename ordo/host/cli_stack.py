@@ -34,7 +34,7 @@ def _local_images() -> set[str]:  # pragma: no cover - shells to docker
     for fmt in ("{{.Repository}}:{{.Tag}}", "{{.Repository}}@{{.Digest}}"):
         try:
             out = subprocess.run(["docker", "images", "--digests", "--format", fmt],
-                                 capture_output=True, text=True, timeout=30)
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         except (OSError, subprocess.SubprocessError):
             return set()
         for ln in out.stdout.splitlines():

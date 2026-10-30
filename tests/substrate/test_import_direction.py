@@ -231,3 +231,21 @@ def test_checker_reports_a_cycle_hidden_behind_a_local_import(tmp_path):
 def test_checker_reports_a_module_outside_every_layer(tmp_path):
     package_dir = _package(tmp_path, {"stray.py": ""})
     assert direction_violations(package_dir) == ["ordo.stray: in no layer (move it into render/, control/ or host/)"]
+
+
+def test_every_text_mode_subprocess_call_names_its_encoding():
+    """A text-mode subprocess call without `encoding=` decodes with the platform default: cp1252 on
+    the Windows host, which raised UnicodeDecodeError on docker output and failed a deploy
+    (2026-10-30). Every call under ordo/ names utf-8 (with errors="replace")."""
+    missing = []
+    for path in sorted((ROOT / "ordo").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+            keywords = {k.arg for k in node.keywords}
+            if name in ("run", "Popen", "check_output") and keywords & {"text", "universal_newlines"} \
+                    and "encoding" not in keywords:
+                missing.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+    assert not missing, f"text-mode subprocess calls without encoding=: {missing}"

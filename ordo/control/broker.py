@@ -763,7 +763,7 @@ class DockerBackend:
         proc = subprocess.run(
             ["docker", "ps", "-a", "--filter", f"label=com.docker.compose.project={self.project}",
              "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         names = [n for n in proc.stdout.splitlines() if n.strip()]
         return names[0] if names else None
@@ -778,7 +778,7 @@ class DockerBackend:
             proc = subprocess.run(
                 ["docker", "inspect", "--format",
                  "{{.State.Running}}\t{{.State.ExitCode}}\t{{.State.FinishedAt}}", container],
-                capture_output=True, text=True, timeout=30)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         except (subprocess.TimeoutExpired, OSError):
             # A read docker cannot answer counts as unknown (the docstring's contract): a wedged
             # daemon must not take the verb down with a traceback.
@@ -816,7 +816,7 @@ class DockerBackend:
         On the daemon's exit-event race the kill has landed but the client missed the event; the
         stop then waits (bounded) for `docker inspect` to agree the container has exited before
         calling it done. Any other failure keeps the plain CalledProcessError semantics."""
-        proc = subprocess.run(["docker", "stop", container], capture_output=True, text=True,
+        proc = subprocess.run(["docker", "stop", container], capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=timeout)
         if proc.returncode == 0:
             return
@@ -844,7 +844,7 @@ class DockerBackend:
         postdates the start is accepted; anything older or non-zero keeps polling until the
         bound."""
         started_at = datetime.now(UTC)
-        proc = subprocess.run(["docker", "start", container], capture_output=True, text=True,
+        proc = subprocess.run(["docker", "start", container], capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=timeout)
         if proc.returncode != 0:
             raise ContainerLifecycleError(f"docker start {container!r} failed: "
@@ -929,7 +929,7 @@ class DockerBackend:
         argv = ["docker", "logs", "--timestamps", "--tail", str(tail)]
         if since is not None:
             argv += ["--since", since]
-        proc = subprocess.run([*argv, container], capture_output=True, text=True, errors="replace", timeout=30)
+        proc = subprocess.run([*argv, container], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         if proc.returncode != 0:
             raise RuntimeError(f"docker logs {container} failed: {proc.stderr.strip()}")
         return merge_streams(proc.stdout, proc.stderr)
@@ -970,7 +970,7 @@ class DockerBackend:
              "--filter", f"label=com.docker.compose.project={project or self.project}",
              "--format",
              "{{.Label \"com.docker.compose.service\"}}\t{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}\t{{.ID}}"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         rows = []
         for line in proc.stdout.splitlines():
@@ -1010,7 +1010,7 @@ class DockerBackend:
 
     def foreign_inspect(self, project: str, name: str) -> dict:  # pragma: no cover - needs real docker
         proc = subprocess.run(["docker", "inspect", "--type", "container", self._foreign_guard(project, name)],
-                              capture_output=True, text=True, timeout=30, check=True)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=True)
         return json.loads(proc.stdout)[0]
 
     def foreign_restart(self, project: str, name: str) -> None:  # pragma: no cover - needs real docker
@@ -1022,14 +1022,14 @@ class DockerBackend:
         if not ids:
             return []
         proc = subprocess.run(["docker", "inspect", "--type", "container", *ids],
-                              capture_output=True, text=True, timeout=60, check=True)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, check=True)
         return netns_member_rows(json.loads(proc.stdout), self._container_status)
 
     @staticmethod
     def _container_status(ref: str) -> str:  # pragma: no cover - needs real docker
         """A container's State.Status by id or name, or "missing" when docker has no such container."""
         proc = subprocess.run(["docker", "inspect", "--type", "container", "--format", "{{.State.Status}}", ref],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         return proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else "missing"
 
     @staticmethod
@@ -1073,7 +1073,7 @@ class DockerBackend:
         """
         proc = subprocess.run(
             ["docker", "ps", "-a", "--format", self.CONTAINER_PS_FORMAT],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         return [row for line in proc.stdout.splitlines() if (row := self.container_row(line))]
 
@@ -1108,7 +1108,7 @@ class DockerBackend:
         container = self._container_guard(name)
         proc = subprocess.run(
             ["docker", "logs", "--tail", str(tail), container],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         return proc.stdout
 
@@ -1118,7 +1118,7 @@ class DockerBackend:
     def container_inspect(self, name: str) -> dict:  # pragma: no cover - needs real docker
         container = self._container_guard(name)
         proc = subprocess.run(["docker", "inspect", "--type", "container", container],
-                              capture_output=True, text=True, timeout=30, check=True)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=True)
         return summarize_inspect(json.loads(proc.stdout)[0])
 
     def recreate_service(self, service: str) -> None:
@@ -1179,7 +1179,7 @@ class DockerBackend:
             # "not in this project" is the not-running case, which the caller reports as 503.
             raise FileNotFoundError(container) from exc
         proc = subprocess.run(
-            ["docker", "exec", name, *command], capture_output=True, text=True, timeout=1800,
+            ["docker", "exec", name, *command], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800,
         )
         output = (proc.stdout or "") + (proc.stderr or "")
         if proc.returncode != 0 and "No such container" in output:
@@ -1228,7 +1228,7 @@ class DockerBackend:
         proc = subprocess.run(
             ["docker", "inspect", "--type", "container", "--format",
              "{{index .Config.Labels \"com.docker.compose.service\"}}\t{{.RestartCount}}", *ids],
-            capture_output=True, text=True, timeout=30, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=True,
         )
         counts: dict[str, int] = {}
         for line in proc.stdout.splitlines():
@@ -1251,7 +1251,7 @@ class DockerBackend:
         proc = subprocess.run(
             ["docker", "stats", "--no-stream", "--format",
              "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
         )
         services: dict[str, dict] = {}
         for line in proc.stdout.splitlines():

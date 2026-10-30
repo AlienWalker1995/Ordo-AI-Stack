@@ -413,7 +413,7 @@ def _tailscale_ip() -> str:  # pragma: no cover - shells to tailscale
     if not shutil.which("tailscale"):
         return ""
     try:
-        out = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=10)
+        out = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
         if out.returncode == 0:
             return out.stdout.strip().splitlines()[0].strip() if out.stdout.strip() else ""
     except (OSError, subprocess.SubprocessError):
