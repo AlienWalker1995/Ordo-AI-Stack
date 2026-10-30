@@ -996,3 +996,25 @@ def test_the_real_host_pauses_and_resumes_as_the_hermes_user(monkeypatch):
 
 def test_the_pause_probe_script_parses():
     compile(deploy._AGENT_PAUSE_SCRIPT, "<agent-pause>", "exec")
+
+
+def test_new_commits_do_not_restart_the_drain_clock(tmp_path):
+    """Steady merges reset the per-commit wait clock; the drain counts from when the stack first fell
+    behind, or a busy agent and a stream of merges would hold every deploy forever (2026-10-30)."""
+    host = _busy_host()
+    deploy.run_once(host, out=tmp_path, now=T0)
+    host.target = "c" * 40
+    deploy.run_once(host, out=tmp_path, now=T0 + deploy.DRAIN_AFTER_SECONDS - 60)
+    host.target = "d" * 40
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    assert host.calls == ["pause"]
+    assert host.paused == f"{deploy.DRAIN_REASON} for {'d' * 12}"
+
+
+def test_the_behind_clock_clears_once_deployed(tmp_path):
+    host = _busy_host()
+    host.idle_when_paused = True
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT + 120)
+    assert state(tmp_path)["deployed"] == NEW and state(tmp_path)["behind_since"] == 0.0
