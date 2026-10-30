@@ -23,7 +23,7 @@ litellm_key:
   mcp_servers: []
 services:
   - name: open-webui
-    # Pinned to the exact version V1 runs (V1 uses ${OPEN_WEBUI_IMAGE:-...v0.10.1}). Pin, don't float.
+    # Pinned by tag and digest; bumped by a reviewed pull request. Pin, don't float.
     image: ghcr.io/open-webui/open-webui:v0.12.3@sha256:a537bbe1e6b428820f52ed4a029d7fff97062e24d5cf32c365fba36fd0542def
     # Local access while the edge is off: http://127.0.0.1:8443 (the port Caddy serves chat on).
     # The renderer binds it to loopback only and drops it when the edge is enabled.
@@ -31,7 +31,7 @@ services:
     env:
       # Env is the only source of Open WebUI's settings. With persistence on (the image default) it
       # reads env on first launch only and webui.db wins after that, so a rotated or corrected key
-      # never arrives (a first-launch placeholder key emptied the model list, 2026-09-25). v0.11.3
+      # never arrives (a first-launch placeholder key emptied the model list, 2026-09-25). Open WebUI
       # has no per-setting override (only oauth.* has its own switch), so persistence is off and a
       # setting changed in the admin UI lasts until the next restart: declare it here instead.
       ENABLE_PERSISTENT_CONFIG: "false"

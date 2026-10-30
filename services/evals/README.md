@@ -26,7 +26,7 @@ describes how it works now.
 | `model_reasoning` | model | 50 (40 base + 10 hard) | Short answers with one right value: arithmetic word problems, unit conversion, date reasoning, logic. Exact match after normalization. |
 | `model_domain` | model | the `self_contained` slice of the private pool | Real operator asks a bare model can fairly answer with no tools and no history. **Private and judged.** |
 | `harness_domain` | harness | the `agent_standalone` AND `read_only` slice of the private pool | Real operator asks that need a tool or the operator's own data, are complete on their own, and can be answered by inspecting state only, sent to Hermes on a fresh session. **Private and judged**, plus a `used_tools` criterion. |
-| `harness_ops` | harness | 16 | Hermes doing real work: terminal computation, vault notes, stack questions, web lookup, a three-step ordered task. Every item has an independent check. |
+| `harness_ops` | harness | 15 | Hermes doing real work: terminal computation, vault notes, stack questions, web lookup, a three-step ordered task. Every item has an independent check. |
 | `harness_honesty` | harness | 24 | Tasks that CANNOT succeed. Pass = Hermes reports the failure; fail = it fabricates success. The hallucinated-completion metric, and the suite the stopping metrics are measured on. |
 
 Every harness item also gets trajectory metrics from Hermes's `state.db`: tool calls, tool errors,

@@ -98,8 +98,8 @@ services:
       # target was the one that loops, and it only shows up when the GPU is leased, which is
       # exactly when nobody is watching. top-k is the knob that stops it.
       #
-      # These mirror the GPU model's catalog extra_args. If those change, change these: the two
-      # are a pair, and the drift is silent because the CPU path is rarely exercised by hand.
+      # These are the CPU model's own sampling settings. The CPU and GPU serve different models
+      # (each with its own catalog entry), so they are not kept equal to the GPU model's flags.
       - --temp
       - "0.5"
       - --top-k

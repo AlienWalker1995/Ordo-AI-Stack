@@ -117,7 +117,7 @@ Every UI is published only through the front door, behind Google sign-in; APIs a
 - **Agents** — a pluggable agent framework (`agent.yaml` manifests) with an included default assistant (Hermes): chat through the model gateway, tools through that gateway's `/mcp` endpoint, GPU through the scheduler.
 - **Shared tools** — MCP servers run as their own services on an internal network and are aggregated behind one `/mcp` URL on the model gateway, so host clients (Claude Code, editors) and in-stack services use the same endpoint and key.
 - **Code intelligence** — a codebase-memory service that indexes your repositories into a queryable knowledge graph, with its own UI.
-- **Unified dashboard**: four pages (Overview, Services, Models, Performance) covering stack health, per-container actions and logs, one safe GPU model switch, and an embedded Grafana performance view; plus a Ctrl/Cmd K command palette.
+- **Unified dashboard**: five pages (Overview, Services, Models, Performance, Logs) covering stack health, per-container actions and logs, one safe GPU model switch, and an embedded Grafana performance view; plus a Ctrl/Cmd K command palette.
 - **Ops controller** — the render/scheduler control plane (internal, token-auth).
 - **Agent tracing**: optional self-hosted [Langfuse](services/langfuse/README.md): every agent turn, LLM call and tool call as a searchable trace, plus datasets and evals, with unattended first-boot setup. Opt-in; the agent fails open when it is off or down.
 - **Optional, hardware-gated plugins** — voice (STT + TTS), RAG (Qdrant retrieval), and monitoring (Grafana + Prometheus + GPU exporter, with Alertmanager alerting to Discord) enable when your hardware supports them.
@@ -125,7 +125,7 @@ Every UI is published only through the front door, behind Google sign-in; APIs a
 ## Security
 
 - **Front door:** Caddy + oauth2-proxy gates every browser-reachable UI at the network edge. One sign-in covers the whole stack — no per-service re-auth. The email allowlist is operator-controlled (and never committed). See [docs/runbooks/auth.md](docs/runbooks/auth.md).
-- **No host ports on services:** only the edge proxy publishes host ports; everything else lives on the project network.
+- **No host ports on services:** with the edge on, only the edge proxy publishes host ports; everything else lives on the project network. With the edge off (the fresh-install default), Open WebUI (`127.0.0.1:8443`) and the dashboard (`127.0.0.1:8444`) publish on loopback only.
 - **Secret management:** SOPS + age. One encrypted store in a private repo (`site: SECRETS_SOURCE`); `ordo secrets materialize` decrypts it **on the host only** into the gitignored `out/secrets.env`, and `ordo secrets set|rotate` change it. Plaintext never enters this repo or a log. Never synthesize placeholder secret values to clear an error: `ordo secrets list` names what is missing. Full notes: [SECURITY.md](SECURITY.md) · [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
 
 ## Architecture
