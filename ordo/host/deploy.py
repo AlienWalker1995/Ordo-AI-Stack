@@ -182,6 +182,9 @@ class State:
     # (it is not drained for again; a newer commit is).
     drain_since: float = 0.0
     drain_abandoned: str = ""
+    # Since when the stack has been behind origin/main with a deploy waiting: unlike waiting_since, a
+    # newer commit does not restart it, so steady merges cannot postpone the drain forever.
+    behind_since: float = 0.0
     # Changes found on the checkout outside a pull request: their tree and since when unchanged, and
     # the pull request that holds them (its number, branch and head commit, and the tree it holds).
     local_tree: str = ""
@@ -407,7 +410,7 @@ def _drain(host: Host, state: State, state_path: Path, target: str, reason: str,
                       f"{DRAIN_MAX_SECONDS // 60} min ({reason}); new work is resumed and the deploy waits "
                       f"for an idle agent.")
         return reason
-    waited = now - state.waiting_since if state.waiting == target else 0.0
+    waited = now - state.behind_since if state.behind_since else 0.0
     if not agent_only or waited < DRAIN_AFTER_SECONDS or state.drain_abandoned == target:
         return reason
     try:
@@ -472,6 +475,7 @@ def _finish(host: Host, state: State, state_path: Path, target: str, *, ok: bool
     state.waiting, state.waiting_since, state.waiting_reported, state.waiting_reason = "", 0.0, False, ""
     state.deploying_from = ""
     state.drain_abandoned = ""
+    state.behind_since = 0.0
     state.last_result, state.last_log = result, str(log)
     if ok:
         state.deployed, state.failed = target, ""
@@ -510,6 +514,7 @@ def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
         return _wait(host, state, state_path, UNFETCHED, f"origin/{BRANCH} could not be fetched: {e}", now)
     if target in (state.deployed, state.failed):
         _release_drain(host, state, state_path)
+        state.behind_since = 0.0
         if state.waiting:   # a wait (an unreachable remote, say) that resolved into nothing to do
             state.waiting, state.waiting_since, state.waiting_reported, state.waiting_reason = "", 0.0, False, ""
             state.save(state_path)
@@ -531,6 +536,8 @@ def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
     if problem:
         if state.waiting != target:
             state.waiting, state.waiting_since, state.waiting_reported, state.waiting_reason = target, now, False, ""
+        if not state.behind_since:
+            state.behind_since = now
         return _wait(host, state, state_path, target, _drain(host, state, state_path, target, problem, now), now)
 
     stamp = dt.datetime.fromtimestamp(now, dt.UTC).strftime("%Y%m%dT%H%M%SZ")
