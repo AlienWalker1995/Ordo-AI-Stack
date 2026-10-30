@@ -73,3 +73,16 @@ def test_no_panel_uses_litellm_per_token_latency_as_a_speed():
     """litellm_deployment_latency_per_output_token reads impossibly high for streamed requests (1,785
     tok/s measured on a ~120 tok/s engine), so no panel turns it into a speed."""
     assert not [e for e in _exprs() if "latency_per_output_token_sum" in e]
+
+
+def test_no_panel_reports_litellm_time_to_first_token():
+    """LiteLLM's time to first token read ~0.2 s while GPU requests took minutes: it timed the first
+    (empty) streamed chunk, sent before the request even left the engine's queue. Request time is shown
+    from the per-request latency histogram instead."""
+    assert not [e for e in _exprs() if "time_to_first_token" in e]
+    assert any("litellm_llm_api_latency_metric_bucket" in e for e in _exprs())
+
+
+def test_the_dashboard_shows_why_requests_moved_to_the_cpu():
+    """A busy GPU queue must no longer move requests to the CPU; the fallback panel is how that is seen."""
+    assert any("litellm_deployment_successful_fallbacks_total" in e and "exception_class" in e for e in _exprs())
