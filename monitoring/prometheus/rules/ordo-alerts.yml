@@ -77,8 +77,13 @@ groups:
           description: "{{ $labels.service }} has reported unhealthy for 10 minutes."
       # A service whose container stopped with a non-zero exit code: neither restart-loop nor
       # unhealthy covers a container that is simply down. A one-shot job that finished exits 0.
+      # A GPU resident the scheduler stopped for a lease exits 137 by design and is not paged
+      # here: GpuResidentEvictedLong and GpuResidentEvictedWithoutLease own that state.
       - alert: ContainerExitedWithError
-        expr: ordo_container_exited_with_error == 1
+        expr: |-
+          ordo_container_exited_with_error == 1
+            unless on(service)
+              label_replace(ordo_gpu_resident_evicted == 1, "service", "$1", "resident", "(.*)")
         for: 5m
         labels:
           severity: critical
