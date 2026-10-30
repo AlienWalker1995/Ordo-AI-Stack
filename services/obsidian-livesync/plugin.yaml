@@ -49,9 +49,9 @@ services:
       # qdrant mount note in services/rag/plugin.yaml for the full rationale).
       - couchdb-data:/opt/couchdb/data
     healthcheck:
-      # /dev/tcp port-open probe (no curl dependency; matches qdrant). True readiness (+ DB
-      # creation) is handled by the bridge's own wait-loop before it starts syncing.
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/5984'"]
+      # CouchDB's own readiness endpoint, not a port probe: an open port proved nothing when the
+      # pinned image ran no database at all (2026-10-30). /_up answers without credentials.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5984/_up >/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5

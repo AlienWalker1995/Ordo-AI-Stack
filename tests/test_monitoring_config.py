@@ -24,6 +24,12 @@ def _exprs():
     return [t.get("expr", "") for p in DASH["panels"] for t in p.get("targets", [])]
 
 
+def test_container_series_keep_their_own_service_label():
+    """Without honor_labels the target's `service: ops-controller` replaced every container's name, so
+    each container alert named ops-controller instead of the service that failed (2026-10-30)."""
+    assert _jobs()["ops-controller"].get("honor_labels") is True
+
+
 def test_the_cpu_fallback_is_scraped():
     job = _jobs()["inference-engine-cpu"]
     assert job["static_configs"][0]["targets"] == ["inference-engine-cpu:8080"]

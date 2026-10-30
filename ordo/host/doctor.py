@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -246,6 +248,86 @@ def _format_cpus(cpus: float | None) -> str:
     if cpus is None:
         return "unlimited"
     return str(int(cpus)) if cpus == int(cpus) else str(cpus)
+
+
+# How long `ordo doctor` waits for containers still inside their healthcheck start period (an apply
+# ends with doctor right after recreating services). The longest declared start period is 240 s.
+CONTAINER_SETTLE_SECONDS = 300
+CONTAINER_SETTLE_POLL_SECONDS = 10
+
+
+def read_container_states(project: str) -> list[dict[str, Any]]:
+    """Every container of the project: service, state, health, exit code, restart policy, one-off.
+
+    Raises ContainerUnreadable when docker cannot be queried."""
+    def docker(args: list[str]) -> str:
+        try:
+            proc = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise ContainerUnreadable(f"docker {args[0]}: {e}") from e
+        if proc.returncode != 0:
+            raise ContainerUnreadable(f"docker {args[0]}: {(proc.stderr or proc.stdout).strip()[:200]}")
+        return proc.stdout
+
+    ids = docker(["ps", "-aq", "--filter", f"label=com.docker.compose.project={project}"]).split()
+    if not ids:
+        return []
+    try:
+        rows = json.loads(docker(["inspect", *ids]))
+        return [{
+            "service": r["Config"]["Labels"].get("com.docker.compose.service", r["Name"].lstrip("/")),
+            "state": r["State"]["Status"],
+            "health": (r["State"].get("Health") or {}).get("Status"),
+            "exit_code": int(r["State"].get("ExitCode") or 0),
+            "restart_policy": (r["HostConfig"].get("RestartPolicy") or {}).get("Name") or "no",
+            "oneoff": r["Config"]["Labels"].get("com.docker.compose.oneoff") == "True",
+        } for r in rows]
+    except (ValueError, LookupError, TypeError, AttributeError) as e:
+        raise ContainerUnreadable(f"unreadable docker inspect output: {e}") from e
+
+
+def container_problems(rows: list[dict[str, Any]]) -> list[str]:
+    """What is wrong with the project's containers. A one-off `run` container and a one-shot service
+    that exited 0 (its job done) are not problems; anything unhealthy, restarting, dead, or exited
+    with a non-zero code is."""
+    problems = []
+    for row in sorted(rows, key=lambda r: r["service"]):
+        if row["oneoff"]:
+            continue
+        if row["health"] == "unhealthy":
+            problems.append(f"{row['service']} is unhealthy")
+        elif row["health"] == "starting":
+            problems.append(f"{row['service']} is still starting")
+        elif row["state"] in ("restarting", "dead"):
+            problems.append(f"{row['service']} is {row['state']}")
+        elif row["state"] == "exited" and row["exit_code"] != 0:
+            problems.append(f"{row['service']} exited with code {row['exit_code']}")
+        elif row["state"] == "exited" and row["restart_policy"] in ("always", "unless-stopped"):
+            problems.append(f"{row['service']} is stopped")
+    return problems
+
+
+def container_health_check(project: str, *, settle_seconds: float = CONTAINER_SETTLE_SECONDS,
+                           read: Callable[[str], list[dict[str, Any]]] = read_container_states,
+                           sleep: Callable[[float], None] = time.sleep,
+                           clock: Callable[[], float] = time.monotonic) -> tuple[bool, str]:
+    """(ok, one-line report) on every container's state and health.
+
+    Waits up to `settle_seconds` while a healthcheck is still in its start period, so the check that
+    ends an apply judges the services it just recreated instead of their first seconds."""
+    deadline = clock() + settle_seconds
+    try:
+        rows = read(project)
+        while any(r["health"] == "starting" for r in rows) and clock() < deadline:
+            sleep(CONTAINER_SETTLE_POLL_SECONDS)
+            rows = read(project)
+    except ContainerUnreadable as e:
+        return False, f"! containers: cannot read them ({e})"
+    problems = container_problems(rows)
+    if problems:
+        return False, f"! containers: {'; '.join(problems)} (read `docker logs ordo-<service>-1`)"
+    running = sum(1 for r in rows if r["state"] == "running")
+    return True, f"containers: {running} running, none unhealthy, restarting or failed"
 
 
 def cpu_fallback_check(project: str, declared_threads: int | None) -> tuple[bool, str]:
