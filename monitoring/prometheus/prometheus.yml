@@ -69,7 +69,11 @@ scrape_configs:
   # running/unhealthy/restart counts, the Docker VM and host disks, the edge TLS certificate. No
   # token: the route is unauthenticated and holds no secret. Every 60s with a 30s timeout: a scrape
   # runs `docker ps` + `docker inspect`, and `docker ps` hit its 30s timeout during the 2026-09-27 crash recovery.
+  # honor_labels: the container series carry the container's own `service` label. Without it the
+  # target label below wins, the container's name is renamed to `exported_service`, and every
+  # container alert says "ops-controller" instead of the service that failed (2026-10-30).
   - job_name: ops-controller
+    honor_labels: true
     metrics_path: /metrics
     scrape_interval: 60s
     scrape_timeout: 30s

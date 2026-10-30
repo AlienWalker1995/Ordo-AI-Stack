@@ -86,7 +86,9 @@ def test_an_idle_card_still_declares_every_family():
 def test_containers_restarts_disks_and_certs():
     rows = [{"id": "inference-engine-gpu", "state": "running", "health": "healthy"},
             {"id": "mcp-comfyui", "state": "restarting", "health": None},
-            {"id": "gpu-exporter", "state": "running", "health": "unhealthy"}]
+            {"id": "gpu-exporter", "state": "running", "health": "unhealthy"},
+            {"id": "couchdb", "state": "exited", "health": None, "status": "Exited (1) 3 minutes ago"},
+            {"id": "model-gateway-keys", "state": "exited", "health": None, "status": "Exited (0) 2 days ago"}]
     text = metrics.render(metrics.Inputs(
         containers=rows, restarts={"mcp-comfyui": 7, "inference-engine-gpu": 0},
         disks={"docker": metrics.DiskUsage(size=1_081_101_176_832, free=160_000_000_000, avail=141_733_474_304)},
@@ -98,6 +100,10 @@ def test_containers_restarts_disks_and_certs():
     assert got[("ordo_container_unhealthy", (("service", "inference-engine-gpu"),))] == 0
     assert got[("ordo_container_restarts_total", (("service", "mcp-comfyui"),))] == 7
     assert "# TYPE ordo_container_restarts_total counter" in text
+    # A crash is an error; a one-shot that finished (exit 0) and a running service are not.
+    assert got[("ordo_container_exited_with_error", (("service", "couchdb"),))] == 1
+    assert got[("ordo_container_exited_with_error", (("service", "model-gateway-keys"),))] == 0
+    assert got[("ordo_container_exited_with_error", (("service", "inference-engine-gpu"),))] == 0
     # Byte counts past 1e12 are written exactly, never in rounded scientific notation.
     assert 'ordo_filesystem_size_bytes{mount="docker"} 1081101176832' in text
     assert got[("ordo_filesystem_avail_bytes", (("mount", "docker"),))] == 141_733_474_304

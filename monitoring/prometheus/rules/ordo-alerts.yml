@@ -75,6 +75,19 @@ groups:
         annotations:
           summary: "{{ $labels.service }} healthcheck is failing"
           description: "{{ $labels.service }} has reported unhealthy for 10 minutes."
+      # A service whose container stopped with a non-zero exit code: neither restart-loop nor
+      # unhealthy covers a container that is simply down. A one-shot job that finished exits 0.
+      - alert: ContainerExitedWithError
+        expr: ordo_container_exited_with_error == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} has exited with an error"
+          description: >-
+            {{ $labels.service }}'s container stopped with a non-zero exit code 5 minutes ago and is
+            not running. Read `docker logs ordo-{{ $labels.service }}-1`, then `ordo apply --only
+            {{ $labels.service }}`.
       # ops-controller's netns sweep (ordo/control/netns_repair.py) brings back a member that a
       # Docker daemon restart left stopped within 30 seconds. One still down after 5 minutes is one
       # it could not bring back (budget spent, or its owner is down): the case that left every

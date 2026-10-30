@@ -112,10 +112,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     cpu_fallback_ok, cpu_fallback_line = doctor.cpu_fallback_check(
         args.project, int(rc.env["LLAMACPP_CPU_THREADS"]) if cpu_fallback_rendered else None)
     print(cpu_fallback_line)
+    containers_ok, containers_line = doctor.container_health_check(args.project)
+    print(containers_line)
     if args.bundle:
         doctor.write_bundle(bundle, args.bundle)
         print(f"support bundle -> {args.bundle} (secrets redacted)")
-    return 0 if substrate_ok and open_webui_ok and alerting_ok and cpu_fallback_ok and sso_ok else 1
+    return 0 if substrate_ok and open_webui_ok and alerting_ok and cpu_fallback_ok and sso_ok and containers_ok else 1
 
 
 def cmd_native(args: argparse.Namespace) -> int:

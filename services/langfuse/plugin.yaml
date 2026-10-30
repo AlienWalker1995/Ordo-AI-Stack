@@ -235,10 +235,12 @@ services:
     # `wget http://localhost:3000` -> connection refused inside the container) - Next.js binds
     # the HOSTNAME docker sets to the container id, and the worker does the same. A localhost
     # probe can therefore never pass, and the service would sit permanently unhealthy while
-    # serving traffic perfectly to every peer on the project network. `$(hostname)` is the one
-    # address that is correct whether the app binds that interface or 0.0.0.0.
+    # serving traffic perfectly to every peer on the project network. $HOSTNAME (docker sets it to
+    # the container id, the name the app binds) is the one address that is correct whether the app
+    # binds that interface or 0.0.0.0. Not `$(hostname)`: the image has no `hostname` binary, so that
+    # probe could never pass (unhealthy since the 4.63.0 image, 2026-10-30). `$$` is a literal `$`.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider \"http://$(hostname):3030/api/health\" || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider \"http://$$HOSTNAME:3030/api/health\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -316,10 +318,10 @@ services:
     # `wget http://localhost:3000` -> connection refused inside the container) - Next.js binds
     # the HOSTNAME docker sets to the container id, and the worker does the same. A localhost
     # probe can therefore never pass, and the service would sit permanently unhealthy while
-    # serving traffic perfectly to every peer on the project network. `$(hostname)` is the one
-    # address that is correct whether the app binds that interface or 0.0.0.0.
+    # serving traffic perfectly to every peer on the project network. $HOSTNAME is the address it
+    # binds; see langfuse-worker for why not `$(hostname)`.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider \"http://$(hostname):3000/api/public/health\" || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider \"http://$$HOSTNAME:3000/api/public/health\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5

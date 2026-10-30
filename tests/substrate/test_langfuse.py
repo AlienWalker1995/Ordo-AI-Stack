@@ -368,8 +368,10 @@ def test_app_healthchecks_probe_the_bound_address_not_localhost():
     svcs = _compose(render(_src(), CATALOG, REGISTRY))
     for name in ("langfuse-web", "langfuse-worker"):
         probe = " ".join(svcs[name]["healthcheck"]["test"])
-        assert "$(hostname)" in probe, f"{name} healthcheck must probe the address it binds"
+        assert "$$HOSTNAME" in probe, f"{name} healthcheck must probe the address it binds"
         assert "localhost" not in probe, f"{name} healthcheck probes localhost, which is not bound"
+        # The image has no `hostname` binary: a `$(hostname)` probe could never pass (2026-10-30).
+        assert "$(hostname)" not in probe, f"{name} healthcheck calls `hostname`, which the image lacks"
 
 
 # ── retention (langfuse-retention + langfuse-minio-lifecycle) ──────────────────

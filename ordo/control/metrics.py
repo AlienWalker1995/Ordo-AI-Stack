@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import re
 import ssl
 import subprocess
 import urllib.request
@@ -133,10 +134,22 @@ def _containers(w: _Writer, rows: Iterable[Mapping[str, Any]]) -> None:
     w.declare("ordo_container_unhealthy", "gauge",
               "1 while the service's container healthcheck reports unhealthy (0 otherwise, including "
               "a container with no healthcheck).")
+    w.declare("ordo_container_exited_with_error", "gauge",
+              "1 while the service's container has exited with a non-zero code (a one-shot job that "
+              "finished exits 0 and reads 0).")
     for row in rows:
         labels = {"service": row.get("id", "")}
         w.add("ordo_container_running", "gauge", "", labels, 1 if row.get("state") == "running" else 0)
         w.add("ordo_container_unhealthy", "gauge", "", labels, 1 if row.get("health") == "unhealthy" else 0)
+        w.add("ordo_container_exited_with_error", "gauge", "", labels, 1 if _exited_with_error(row) else 0)
+
+
+def _exited_with_error(row: Mapping[str, Any]) -> bool:
+    """Docker's status text ("Exited (137) 2 minutes ago") is the only place the exit code is kept."""
+    if row.get("state") not in ("exited", "dead"):
+        return False
+    match = re.match(r"\s*Exited \((\d+)\)", str(row.get("status") or ""))
+    return row.get("state") == "dead" or (match is not None and match.group(1) != "0")
 
 
 def _restarts(w: _Writer, restarts: Mapping[str, int]) -> None:
