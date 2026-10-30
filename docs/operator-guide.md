@@ -148,7 +148,9 @@ deploy, it fast-forwards the checkout, runs `ordo build --all`, then `ordo apply
 - the agent is busy: a turn in flight, or a `hermes` CLI session (`hermes -z`, `hermes chat`).
   When a busy agent is the only thing holding a deploy for 30 minutes, the deploy drains it: `hermes pause`
   holds new cron, kanban and chat work while in-flight work finishes, the deploy runs as soon as the agent
-  is idle, and `hermes resume` lifts that pause (never one the operator set). A drain still busy after 2 hours
+  is idle, and `hermes resume` lifts that pause (never one the operator set). A pause holds new work only, so
+  after 20 minutes the drain reclaims the running kanban tasks once: each goes back to ready with a comment
+  and runs again after the deploy. A drain still busy after 2 hours
   is lifted and reported, and the deploy waits for an idle agent again.
 
 Changes made on the checkout's `main` outside a pull request (an agent's local commit, or edits to

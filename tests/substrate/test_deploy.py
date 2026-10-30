@@ -50,6 +50,9 @@ class FakeHost:
         self.paused: str | None = None
         self.pause_fails = False
         self.idle_when_paused = False      # the agent finishes its in-flight work once new work is held
+        self.kanban_running: list[str] = []
+        self.reclaimed: list[str] = []
+        self.kanban_unreadable = False
 
     def fetch(self) -> str:
         return self.target
@@ -96,6 +99,15 @@ class FakeHost:
     def resume_agent(self) -> None:
         self.calls.append("resume")
         self.paused = None
+
+    def running_kanban_tasks(self) -> list[str]:
+        if self.kanban_unreadable:
+            raise deploy.GateUnknown("docker exec: the agent is restarting")
+        return list(self.kanban_running)
+
+    def reclaim_kanban_task(self, task_id: str, reason: str) -> None:
+        self.reclaimed.append(task_id)
+        self.kanban_running.remove(task_id)
 
     def build(self, log: Path) -> int:
         self.calls.append("build")
@@ -1018,3 +1030,79 @@ def test_the_behind_clock_clears_once_deployed(tmp_path):
     deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
     deploy.run_once(host, out=tmp_path, now=DRAIN_AT + 120)
     assert state(tmp_path)["deployed"] == NEW and state(tmp_path)["behind_since"] == 0.0
+
+# --------------------------------------------------------------------------- #
+# A drain that cannot empty the agent reclaims the running kanban tasks.
+# --------------------------------------------------------------------------- #
+
+RECLAIM_AT = DRAIN_AT + deploy.DRAIN_RECLAIM_AFTER_SECONDS
+
+
+def _draining_host_with_workers():
+    host = _busy_host()
+    host.kanban_running = ["t_aaa", "t_bbb"]
+    return host
+
+
+def test_kanban_tasks_are_not_reclaimed_early_in_a_drain(tmp_path):
+    host = _draining_host_with_workers()
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    deploy.run_once(host, out=tmp_path, now=RECLAIM_AT - 1)
+    assert host.reclaimed == []
+
+
+def test_a_long_drain_reclaims_the_running_kanban_tasks_once(tmp_path):
+    """A pause holds new work only; a kanban worker can run for hours. Without this a drain waited out
+    its 2 hours and gave up, so no deploy landed while the board was busy (2026-10-30)."""
+    host = _draining_host_with_workers()
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    deploy.run_once(host, out=tmp_path, now=RECLAIM_AT)
+    assert host.reclaimed == ["t_aaa", "t_bbb"]
+    assert state(tmp_path)["drain_reclaimed"] is True
+    assert any("reclaimed 2 running kanban task(s)" in note for note in host.notes)
+    host.kanban_running = ["t_ccc"]          # anything started later is left to finish
+    deploy.run_once(host, out=tmp_path, now=RECLAIM_AT + 120)
+    assert host.reclaimed == ["t_aaa", "t_bbb"]
+
+
+def test_an_unreadable_board_is_tried_again_next_pass(tmp_path, capsys):
+    host = _draining_host_with_workers()
+    host.kanban_unreadable = True
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    deploy.run_once(host, out=tmp_path, now=RECLAIM_AT)
+    assert host.reclaimed == [] and state(tmp_path)["drain_reclaimed"] is False
+    assert "could not be reclaimed" in capsys.readouterr().out
+    host.kanban_unreadable = False
+    deploy.run_once(host, out=tmp_path, now=RECLAIM_AT + 120)
+    assert host.reclaimed == ["t_aaa", "t_bbb"]
+
+
+def test_the_next_drain_may_reclaim_again(tmp_path):
+    host = _draining_host_with_workers()
+    host.idle_when_paused = False
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    deploy.run_once(host, out=tmp_path, now=RECLAIM_AT)
+    host.busy = None
+    deploy.run_once(host, out=tmp_path, now=RECLAIM_AT + 120)   # deploys, lifts the drain
+    assert state(tmp_path)["drain_reclaimed"] is False
+
+
+def test_the_real_host_reads_and_reclaims_the_board(monkeypatch):
+    host = _probe_host(monkeypatch, "")
+    seen = []
+
+    def fake(args):
+        seen.append(args)
+        out = json.dumps([{"id": "t_aaa"}, {"id": "t_bbb"}]) if "list" in args else ""
+        return subprocess.CompletedProcess(args, 0, out, "")
+
+    monkeypatch.setattr(host, "_docker", fake)
+    assert host.running_kanban_tasks() == ["t_aaa", "t_bbb"]
+    host.reclaim_kanban_task("t_aaa", "interrupted for the deploy of abc")
+    assert seen[0] == ["exec", "--user", "hermes", "ordo-agent-1", "hermes", "kanban", "list", "--status", "running", "--json"]
+    assert seen[-1] == ["exec", "--user", "hermes", "ordo-agent-1", "hermes", "kanban", "reclaim", "--reason",
+                        "interrupted for the deploy of abc", "t_aaa"]

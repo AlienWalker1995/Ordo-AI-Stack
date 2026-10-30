@@ -34,7 +34,10 @@ deploy that has waited DRAIN_AFTER_SECONDS with the agent as the only gate drain
 holds NEW work (cron, kanban dispatch, new chat turns) while in-flight work finishes, the deploy runs
 once the agent is idle, and `hermes resume` lifts the pause. Only a pause this command set is ever
 lifted (its reason starts with DRAIN_REASON); an operator's own pause is left alone and makes the deploy
-wait. A drain that has not emptied the agent within DRAIN_MAX_SECONDS is lifted and reported, and the
+wait. A pause does not stop a kanban worker already running, and one can run for hours, so a drain
+still held after DRAIN_RECLAIM_AFTER_SECONDS reclaims the running kanban tasks once: each goes back to
+`ready` with a comment and runs again after the deploy. A drain that has not emptied the agent within
+DRAIN_MAX_SECONDS is lifted and reported, and the
 deploy goes back to waiting for an idle agent.
 
 The second gate check narrows the window in which a turn can start before `ordo apply` recreates
@@ -77,6 +80,10 @@ SCHEDULE_MINUTES = 2
 # only gate, given up (pause lifted, reported) when the agent is still busy this long after.
 DRAIN_AFTER_SECONDS = 1800
 DRAIN_MAX_SECONDS = 7200
+# A pause holds NEW work only; a kanban worker already running can take hours, so a drain that has
+# not emptied the agent this long reclaims the running kanban tasks (each goes back to `ready` and
+# the dispatcher runs it again once the deploy lifts the pause). Turns and other sessions finish.
+DRAIN_RECLAIM_AFTER_SECONDS = 1200
 # The reason the drain's `hermes pause` carries: how a pause this command set is told from an operator's.
 DRAIN_REASON = "ordo deploy draining"
 AGENT_BUSY = "the agent is busy"
@@ -150,6 +157,8 @@ class Host(Protocol):
     def agent_pause(self) -> str | None: ...          # the agent's pause reason ("" = none given); None = not paused
     def pause_agent(self, reason: str) -> None: ...   # `hermes pause`: hold new work, in-flight work finishes
     def resume_agent(self) -> None: ...               # `hermes resume`
+    def running_kanban_tasks(self) -> list[str]: ...  # ids of the running kanban tasks; GateUnknown when unreadable
+    def reclaim_kanban_task(self, task_id: str, reason: str) -> None: ...  # back to ready, worker stopped
     def build(self, log: Path) -> int: ...
     def apply(self, log: Path) -> int: ...
     def notify(self, text: str) -> None: ...
@@ -182,6 +191,7 @@ class State:
     # (it is not drained for again; a newer commit is).
     drain_since: float = 0.0
     drain_abandoned: str = ""
+    drain_reclaimed: bool = False   # this drain already reclaimed the running kanban tasks
     # Since when the stack has been behind origin/main with a deploy waiting: unlike waiting_since, a
     # newer commit does not restart it, so steady merges cannot postpone the drain forever.
     behind_since: float = 0.0
@@ -402,6 +412,8 @@ def _drain(host: Host, state: State, state_path: Path, target: str, reason: str,
     agent_only = reason.startswith(AGENT_BUSY)
     if state.drain_since:
         if now - state.drain_since < DRAIN_MAX_SECONDS:
+            if agent_only and not state.drain_reclaimed and now - state.drain_since >= DRAIN_RECLAIM_AFTER_SECONDS:
+                return _reclaim_kanban(host, state, state_path, target, reason)
             return f"{reason}; draining since {_clock(state.drain_since)}: new work is paused until the deploy runs"
         _release_drain(host, state, state_path)
         state.drain_abandoned = target
@@ -428,6 +440,24 @@ def _drain(host: Host, state: State, state_path: Path, target: str, reason: str,
     return f"{reason}; draining since {_clock(now)}: new work is paused until the deploy runs"
 
 
+def _reclaim_kanban(host: Host, state: State, state_path: Path, target: str, reason: str) -> str:
+    """Reclaim every running kanban task once per drain, so a long-running worker cannot hold the
+    deploy until the drain gives up. Each task goes back to `ready` with a comment saying why."""
+    why = f"interrupted for the deploy of {short(target)}; the dispatcher runs it again after the deploy"
+    try:
+        tasks = host.running_kanban_tasks()
+        for task in tasks:
+            host.reclaim_kanban_task(task, why)
+    except GateUnknown as e:
+        return f"{reason}; the running kanban tasks could not be reclaimed: {e}"
+    state.drain_reclaimed = True
+    state.save(state_path)
+    if tasks:
+        _report(host, f"Deploy of `{short(target)}`: the drain reclaimed {len(tasks)} running kanban task(s) "
+                      f"({', '.join(tasks)}); they run again after the deploy.")
+    return f"{reason}; draining since {_clock(state.drain_since)}: reclaimed {len(tasks)} kanban task(s)"
+
+
 def _release_drain(host: Host, state: State, state_path: Path) -> None:
     """Lift the drain's pause, and only the drain's: a pause someone set or replaced since is left.
     A pause that cannot be read or lifted keeps the drain recorded, so the next pass tries again."""
@@ -441,6 +471,7 @@ def _release_drain(host: Host, state: State, state_path: Path) -> None:
         print(f"could not lift the drain's pause (tried again next pass): {e}", file=sys.stderr)
         return
     state.drain_since = 0.0
+    state.drain_reclaimed = False
     state.save(state_path)
     print("the drain's pause is lifted: new agent work resumes")
 
@@ -827,6 +858,26 @@ class RealHost:
         if container is None:
             raise GateUnknown("the agent container is not running")
         self._docker(["exec", "--user", "hermes", container, "hermes", "resume"])
+
+    def running_kanban_tasks(self) -> list[str]:
+        container = self._agent_container()
+        if container is None:
+            return []
+        proc = self._docker(["exec", "--user", "hermes", container, "hermes", "kanban", "list",
+                             "--status", "running", "--json"])
+        try:
+            return [str(task["id"]) for task in json.loads(proc.stdout or "[]")]
+        except (ValueError, KeyError, TypeError) as e:
+            raise GateUnknown(f"the kanban board is unreadable: {proc.stdout.strip()[:200]}") from e
+
+    def reclaim_kanban_task(self, task_id: str, reason: str) -> None:
+        container = self._agent_container()
+        if container is None:
+            raise GateUnknown("the agent container is not running")
+        self._docker(["exec", "--user", "hermes", container, "hermes", "kanban", "comment", "--author", "ordo-deploy",
+                      task_id, f"Reclaimed: {reason}."])
+        self._docker(["exec", "--user", "hermes", container, "hermes", "kanban", "reclaim", "--reason", reason,
+                      task_id])
 
     def _docker(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         try:
