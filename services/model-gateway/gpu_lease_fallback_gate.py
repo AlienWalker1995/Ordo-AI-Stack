@@ -13,7 +13,9 @@ One exception (operator policy 2026-10-30): chat runs one request at a time, fir
 first served, on the GPU. A request the GPU refused only because its queue was full or the
 request waited too long (NInfer's own queue errors, GPU_QUEUE_ERROR_MARKERS) is not moved
 to the CPU: the GPU is healthy, and a CPU run beside it reads a ~100k-token prompt at a few
-tokens a second for over an hour. The hop is refused with a 503 and the caller retries.
+tokens a second for over an hour. The hop is refused, so the caller gets the GPU's own queue
+error (429 queue full, 503 expired; the router re-raises the original error when every fallback
+fails) and retries. The refusal names no deployment, so it never puts the CPU model in cooldown.
 
 This hook runs on the fallback hop and logs the lease state (read from ops-controller's
 unauthenticated /metrics) for observability.
