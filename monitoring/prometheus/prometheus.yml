@@ -1,8 +1,9 @@
 # Prometheus scrape config for the Ordo stack (monitoring profile).
-# Scrapes llama.cpp's native /metrics (enabled by --metrics in
-# scripts/llamacpp/run-llama-server.sh), LiteLLM's /metrics (model-gateway),
-# the nvidia GPU exporter, ops-controller (GPU lease, containers, disks, the edge certificate) and
-# Alertmanager. All targets are on the internal `ordo-net` network, no host exposure.
+# Scrapes LiteLLM's /metrics (model-gateway), the nvidia GPU exporter, ops-controller (GPU lease,
+# containers, disks, the edge certificate, and every model engine's performance as ordo_engine_*)
+# and Alertmanager. All targets are on the internal `ordo-net` network, no host exposure.
+# No model engine is scraped by name: ops-controller reads each engine the registry lists its own
+# way (ordo/control/engine_metrics.py), so an engine a plugin adds needs no job here.
 global:
   scrape_interval: 15s
   scrape_timeout: 10s
@@ -22,28 +23,6 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ['localhost:9090']
-
-  # llama.cpp server exposes Prometheus metrics on its own port when started
-  # with --metrics (prompt/generation token rates, KV-cache usage, queue depth).
-  # When the active model's backend is NInfer this target is down by design (NInfer has no /metrics):
-  # TargetDown excludes it, ops-controller's /health probe (ordo_gpu_chat_up) says whether chat is up,
-  # and the Grafana GPU chat panels read the model gateway's per-backend metrics instead.
-  - job_name: inference-engine-gpu
-    metrics_path: /metrics
-    static_configs:
-      - targets: ['inference-engine-gpu:8080']
-        labels:
-          service: inference-engine-gpu
-
-  # The CPU fallback llama.cpp server (same --metrics, same metric names). It answers chat while a
-  # render has the GPU, so without it the performance view is blind exactly when it matters.
-  # Queries must filter by job: both servers export identical llamacpp:* metric names.
-  - job_name: inference-engine-cpu
-    metrics_path: /metrics
-    static_configs:
-      - targets: ['inference-engine-cpu:8080']
-        labels:
-          service: inference-engine-cpu
 
   # nvidia_gpu_exporter wraps nvidia-smi (works on consumer GPUs + WSL2, unlike
   # DCGM). Reports utilization, VRAM, temperature, power per GPU.

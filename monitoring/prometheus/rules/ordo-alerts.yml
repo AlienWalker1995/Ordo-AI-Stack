@@ -210,8 +210,7 @@ groups:
       # The GPU chat service (the `inference-engine-gpu` service, running llama.cpp or NInfer) is down on purpose
       # while a GPU lease has evicted it (observed: 88 evictions in 15 days, up to 54 minutes each),
       # so this fires only when it is down and NOT evicted. Liveness is ops-controller's /health
-      # probe (ordo_gpu_chat_up), which both engines answer; the `inference-engine-gpu` scrape job reads
-      # llama.cpp's /metrics, which NInfer does not serve. ops-controller unreachable is TargetDown.
+      # probe (ordo_gpu_chat_up), which both engines answer. ops-controller unreachable is TargetDown.
       - alert: InferenceEngineGpuDown
         expr: |
           ordo_gpu_chat_up == 0
@@ -228,7 +227,7 @@ groups:
       # runs of up to 30 minutes, but only on the 2026-09-25 and 2026-09-27 crash days, and runs of
       # 15 minutes or more happened only then. 15 minutes keeps the one-scrape blips out.
       - alert: TargetDown
-        expr: up{job!="inference-engine-gpu"} == 0
+        expr: up == 0
         for: 15m
         labels:
           severity: warning

@@ -3,33 +3,70 @@
   "title": "Ordo performance",
   "tags": [
     "ordo",
-    "llama.cpp",
-    "gpu"
+    "engines"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "refresh": "10s",
   "time": {
     "from": "now-30m",
     "to": "now"
   },
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "engine",
+        "label": "Engine",
+        "type": "query",
+        "query": {
+          "query": "label_values(ordo_engine_up, engine)",
+          "refId": "engines"
+        },
+        "definition": "label_values(ordo_engine_up, engine)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "sort": 1
+      }
+    ]
   },
   "annotations": {
     "list": []
   },
   "panels": [
     {
+      "id": 100,
+      "type": "row",
+      "title": "Model engines (every engine the stack serves, read the engine's own way)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "type": "stat",
-      "title": "GPU output (tok/s, 5m)",
+      "title": "Generated (tok/s, 5m)",
       "gridPos": {
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -46,31 +83,32 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value_and_name",
+        "colorMode": "none"
       },
       "targets": [
         {
-          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
-          "legendFormat": "GPU",
+          "expr": "sum by (engine, device) (rate(ordo_engine_output_tokens_total{engine=~\"$engine\"}[5m]))",
+          "legendFormat": "{{engine}} ({{device}})",
           "refId": "A"
         }
       ],
-      "description": "Generated tokens per second on the GPU chat engine, counted at the model gateway when each request finishes (works for NInfer, which has no /metrics). The engine serves one request at a time, so this is also the speed of the request being served, minus the time spent reading its prompt."
+      "description": "Tokens generated per second by each engine, 5 minute rate, from the engine itself (llama.cpp's /metrics, or NInfer's request log)."
     },
     {
       "id": 2,
       "type": "stat",
-      "title": "GPU prompt reading (tok/s, 5m)",
+      "title": "Prompt computed (tok/s, 5m)",
       "gridPos": {
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
           "unit": "suffix: tok/s",
-          "decimals": 0
+          "decimals": 1
         },
         "overrides": []
       },
@@ -82,32 +120,32 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value_and_name",
+        "colorMode": "none"
       },
       "targets": [
         {
-          "expr": "sum(rate(litellm_input_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
-          "legendFormat": "GPU",
+          "expr": "sum by (engine, device) (rate(ordo_engine_prompt_tokens_processed_total{engine=~\"$engine\"}[5m]))",
+          "legendFormat": "{{engine}} ({{device}})",
           "refId": "A"
         }
       ],
-      "description": "Prompt tokens per second the GPU reads before it can answer. Agent requests carry ~100k tokens of context, so this is most of the GPU's work."
+      "description": "Prompt tokens each engine actually computed per second. Prefix-cache hits are excluded: they cost the engine almost nothing (see the cache panel)."
     },
     {
       "id": 3,
       "type": "stat",
-      "title": "GPU request time, median (s)",
+      "title": "Prompt cache reuse (5m)",
       "gridPos": {
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "decimals": 1,
-          "noValue": "no requests"
+          "unit": "percentunit",
+          "decimals": 1
         },
         "overrides": []
       },
@@ -119,30 +157,31 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value_and_name",
+        "colorMode": "none"
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(litellm_llm_api_latency_metric_bucket[15m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1)))",
-          "legendFormat": "GPU",
+          "expr": "sum by (engine, device) (rate(ordo_engine_prompt_tokens_cached_total{engine=~\"$engine\"}[5m])) / (sum by (engine, device) (rate(ordo_engine_prompt_tokens_cached_total{engine=~\"$engine\"}[5m])) + sum by (engine, device) (rate(ordo_engine_prompt_tokens_processed_total{engine=~\"$engine\"}[5m])))",
+          "legendFormat": "{{engine}} ({{device}})",
           "refId": "A"
         }
       ],
-      "description": "Median time from the gateway sending a request to the GPU engine until it finishes: waiting in the one-at-a-time queue, reading the prompt and generating the answer."
+      "description": "Share of prompt tokens served from the engine's prefix cache. High is good: those tokens are not recomputed."
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "Requests in flight",
+      "title": "Waiting for the engine",
       "gridPos": {
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "short",
           "decimals": 0
         },
         "overrides": []
@@ -155,42 +194,38 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value_and_name"
+        "textMode": "value_and_name",
+        "colorMode": "none"
       },
       "targets": [
         {
-          "expr": "litellm_in_flight_requests",
-          "legendFormat": "gateway",
+          "expr": "sum by (engine, device) (ordo_engine_requests_waiting{engine=~\"$engine\"})",
+          "legendFormat": "{{engine}} ({{device}})",
           "refId": "A"
-        },
-        {
-          "expr": "llamacpp:requests_deferred{job=\"inference-engine-cpu\"}",
-          "legendFormat": "CPU waiting",
-          "refId": "B"
         }
       ],
-      "description": "Requests the model gateway is handling. The GPU serves one at a time and the rest wait in its first-come-first-served queue (up to 64); the CPU fallback also serves one at a time."
+      "description": "Requests queued for each engine right now. Engines serve one request at a time, first come first served, so a queue here is the wait, not a slow model."
     },
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Chat servers up (GPU drops out while a render has the card)",
+      "title": "Engine up",
       "gridPos": {
-        "h": 6,
+        "h": 5,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
-          "min": 0,
-          "max": 1,
+          "unit": "short",
           "decimals": 0,
           "custom": {
-            "lineInterpolation": "stepAfter",
-            "fillOpacity": 15
-          }
+            "fillOpacity": 10,
+            "spanNulls": true
+          },
+          "max": 1,
+          "min": 0
         },
         "overrides": []
       },
@@ -198,20 +233,19 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
         }
       },
       "targets": [
         {
-          "expr": "ordo_gpu_chat_up",
-          "legendFormat": "GPU chat engine",
+          "expr": "max by (engine, device) (ordo_engine_up{engine=~\"$engine\"})",
+          "legendFormat": "{{engine}} ({{device}})",
           "refId": "A"
-        },
-        {
-          "expr": "up{job=\"inference-engine-cpu\"}",
-          "legendFormat": "CPU fallback",
-          "refId": "B"
         }
-      ]
+      ],
+      "description": "1 while ops-controller can read the engine and it is running. A GPU engine drops to 0 while a render has borrowed its card."
     },
     {
       "id": 6,
@@ -245,22 +279,17 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
-          "legendFormat": "GPU",
+          "expr": "sum by (engine, device) (rate(ordo_engine_output_tokens_total{engine=~\"$engine\"}[5m]))",
+          "legendFormat": "{{engine}} ({{device}})",
           "refId": "A"
-        },
-        {
-          "expr": "rate(llamacpp:tokens_predicted_total{job=\"inference-engine-cpu\"}[5m])",
-          "legendFormat": "CPU fallback",
-          "refId": "B"
         }
       ],
-      "description": "Output tokens per second, 5 minute rate. GPU from the gateway, CPU from llama.cpp."
+      "description": "Output tokens per second, 5 minute rate."
     },
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Prompt tokens read per second",
+      "title": "Prompt tokens computed per second",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -289,22 +318,17 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(litellm_input_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
-          "legendFormat": "GPU",
+          "expr": "sum by (engine, device) (rate(ordo_engine_prompt_tokens_processed_total{engine=~\"$engine\"}[5m]))",
+          "legendFormat": "{{engine}} ({{device}})",
           "refId": "A"
-        },
-        {
-          "expr": "rate(llamacpp:prompt_tokens_total{job=\"inference-engine-cpu\"}[5m])",
-          "legendFormat": "CPU fallback",
-          "refId": "B"
         }
       ],
-      "description": "Prompt tokens per second, 5 minute rate."
+      "description": "Prompt tokens computed per second (cache hits excluded), 5 minute rate."
     },
     {
-      "id": 12,
+      "id": 8,
       "type": "timeseries",
-      "title": "GPU request time (s)",
+      "title": "Generation speed while generating",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -313,7 +337,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "suffix: tok/s",
           "decimals": 1,
           "custom": {
             "fillOpacity": 10,
@@ -333,22 +357,17 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(litellm_llm_api_latency_metric_bucket[15m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1)))",
-          "legendFormat": "median",
+          "expr": "sum by (engine, device) (rate(ordo_engine_output_tokens_total{engine=~\"$engine\"}[5m])) / sum by (engine, device) (rate(ordo_engine_output_seconds_total{engine=~\"$engine\"}[5m]))",
+          "legendFormat": "{{engine}} ({{device}})",
           "refId": "A"
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(litellm_llm_api_latency_metric_bucket[15m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1)))",
-          "legendFormat": "slowest 5%",
-          "refId": "B"
         }
       ],
-      "description": "Gateway to GPU engine and back, including the wait in the queue."
+      "description": "Tokens per second during generation only (output tokens over time spent generating): the model's speed, independent of how busy it is."
     },
     {
-      "id": 13,
+      "id": 9,
       "type": "timeseries",
-      "title": "CPU fallbacks per hour",
+      "title": "Prompt speed while computing prompts",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -357,7 +376,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "suffix: tok/s",
           "decimals": 1,
           "custom": {
             "fillOpacity": 10,
@@ -377,131 +396,325 @@
       },
       "targets": [
         {
-          "expr": "sum by (exception_class) (increase(litellm_deployment_successful_fallbacks_total{requested_model=\"local-chat\"}[1h]))",
+          "expr": "sum by (engine, device) (rate(ordo_engine_prompt_tokens_processed_total{engine=~\"$engine\"}[5m])) / sum by (engine, device) (rate(ordo_engine_prompt_seconds_total{engine=~\"$engine\"}[5m]))",
+          "legendFormat": "{{engine}} ({{device}})",
+          "refId": "A"
+        }
+      ],
+      "description": "Prompt tokens per second while computing prompts (computed tokens over time spent on them)."
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Requests running and waiting",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (engine, device) (ordo_engine_requests_running{engine=~\"$engine\"})",
+          "legendFormat": "{{engine}} running",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (engine, device) (ordo_engine_requests_waiting{engine=~\"$engine\"})",
+          "legendFormat": "{{engine}} waiting",
+          "refId": "B"
+        }
+      ],
+      "description": "Requests each engine is working on and the queue behind it."
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Prompt cache reuse",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "custom": {
+            "fillOpacity": 10,
+            "spanNulls": true
+          },
+          "max": 1,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (engine, device) (rate(ordo_engine_prompt_tokens_cached_total{engine=~\"$engine\"}[5m])) / (sum by (engine, device) (rate(ordo_engine_prompt_tokens_cached_total{engine=~\"$engine\"}[5m])) + sum by (engine, device) (rate(ordo_engine_prompt_tokens_processed_total{engine=~\"$engine\"}[5m])))",
+          "legendFormat": "{{engine}} ({{device}})",
+          "refId": "A"
+        }
+      ],
+      "description": "Share of prompt tokens served from the prefix cache, 5 minute rate."
+    },
+    {
+      "id": 101,
+      "type": "row",
+      "title": "Model gateway",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Fallbacks per hour",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (exception_class) (increase(litellm_deployment_successful_fallbacks_total[1h]))",
           "legendFormat": "{{exception_class}}",
           "refId": "A"
         },
         {
-          "expr": "sum(increase(litellm_deployment_failed_fallbacks_total{requested_model=\"local-chat\"}[1h]))",
+          "expr": "sum(increase(litellm_deployment_failed_fallbacks_total[1h]))",
           "legendFormat": "fallback failed",
           "refId": "B"
         }
       ],
-      "description": "local-chat requests moved to the CPU, by the GPU error that caused it. A busy GPU queue no longer moves a request (it waits its turn), so RateLimitError should stay at zero."
+      "description": "Requests the model gateway moved to a fallback model, by the error that moved them. A busy queue does not move requests: only an engine error does."
     },
     {
-      "id": 8,
+      "id": 102,
+      "type": "row",
+      "title": "GPUs",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
       "type": "timeseries",
       "title": "GPU utilization",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 26
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "min": 0,
-          "max": 1,
+          "decimals": 1,
           "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10
-          }
+            "fillOpacity": 10,
+            "spanNulls": true
+          },
+          "max": 1,
+          "min": 0
         },
         "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
       },
       "targets": [
         {
           "expr": "nvidia_smi_utilization_gpu_ratio * on(uuid) group_left(name) nvidia_smi_gpu_info",
-          "refId": "A",
-          "legendFormat": "{{name}}"
+          "legendFormat": "{{name}}",
+          "refId": "A"
         }
-      ]
+      ],
+      "description": "Compute utilization per GPU."
     },
     {
-      "id": 9,
+      "id": 14,
       "type": "timeseries",
       "title": "GPU VRAM used",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 26
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
           "unit": "bytes",
+          "decimals": 1,
           "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10
+            "fillOpacity": 10,
+            "spanNulls": true
           }
         },
         "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
       },
       "targets": [
         {
           "expr": "nvidia_smi_memory_used_bytes * on(uuid) group_left(name) nvidia_smi_gpu_info",
-          "refId": "A",
-          "legendFormat": "{{name}}"
+          "legendFormat": "{{name}}",
+          "refId": "A"
         }
-      ]
+      ],
+      "description": "VRAM in use per GPU."
     },
     {
-      "id": 10,
+      "id": 15,
       "type": "timeseries",
       "title": "GPU temperature (°C)",
       "gridPos": {
-        "h": 6,
+        "h": 8,
         "w": 12,
         "x": 0,
-        "y": 34
+        "y": 52
       },
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
+          "decimals": 0,
           "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 0
+            "fillOpacity": 10,
+            "spanNulls": true
           }
         },
         "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
       },
       "targets": [
         {
           "expr": "nvidia_smi_temperature_gpu * on(uuid) group_left(name) nvidia_smi_gpu_info",
-          "refId": "A",
-          "legendFormat": "{{name}}"
+          "legendFormat": "{{name}}",
+          "refId": "A"
         }
-      ]
+      ],
+      "description": "Temperature per GPU."
     },
     {
-      "id": 11,
+      "id": 16,
       "type": "timeseries",
       "title": "GPU power draw (W)",
       "gridPos": {
-        "h": 6,
+        "h": 8,
         "w": 12,
         "x": 12,
-        "y": 34
+        "y": 52
       },
       "fieldConfig": {
         "defaults": {
           "unit": "watt",
+          "decimals": 0,
           "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 0
+            "fillOpacity": 10,
+            "spanNulls": true
           }
         },
         "overrides": []
       },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "targets": [
         {
           "expr": "nvidia_smi_power_draw_watts * on(uuid) group_left(name) nvidia_smi_gpu_info",
-          "refId": "A",
-          "legendFormat": "{{name}}"
+          "legendFormat": "{{name}}",
+          "refId": "A"
         }
-      ]
+      ],
+      "description": "Power draw per GPU."
     }
   ]
 }

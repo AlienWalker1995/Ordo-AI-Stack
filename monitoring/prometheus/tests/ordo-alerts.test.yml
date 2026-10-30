@@ -232,12 +232,9 @@ tests:
                 inference-engine-gpu:8080/health does not answer 200 and no GPU lease has evicted it. Read `docker
                 logs ordo-inference-engine-gpu-1`.
 
-  # NInfer serves no Prometheus /metrics, so the `inference-engine-gpu` scrape is down for good while the engine
-  # is healthy: neither InferenceEngineGpuDown nor TargetDown may fire.
+  # A healthy GPU chat engine that is not evicted does not fire.
   - interval: 1m
     input_series:
-      - series: 'up{job="inference-engine-gpu",instance="inference-engine-gpu:8080"}'
-        values: '0x30'
       - series: 'ordo_gpu_chat_up'
         values: '1x30'
       - series: 'ordo_gpu_resident_evicted{resident="inference-engine-gpu"}'
@@ -251,15 +248,12 @@ tests:
         exp_alerts: []
 
   # Scrape targets: the GPU exporter's one-scrape timeouts do not fire; 20 minutes down does.
-  # llama.cpp is never a TargetDown (InferenceEngineGpuDown owns it).
   - interval: 1m
     input_series:
       - series: 'up{job="gpu",instance="gpu-exporter:9835"}'
         values: '1 0 1 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
       - series: 'up{job="model-gateway",instance="model-gateway:11435"}'
         values: '1 0 0 0 1x20'
-      - series: 'up{job="inference-engine-gpu",instance="inference-engine-gpu:8080"}'
-        values: '0x25'
     alert_rule_test:
       - eval_time: 25m
         alertname: TargetDown
