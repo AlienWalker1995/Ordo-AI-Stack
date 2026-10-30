@@ -32,6 +32,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from ..render import stack
 from ..render.changed_set import DockerState, RenderedService, RunningContainer, StackState, Staged
 from ..render.stack import compose_argv, lifecycle_group, load_compose, plan_named, profiles_in
 from .logs import TAIL_DEFAULT, LogLine, instant, merge_streams
@@ -701,8 +702,9 @@ class MockBackend:
 # the container has actually exited / actually come up (a one-shot that finished its work and
 # exited 0 counts as up), and raises otherwise. A failed start gets one bounded retry, because
 # the alternative is a container left stopped with nothing to revive it.
-EXIT_EVENT_RACE_MARKER = "did not receive an exit event"
-STOP_EXIT_WAIT_S = 120.0   # bound for waiting out a raced stop's exit
+# The marker and the wait are shared with the host's apply and bring-up (ordo/render/stack.py).
+EXIT_EVENT_RACE_MARKER = stack.EXIT_EVENT_RACE_MARKER
+STOP_EXIT_WAIT_S = stack.STOP_EXIT_WAIT_S   # bound for waiting out a raced stop's exit
 START_CONFIRM_S = 10.0     # bound for confirming a started container is actually running
 # Backoff before the one retry of a failed start half: a transient failure (a GPU device still
 # busy milliseconds after the SIGKILL) clears in seconds, and the alternative is a container

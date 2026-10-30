@@ -438,3 +438,49 @@ def test_a_status_without_the_leased_verdict_is_refused_not_guessed():
 def test_the_leased_verdict_alone_decides():
     assert bringup.is_leased({**IDLE, "leased": True}) is True
     assert bringup.is_leased({**LEASED, "leased": False}) is False
+
+
+# --- transient daemon errors ------------------------------------------------------------------
+
+
+def _runs(monkeypatch, results):
+    """Replace subprocess.run with one that answers (returncode, stderr) pairs in order."""
+    calls = []
+    answers = iter(results)
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        code, err = next(answers)
+
+        class Result:
+            returncode = code
+            stdout = ""
+            stderr = err
+
+        return Result()
+
+    monkeypatch.setattr("ordo.host.bringup.subprocess.run", fake_run)
+    monkeypatch.setattr("ordo.host.bringup.COMPOSE_RETRY_WAIT_S", 0.0)
+    return calls
+
+
+def test_a_daemon_race_is_retried_until_compose_succeeds(monkeypatch):
+    calls = _runs(monkeypatch, [
+        (1, "Error response from daemon: cannot stop container: abc: tried to kill container, but did not receive an exit event"),
+        (1, 'Conflict. The container name "/12b0_ordo-couchdb-1" is already in use by container "2eef"'),
+        (0, "")])
+    assert bringup.run_compose(["docker", "compose", "up"]) == 0
+    assert len(calls) == 3
+
+
+def test_any_other_compose_failure_returns_at_once(monkeypatch):
+    calls = _runs(monkeypatch, [(1, "service \"couchdb\" refers to undefined volume")])
+    assert bringup.run_compose(["docker", "compose", "up"]) == 1
+    assert len(calls) == 1
+
+
+def test_a_race_that_persists_fails_after_the_retries(monkeypatch):
+    race = (1, "did not receive an exit event")
+    calls = _runs(monkeypatch, [race] * (bringup.COMPOSE_RETRIES + 1))
+    assert bringup.run_compose(["docker", "compose", "up"]) == 1
+    assert len(calls) == bringup.COMPOSE_RETRIES + 1

@@ -30,6 +30,7 @@ from __future__ import annotations
 import dataclasses
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -152,6 +153,11 @@ class Git:
         return bool(self._git("status", "--porcelain", "--untracked-files=all", "--", *paths))
 
 
+# `docker tag` is tried this many times, this many seconds apart (growing), before a build fails.
+TAG_ATTEMPTS = 3
+TAG_RETRY_WAIT_S = 2.0
+
+
 class Docker:
     """The docker CLI calls `ordo build` makes, run from the repo root."""
 
@@ -177,7 +183,14 @@ class Docker:
         return self._run(cmd + [target.context], quiet=False)
 
     def tag(self, source: str, target: str) -> bool:
-        return self._run(["docker", "tag", source, target], quiet=True)
+        """`docker tag`, tried TAG_ATTEMPTS times: a lone transient daemon failure here failed a whole
+        apply (2026-10-30) although the same tag succeeded seconds later."""
+        for attempt in range(TAG_ATTEMPTS):
+            if self._run(["docker", "tag", source, target], quiet=True):
+                return True
+            if attempt + 1 < TAG_ATTEMPTS:
+                time.sleep(TAG_RETRY_WAIT_S * (attempt + 1))
+        return False
 
 
 def _identity(git: GitLike, inputs: Sequence[str]) -> tuple[str, str, bool]:

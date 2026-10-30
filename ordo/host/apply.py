@@ -248,7 +248,7 @@ def _container_stopped(name: str) -> bool:
     return (proc.stdout or "").strip() == "false"
 
 
-def _all_stopped(names: Sequence[str], bound_s: float = 30.0, poll_s: float = 2.0) -> bool:
+def _all_stopped(names: Sequence[str], bound_s: float = stack.STOP_EXIT_WAIT_S, poll_s: float = 2.0) -> bool:
     """Poll until every named container reports exited; False when the bound elapses first. A
     read docker cannot answer counts as not-yet, so a wedged daemon cannot hang the apply."""
     deadline = time.monotonic() + bound_s
