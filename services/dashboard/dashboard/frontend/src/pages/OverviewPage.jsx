@@ -1,15 +1,14 @@
 // Overview: is it healthy, what is happening, what needs me. One screen, answered in that order.
-//   GET /api/overview        status line, GPUs and who holds them, chat engine, attention, host
+//   GET /api/overview        status line, GPUs and who holds them, every model engine, attention, host
 //   GET /api/drift           what `ordo doctor` would flag (ops-controller's read-only GET /doctor)
 //   GET /api/activity        renders, GPU leases and operator actions, newest first
-//   GET /api/perf/series     tokens generated per second by each chat server, last 24 h
-//   GET /api/models          which model file each role loads now
+//   GET /api/perf/series     tokens generated per second by each engine, last 24 h
 import { useRef, useState } from 'react'
 import { usePolling } from '../api.js'
 import { api } from '../api.js'
 import { Banner, BTN, Chip, Dot, Median, Meter, Panel, Skeleton, Sparkline, StatTile, Unavailable } from '../components/ui.jsx'
 import { clock, formatDuration, formatGb, pct, timeAgo } from '../lib/format.js'
-import { ACTIVITY_CATEGORIES, activityDaySummary, filterActivity, groupActivity, kpiTiles } from './overviewModel.js'
+import { ACTIVITY_CATEGORIES, activityDaySummary, deviceLabel, filterActivity, groupActivity, kpiTiles } from './overviewModel.js'
 
 const LEVEL_TONE = { ok: 'ok', warning: 'warning', critical: 'critical', unknown: 'unknown' }
 
@@ -99,89 +98,111 @@ function GpuCard({ gpu }) {
   )
 }
 
-// Both chat servers share one time axis so their histories line up.
-/** @returns {[number, number] | undefined} */
+// Every engine's history shares one time axis so the rows line up.
+/** @param {Record<string, [number, number][]> | undefined} series @returns {[number, number] | undefined} */
 function seriesDomain(series) {
-  const stamps = [...(series?.gpu || []), ...(series?.cpu || [])].map((p) => p[0])
+  const stamps = Object.values(series || {}).flat().map((p) => p[0])
   return stamps.length ? [Math.min(...stamps), Math.max(...stamps)] : undefined
 }
 
-// The median's evidence as a tooltip: how many samples, over what span.
-function medianTitle(m) {
-  if (!m.n) return 'No samples yet'
-  const span = m.first_ts && m.last_ts ? `, ${clock(m.first_ts)} to ${clock(m.last_ts)}` : ''
-  return `${m.n} sample${m.n !== 1 ? 's' : ''}${span}`
+// What an engine is doing, as a dot and a word. `lent` is the system working (a render borrowed
+// its GPU), so it reads as a warning, never as a failure.
+const ENGINE_STATE = {
+  serving: { tone: 'ok', label: 'Serving' },
+  starting: { tone: 'starting', label: 'Starting' },
+  lent: { tone: 'warning', label: 'GPU lent' },
+  stopped: { tone: 'stopped', label: 'Stopped' },
+  down: { tone: 'critical', label: 'Down' },
 }
 
-// The analyst's panel: how the models are doing and being used. Speed by role with its history,
-// the combined token trend, the per-caller table when live work tracking lands (gap G4), and the
-// files each role loads now.
-/** @param {{ chat: object, series: object | null, models: object | null, modelsError: boolean }} props */
-function ModelUsage({ chat, series, models, modelsError }) {
-  const domain = seriesDomain(series)
+/** @param {number | null | undefined} v */
+function rate(v) {
+  return v >= 100 ? Math.round(v).toLocaleString() : v.toFixed(1)
+}
+
+// One figure beside an engine's history: the number first, its meaning muted after it.
+/** @param {{ value: string, label: string, title: string }} props */
+function Figure({ value, label, title }) {
   return (
-    <div className="grid gap-4">
-      <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
-        {[
-          { key: 'gpu', label: 'GPU', tone: 'accent', points: series?.gpu },
-          { key: 'cpu', label: 'CPU fallback', tone: 'warning', points: series?.cpu },
-        ].map((s) => {
-          // The median comes from the ROLE series (a model swap does not reset it); the label
-          // names the file the server loads now.
-          const m = chat[s.key] || {}
-          return (
-            <div key={s.key} className="grid gap-1">
-              <span className="text-caption text-muted">{s.label} · median speed</span>
-              <Median value={m.p50} n={m.n} provisional={m.provisional} title={medianTitle(m)} />
-              {series?.available === false
-                ? <span className="text-caption text-muted">History needs the monitoring profile</span>
-                : <Sparkline points={s.points} tone={s.tone} domain={domain}
-                             label={`${s.label} tokens generated, last 24 hours${m.model ? `, ${m.model}` : ''}`} />}
-              <span className="truncate text-micro text-muted"
-                    title={m.model ? `${m.model}, output over the last 24 h` : undefined}>
-                {m.model || 'Output over the last 24 h'}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-      <div className="grid gap-1">
-        <span className="text-caption text-muted">Tokens per hour, last 24 h</span>
-        {series?.available === false
-          ? <span className="text-caption text-muted">History needs the monitoring profile</span>
-          : <Sparkline points={series?.gpu || []} height={48} domain={domain}
-                       compare={{ points: series?.cpu || [], tone: 'warning', label: 'CPU fallback' }}
-                       label="GPU and CPU fallback tokens generated per second, last 24 hours" />}
-        <span className="flex gap-3 text-micro text-muted">
-          <span className="inline-flex items-center gap-1"><Dot tone="info" /> GPU</span>
-          <span className="inline-flex items-center gap-1"><Dot tone="warning" /> CPU fallback</span>
-        </span>
-      </div>
-      <Unavailable>Per-caller usage arrives with live work tracking.</Unavailable>
-      <ActiveModels models={models} modelsError={modelsError} />
-    </div>
+    <span className="whitespace-nowrap" title={title}>
+      <span className="font-mono tabular-nums text-fg">{value}</span>{' '}
+      <span className="text-muted">{label}</span>
+    </span>
   )
 }
 
-// Which file each role loads now, from /api/models: the "what is running" line.
-/** @param {{ models: object | null, modelsError: boolean }} props */
-function ActiveModels({ models, modelsError }) {
-  if (!models) {
-    return modelsError
-      ? <p className="text-caption text-muted">Active models unavailable.</p>
-      : <Skeleton className="h-4 w-40" />
+// The figures ops-controller measures for an engine (ordo_engine_*). Speeds are tokens over the
+// time spent on them, so a queue never reads as a slow model; a figure with no samples is absent.
+/** @param {{ speeds: Record<string, number> }} props */
+function EngineFigures({ speeds }) {
+  const figures = []
+  if (typeof speeds.generation_tps === 'number') {
+    figures.push(<Figure key="gen" value={rate(speeds.generation_tps)} label="tok/s generating"
+                         title="Tokens per second while generating, last hour" />)
   }
-  const parts = []
-  if (models.gpu?.catalog_id) {
-    parts.push(models.gpu.ctx ? `${models.gpu.catalog_id} · ${Math.round(models.gpu.ctx / 1000)}k ctx` : models.gpu.catalog_id)
+  if (typeof speeds.prompt_tps === 'number') {
+    figures.push(<Figure key="prompt" value={rate(speeds.prompt_tps)} label="tok/s prompt"
+                         title="Prompt tokens computed per second, cache hits excluded, last hour" />)
   }
-  if (models.cpu?.file) parts.push(`CPU ${models.cpu.file}`)
-  if (models.embed?.file) parts.push(`embeddings ${models.embed.file}`)
-  if (!parts.length) return <p className="text-caption text-muted">Active models unavailable.</p>
+  if (typeof speeds.cache_reuse === 'number') {
+    figures.push(<Figure key="cache" value={`${Math.round(speeds.cache_reuse * 100)}%`} label="cached"
+                         title="Share of prompt tokens reused from the prefix cache, last hour" />)
+  }
+  if (speeds.waiting) {
+    figures.push(<Figure key="wait" value={String(speeds.waiting)} label="waiting"
+                         title="Requests queued for this engine now" />)
+  }
+  if (!figures.length) return <span className="text-caption text-muted">No samples in the last hour</span>
+  return <span className="flex flex-wrap gap-x-3 gap-y-1 text-caption">{figures}</span>
+}
+
+// One row per model engine the registry lists: what it serves, on what device, whether it is
+// serving, and (where it is measured) how fast it works and its output over the last 24 h.
+/** @param {{ engines: Array<object>, series: object | null, ratesAvailable: boolean }} props */
+function ModelEngines({ engines, series, ratesAvailable }) {
+  if (!engines.length) return <Unavailable>No model engines reported.</Unavailable>
+  const domain = seriesDomain(series?.series)
   return (
-    <p className="truncate text-caption text-fg-muted" title={parts.join(' · ')}>
-      <span className="text-muted">Active:</span> {parts.join(' · ')}
-    </p>
+    <ul className="grid divide-y divide-border-subtle">
+      {engines.map((e) => {
+        const state = ENGINE_STATE[e.state] || ENGINE_STATE.stopped
+        const facts = [e.file, e.ctx ? `${Math.round(e.ctx / 1000)}k ctx` : ''].filter(Boolean).join(' · ')
+        return (
+          <li key={e.model} className="grid min-w-0 gap-2 py-3 first:pt-0 last:pb-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <Dot tone={state.tone} label={state.label} />
+              <span className="truncate font-mono text-body text-fg" title={e.engine}>{e.model}</span>
+              <Chip>{deviceLabel(e.device)}</Chip>
+              <Chip>{e.kind}</Chip>
+              {e.fallback_for && (
+                <Chip tone={e.standing_in ? 'warning' : 'neutral'}
+                      title={`Answers for ${e.fallback_for} while it is not serving`}>
+                  {e.standing_in ? `Standing in for ${e.fallback_for}` : `Fallback for ${e.fallback_for}`}
+                </Chip>
+              )}
+              <span className="ml-auto text-caption text-muted" title={e.reason || undefined}>
+                {state.label}{e.reason ? ` · ${e.reason}` : ''}
+              </span>
+            </div>
+            {e.measured && (
+              ratesAvailable
+                ? (
+                  <div className="grid gap-1">
+                    <EngineFigures speeds={e.speeds || {}} />
+                    {series?.available === false
+                      ? <span className="text-caption text-muted">History needs the monitoring profile</span>
+                      : <Sparkline points={series?.series?.[e.engine] || []} domain={domain}
+                                   tone={e.standing_in ? 'warning' : 'accent'}
+                                   label={`${e.model} tokens generated per second, last 24 hours`} />}
+                  </div>
+                )
+                : <span className="text-caption text-muted">Speeds need the monitoring profile</span>
+            )}
+            {facts && <span className="truncate text-micro text-muted" title={facts}>{facts}</span>}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
@@ -292,7 +313,7 @@ const CATEGORY_LABEL = { all: 'All', render: 'Renders', gpu: 'GPU leases', servi
 // the lease's duration and eviction note when the row is a GPU lease (a run of leases reads its
 // GPU time in all). A single lease's own start to end rides in the tooltip: the row's clock is the
 // event's stamp, and the duration says how long the GPU was out.
-/** @param {{ g: { ts: number, oldestTs: number, count: number, kind: string, title: string, severity: string, holder?: string | null, started?: number | null, ended?: number | null, duration_s?: number | null, evicted_chat?: boolean } }} props */
+/** @param {{ g: { ts: number, oldestTs: number, count: number, kind: string, title: string, severity: string, holder?: string | null, started?: number | null, ended?: number | null, duration_s?: number | null, evicted?: string[] } }} props */
 function ActivityRow({ g }) {
   const lease = g.kind === 'gpu'
   const duration = lease && g.duration_s != null
@@ -301,7 +322,7 @@ function ActivityRow({ g }) {
     ? `${clock(g.started)} to ${clock(g.ended)}` : ''
   const runSpan = g.count > 1 ? `${clock(g.oldestTs)} to ${clock(g.ts)}` : ''
   const tooltip = [g.title, g.count > 1 ? `${g.count} times` : '', leaseSpan || runSpan, duration,
-    g.evicted_chat ? 'chat model evicted' : ''].filter(Boolean).join(' · ')
+    g.evicted?.length ? `${g.evicted.join(', ')} stopped for it` : ''].filter(Boolean).join(' · ')
   return (
     <li className="grid grid-cols-[3.25rem_auto_minmax(0,1fr)] items-center gap-2.5">
       <time className="font-mono text-caption tabular-nums text-muted" title={timeAgo(g.ts)}>{clock(g.ts)}</time>
@@ -310,7 +331,7 @@ function ActivityRow({ g }) {
         {g.title}
         {g.count > 1 && <span className="text-caption text-muted"> ×{g.count}</span>}
         {duration && <span className="text-caption text-muted"> · {duration}</span>}
-        {g.evicted_chat && <span className="text-caption text-warning"> · chat model evicted</span>}
+        {g.evicted?.length > 0 && <span className="text-caption text-warning"> · {g.evicted.join(', ')} stopped for it</span>}
         {runSpan && <span className="text-caption text-muted"> · {runSpan}</span>}
       </span>
     </li>
@@ -363,7 +384,6 @@ export default function OverviewPage() {
   const series = usePolling(() => api.get('/api/perf/series'), 60000)
   // Slower than the overview: each call runs the open-webui probe inside its container.
   const drift = usePolling(() => api.get('/api/drift'), 60000)
-  const models = usePolling(() => api.get('/api/models'), 60000)
   const o = overview.data
   const driftCount = drift.data?.available ? drift.data.findings.length : 0
 
@@ -386,8 +406,8 @@ export default function OverviewPage() {
       <Drift drift={drift.data} />
       <KpiBand tiles={kpiTiles(o, series.data)} />
       <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-        <Panel title="Model usage">
-          <ModelUsage chat={o.chat} series={series.data} models={models.data} modelsError={!!models.error} />
+        <Panel title="Model engines">
+          <ModelEngines engines={o.engines || []} series={series.data} ratesAvailable={o.rates_available !== false} />
         </Panel>
         <Panel title="Capacity">
           <Capacity gpus={o.gpus} host={o.host} knowledge={o.knowledge} />

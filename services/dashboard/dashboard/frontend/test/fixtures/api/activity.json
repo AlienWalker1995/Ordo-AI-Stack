@@ -9,7 +9,7 @@
       "started": null,
       "ended": null,
       "duration_s": null,
-      "evicted_chat": false
+      "evicted": []
     },
     {
       "ts": 1790679100.0,
@@ -20,7 +20,9 @@
       "started": 1790678920.0,
       "ended": 1790679100.0,
       "duration_s": 180,
-      "evicted_chat": true
+      "evicted": [
+        "llama.cpp (GPU)"
+      ]
     },
     {
       "ts": 1790678950.0,
@@ -31,7 +33,7 @@
       "started": null,
       "ended": null,
       "duration_s": null,
-      "evicted_chat": false
+      "evicted": []
     },
     {
       "ts": 1790676400.0,
@@ -42,7 +44,7 @@
       "started": null,
       "ended": null,
       "duration_s": null,
-      "evicted_chat": false
+      "evicted": []
     },
     {
       "ts": 1790672800.0,
@@ -53,7 +55,7 @@
       "started": 1790672200.0,
       "ended": 1790672800.0,
       "duration_s": 600,
-      "evicted_chat": false
+      "evicted": []
     },
     {
       "ts": 1790593600.0,
@@ -64,7 +66,7 @@
       "started": null,
       "ended": null,
       "duration_s": null,
-      "evicted_chat": false
+      "evicted": []
     }
   ]
 }
