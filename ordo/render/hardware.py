@@ -159,7 +159,7 @@ def _gpu_from_spec(index: int, g: dict[str, Any]) -> GPU:
 def _run_probe(argv: list[str]) -> subprocess.CompletedProcess | None:
     """Run a read-only GPU probe; None when it cannot be executed at all."""
     try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=10)
+        return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
 

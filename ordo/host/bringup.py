@@ -122,7 +122,7 @@ def find_running_container(project: str, service: str) -> str | None:
              "--filter", f"label=com.docker.compose.service={service}",
              "--filter", "status=running",
              "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
     except (OSError, subprocess.SubprocessError) as e:
         raise LeaseUnknown(f"cannot query docker for the {service} container: {e}") from e
@@ -152,7 +152,7 @@ def read_gpu_status(project: str) -> dict | None:
     try:
         proc = subprocess.run(
             ["docker", "exec", container, "python", "-c", _STATUS_SCRIPT],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
     except (OSError, subprocess.SubprocessError) as e:
         raise LeaseUnknown(f"{container} is running but its /status could not be read: {e}") from e

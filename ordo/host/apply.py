@@ -193,7 +193,7 @@ class RealHost:
         disable does; its volumes and the container itself stay. On the daemon's exit-event race
         the CLI can fail although the stop already landed (the 2026-10-19 deploy race), so a
         non-zero exit is confirmed against `docker inspect` before being reported."""
-        proc = subprocess.run(["docker", "stop", *containers], capture_output=True, text=True,
+        proc = subprocess.run(["docker", "stop", *containers], capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=120)
         if proc.returncode == 0:
             return 0
@@ -240,7 +240,7 @@ def _container_stopped(name: str) -> bool:
     not-yet, so it cannot abort the apply with a traceback."""
     try:
         proc = subprocess.run(["docker", "inspect", "--format", "{{.State.Running}}", name],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
     except (subprocess.TimeoutExpired, OSError):
         return False
     if proc.returncode != 0:

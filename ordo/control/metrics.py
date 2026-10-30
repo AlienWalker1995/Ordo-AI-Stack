@@ -223,7 +223,7 @@ def read_cert_not_after(path: str) -> float:
     library has no public certificate parser). Raises OSError or ValueError when it cannot be read."""
     try:
         proc = subprocess.run(["openssl", "x509", "-enddate", "-noout", "-in", path],
-                              capture_output=True, text=True, timeout=10)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
     except subprocess.SubprocessError as e:
         raise OSError(f"openssl could not read {path}: {e}") from e
     line = proc.stdout.strip()

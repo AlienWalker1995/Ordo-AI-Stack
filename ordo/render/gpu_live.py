@@ -83,7 +83,7 @@ def nvidia_gpus() -> list[dict[str, Any]]:
     try:
         result = subprocess.run(
             ["nvidia-smi", f"--query-gpu={_NVIDIA_QUERY}", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
         return []

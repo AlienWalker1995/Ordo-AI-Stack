@@ -108,7 +108,7 @@ def _exec_python_json(container: str, script: str, what: str,
     """Run a Python script inside a container and parse the JSON it prints; raises `error`."""
     try:
         proc = subprocess.run(["docker", "exec", container, "python", "-c", script],
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError) as e:
         raise error(f"{container}: {what} could not be read: {e}") from e
     if proc.returncode != 0:
@@ -223,7 +223,7 @@ def read_cpu_fallback_limits(project: str) -> tuple[int | None, float | None] | 
     if container is None:
         return None
     try:
-        proc = subprocess.run(["docker", "inspect", container], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(["docker", "inspect", container], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError) as e:
         raise ContainerUnreadable(f"{container}: {e}") from e
     if proc.returncode != 0:
@@ -262,7 +262,7 @@ def read_container_states(project: str) -> list[dict[str, Any]]:
     Raises ContainerUnreadable when docker cannot be queried."""
     def docker(args: list[str]) -> str:
         try:
-            proc = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=60)
+            proc = subprocess.run(["docker", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         except (OSError, subprocess.SubprocessError) as e:
             raise ContainerUnreadable(f"docker {args[0]}: {e}") from e
         if proc.returncode != 0:

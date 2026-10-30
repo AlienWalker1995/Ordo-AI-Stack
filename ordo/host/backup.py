@@ -300,7 +300,7 @@ def restrict_to_owner(path: Path) -> str:
         user = os.environ.get("USERNAME", "")
         grant = f"{user}:(OI)(CI)F" if path.is_dir() else f"{user}:F"
         proc = subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", grant],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
         if not user or proc.returncode != 0:
             return (f"WARNING: could not restrict {path} to {user or 'the current user'} "
                     f"({(proc.stderr or proc.stdout).strip()}); restrict it by hand")
@@ -676,7 +676,7 @@ class _StoppedServices:
 def _git_commit() -> str:
     try:
         proc = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"], capture_output=True,
-                              text=True, timeout=10)
+                              text=True, encoding="utf-8", errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
         return ""
     return proc.stdout.strip() if proc.returncode == 0 else ""

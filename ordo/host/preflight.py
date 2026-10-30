@@ -362,7 +362,7 @@ def parse_docker_ports(text: str) -> set[int]:
 
 def _docker(*args: str) -> subprocess.CompletedProcess | None:  # pragma: no cover - shells to docker
     try:
-        return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=30)
+        return subprocess.run(["docker", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
 

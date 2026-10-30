@@ -215,7 +215,7 @@ Runner = Callable[[list[str]], subprocess.CompletedProcess]
 
 
 def _run_docker(argv: list[str]) -> subprocess.CompletedProcess:  # pragma: no cover - shells out
-    return subprocess.run(argv, capture_output=True, text=True, timeout=120)
+    return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
 
 
 class DockerState:
