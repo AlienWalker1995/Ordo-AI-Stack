@@ -1,12 +1,13 @@
-"""Prometheus and Grafana must show both chat engines, separately.
+"""Prometheus and Grafana measure every model engine the same way, and name none of them.
 
-The CPU fallback answers chat whenever a render borrows the GPU, so a performance view that only
-scrapes the GPU server is blind exactly when it matters. Both servers expose the same llama.cpp
-metric names, so once both are scraped every query must say which one it means: an unfiltered
-`llamacpp:*` query would silently merge them into one unlabeled series.
+Model performance comes from ops-controller's `ordo_engine_*` family (ordo/control/engine_metrics.py),
+which reads each engine its own way (llama.cpp's /metrics, NInfer's request log) and labels it by
+engine, model and device. The dashboard picks engines with an `$engine` variable, so a host with no
+GPU, two GPUs or a plugin's engine needs no edit here. Before this, the GPU panels read the model
+gateway (which counts prefix-cache hits as prompt work, 64% high on 2026-10-30) and the CPU panels
+read llama.cpp, side by side as if comparable.
 """
 import json
-import re
 from pathlib import Path
 
 import yaml
@@ -20,8 +21,16 @@ def _jobs():
     return {j["job_name"]: j for j in PROM["scrape_configs"]}
 
 
+def _panels():
+    return [p for p in DASH["panels"] if p["type"] != "row"]
+
+
 def _exprs():
-    return [t.get("expr", "") for p in DASH["panels"] for t in p.get("targets", [])]
+    return [t.get("expr", "") for p in _panels() for t in p.get("targets", [])]
+
+
+def _engine_exprs():
+    return [e for e in _exprs() if "ordo_engine_" in e]
 
 
 def test_container_series_keep_their_own_service_label():
@@ -30,27 +39,41 @@ def test_container_series_keep_their_own_service_label():
     assert _jobs()["ops-controller"].get("honor_labels") is True
 
 
-def test_the_cpu_fallback_is_scraped():
-    job = _jobs()["inference-engine-cpu"]
-    assert job["static_configs"][0]["targets"] == ["inference-engine-cpu:8080"]
+def test_no_engine_is_scraped_by_name():
+    """Engines are read by ops-controller from the registry; a per-engine job is a list to keep in sync
+    (and NInfer's target was down by design, since it has no /metrics)."""
+    targets = [t for j in PROM["scrape_configs"] for c in j.get("static_configs", []) for t in c["targets"]]
+    assert not [t for t in targets if t.startswith("inference-engine")]
 
 
-def test_every_llama_cpp_query_names_its_server():
-    # A llama.cpp metric is `llamacpp:<name>` (upstream binary prefix); `http://inference-engine-gpu:8080` in a gateway label is not one.
-    unfiltered = [e for e in _exprs() if re.search(r"(?<!/)inference-engine-gpu:[a-z]", e) and not re.search(r'job=~?"', e)]
-    assert not unfiltered, f"these would merge the GPU and CPU servers: {unfiltered}"
+def test_no_panel_names_an_engine():
+    leaks = [e for e in _exprs() if "inference-engine" in e or "api_base=" in e or "llamacpp:" in e]
+    assert not leaks, f"these panels hardcode an engine: {leaks}"
 
 
-def test_the_dashboard_shows_the_cpu_fallback():
-    assert any('job="inference-engine-cpu"' in e or "inference-engine-cpu" in e for e in _exprs())
+def test_every_engine_panel_follows_the_engine_variable():
+    names = [v["name"] for v in DASH["templating"]["list"]]
+    assert "engine" in names
+    variable = next(v for v in DASH["templating"]["list"] if v["name"] == "engine")
+    assert "label_values(ordo_engine_up, engine)" in json.dumps(variable)
+    assert _engine_exprs()
+    assert all('engine=~"$engine"' in e for e in _engine_exprs())
 
 
-def test_the_dashboard_shows_when_each_chat_server_was_up():
-    """A render evicts the GPU server; `up` over time is what makes that visible."""
-    # The GPU engine exposes no /metrics endpoint; its liveness arrives as ops-controller's
-    # ordo_gpu_chat_up probe, while the CPU fallback is a plain scrape-target `up`.
-    assert any("ordo_gpu_chat_up" in e for e in _exprs())
-    assert any(e.startswith("up{") and 'job="inference-engine-cpu"' in e for e in _exprs())
+def test_prompt_work_excludes_cache_hits():
+    computed = [e for e in _engine_exprs() if "prompt_tokens_" in e]
+    assert computed and all("prompt_tokens_processed" in e for e in computed)
+
+
+def test_speeds_are_measured_while_working_not_per_request():
+    """A queued request is not a slow model: speeds divide tokens by the time spent on them."""
+    assert any("output_tokens" in e and "output_seconds" in e for e in _engine_exprs())
+    assert any("prompt_tokens_processed" in e and "prompt_seconds" in e for e in _engine_exprs())
+    assert not [e for e in _exprs() if "litellm_llm_api_latency" in e or "latency_per_output_token" in e]
+
+
+def test_the_dashboard_shows_why_requests_moved_to_a_fallback():
+    assert any("litellm_deployment_successful_fallbacks_total" in e and "exception_class" in e for e in _exprs())
 
 
 def test_panels_do_not_overlap():
@@ -63,32 +86,5 @@ def test_panels_do_not_overlap():
 
 
 def test_the_embed_uid_is_stable():
-    """The dashboard's Performance page embeds this uid."""
+    """The Ordo dashboard embeds /grafana/d/ordo-llm-gpu; renaming the uid breaks its Performance page."""
     assert DASH["uid"] == "ordo-llm-gpu"
-
-
-def test_the_gpu_chat_panels_do_not_need_llama_cpp_metrics():
-    """The GPU chat engine may be NInfer, which serves no /metrics: GPU chat panels read the model
-    gateway's per-backend metrics and ops-controller's health probe, never the inference-engine-gpu scrape job."""
-    assert not [e for e in _exprs() if 'job="inference-engine-gpu"' in e]
-    assert any("ordo_gpu_chat_up" in e for e in _exprs())
-    assert any('api_base="http://inference-engine-gpu:8080/v1"' in e for e in _exprs())
-
-
-def test_no_panel_uses_litellm_per_token_latency_as_a_speed():
-    """litellm_deployment_latency_per_output_token reads impossibly high for streamed requests (1,785
-    tok/s measured on a ~120 tok/s engine), so no panel turns it into a speed."""
-    assert not [e for e in _exprs() if "latency_per_output_token_sum" in e]
-
-
-def test_no_panel_reports_litellm_time_to_first_token():
-    """LiteLLM's time to first token read ~0.2 s while GPU requests took minutes: it timed the first
-    (empty) streamed chunk, sent before the request even left the engine's queue. Request time is shown
-    from the per-request latency histogram instead."""
-    assert not [e for e in _exprs() if "time_to_first_token" in e]
-    assert any("litellm_llm_api_latency_metric_bucket" in e for e in _exprs())
-
-
-def test_the_dashboard_shows_why_requests_moved_to_the_cpu():
-    """A busy GPU queue must no longer move requests to the CPU; the fallback panel is how that is seen."""
-    assert any("litellm_deployment_successful_fallbacks_total" in e and "exception_class" in e for e in _exprs())
