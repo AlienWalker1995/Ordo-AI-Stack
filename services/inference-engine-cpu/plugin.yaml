@@ -14,7 +14,7 @@
 # threads): 21/24 tool cases against 19/24, and an 8k-token prompt's first token in 99 s against
 # 110 s.
 #
-# Enabled in the `auto` parity set on any host with >=24GB RAM, but its service is DORMANT behind
+# Enabled in the `auto` parity set on any host with >=33GB RAM, but its service is DORMANT behind
 # the `cpu-fallback` compose profile — the container only starts when COMPOSE_PROFILES includes
 # `cpu-fallback` (same pattern as obsidian-livesync-funnel). Safe to merge without touching the
 # running stack: no profile active => nothing runs, and LiteLLM's fallback target just sits
@@ -24,7 +24,7 @@ name: CPU LLM Fallback (Qwen3.8-35B-A3B Distill)
 description: Load-on-demand CPU llama.cpp chat server that LiteLLM fails local-chat over to while the GPU is busy.
 requires:
   nvidia: false           # deliberately CPU-only — never contends for the 5090
-  ram_gb: 25              # ~18GB A3B weights (IQ4_XS) + 0.9GB vision projector + KV cache
+  ram_gb: 33              # ~18GB A3B weights (IQ4_XS) + 0.9GB vision projector + KV cache + 8GB prompt cache
 provides: [llm-cpu-fallback]
 compose_profile: cpu-fallback
 services:
@@ -64,6 +64,19 @@ services:
       - "${LLAMACPP_CPU_CTX?LLAMACPP_CPU_CTX is missing from the rendered .env}"
       - --parallel
       - "1"
+      # One slot serves one request at a time, so several callers (Hermes kanban workers) take turns
+      # on it, and each turn evicts the previous caller's context. llama.cpp keeps evicted contexts
+      # in a RAM prompt cache and restores them, but on its default slot selection it saves the
+      # outgoing context only when the new request keeps under half of it. Our callers share a long
+      # system prompt, so they keep 51-60% and nothing was ever saved: every switch re-read ~25k
+      # tokens at ~60 tok/s, 7-15 minutes per turn (measured 2026-10-30, three workers on this slot).
+      # Similarity 0 selects the slot by LRU, which saves the outgoing context and restores the
+      # incoming caller's on every request. The cache is capped at 8 GiB of RAM (pinned here rather
+      # than left to the upstream default); the oldest contexts are dropped first when it fills.
+      - --slot-prompt-similarity
+      - "0"
+      - --cache-ram
+      - "8192"
       # A declared CPU budget (overrides.inference-engine-cpu.threads; default min(12, half the detected
       # logical CPUs)). This service runs while a render holds the GPU, and unbounded llama.cpp took
       # ~24 of 48 threads, enough on top of the render to trip the host UPS's overload alarm. The
