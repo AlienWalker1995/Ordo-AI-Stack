@@ -199,15 +199,34 @@ def test_the_huihui_nvfp4_entry_serves_with_vision_on_the_ninfer_service():
 
 
 def test_every_ninfer_entry_queues_on_the_gpu_instead_of_failing_over_to_the_cpu():
-    """NInfer serves one request at a time. With its default short pending timeout a second request
-    failed with request_queue_timeout/503 and the gateway failed it over to the CPU fallback, which then
-    spent minutes reading a long prompt at ~23 tok/s on 12 cores (2026-10-02). A GPU request finishes in
-    seconds to a couple of minutes, so a waiting request queues on the GPU instead."""
+    """Chat runs one request at a time, first come first served. With a small or short pending queue a
+    waiting request failed with "queue is full" (429) or "expired" (503) and the gateway moved it to the CPU
+    fallback, which reads a ~100k-token prompt at a few tok/s (26 such fallbacks on 2026-10-29). The queue
+    holds the observed peak of waiting requests, and a request may wait 20 minutes but never so long that
+    the gateway's own timeout cuts it off before it is answered."""
     import re
+
+    import yaml
+
+    gateway = yaml.safe_load((ROOT / "services" / "model-gateway" / "litellm_config.yaml").read_text(encoding="utf-8"))
+    gpu = next(m for m in gateway["model_list"] if m["model_name"] == "local-chat")
+    gateway_timeout_ms = int(gpu["litellm_params"]["stream_timeout"]) * 1000
     entries = [m for m in CATALOG.models if m.backend == "ninfer"]
     assert entries
     for model in entries:
+        assert "--max-concurrency 1" in model.extra_args, model.id
         pending = re.search(r"--max-pending-requests (\d+)", model.extra_args)
         timeout = re.search(r"--pending-timeout-ms (\d+)", model.extra_args)
-        assert pending and int(pending.group(1)) >= 8, model.id
-        assert timeout and int(timeout.group(1)) >= 600000, model.id
+        assert pending and int(pending.group(1)) >= 64, model.id
+        assert timeout and 1200000 <= int(timeout.group(1)) < gateway_timeout_ms, model.id
+
+
+def test_the_cpu_fallback_also_serves_one_request_at_a_time():
+    """The CPU fallback is a single llama.cpp slot too: a second request waits in llama.cpp's queue,
+    in arrival order, rather than splitting the CPU between two long prompts."""
+    import yaml
+
+    manifest = yaml.safe_load((ROOT / "services" / "inference-engine-cpu" / "plugin.yaml").read_text(encoding="utf-8"))
+    command = next(s for s in manifest["services"] if s["name"] == "inference-engine-cpu")["command"]
+    assert command[command.index("--parallel") + 1] == "1"
+

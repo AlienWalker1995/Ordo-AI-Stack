@@ -263,9 +263,12 @@ models:
     # with three draft tokens and the optimized proposal head (126 tok/s decode, about 44% acceptance),
     # and assistant reasoning kept across turns. Sampling comes from the engine's Qwen3.8 thinking
     # preset (1.0 / 0.95 / 20 / 0 / 0), which is the model card's.
-    # A request that arrives while one is running waits for the GPU (up to 8 queued, 10 minutes) instead of
-    # failing over to the CPU fallback, which reads a long prompt at ~23 tok/s on 12 cores.
-    extra_args: "--max-concurrency 1 --max-pending-requests 8 --pending-timeout-ms 600000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"
+    # Chat is one request at a time, first come first served: a request that arrives while one is running
+    # waits in the engine's FIFO (up to 64 waiting, 20 minutes each) instead of failing over to the CPU
+    # fallback, which reads a ~100k-token prompt at a few tok/s. 64: the gateway peaked at 22 requests in
+    # flight (2026-10-30), and the old cap of 8 sent 26 requests a day to the CPU as "queue full". 20 minutes
+    # stays under the 30-minute gateway and Hermes request timeouts, leaving room for the answer itself.
+    extra_args: "--max-concurrency 1 --max-pending-requests 64 --pending-timeout-ms 1200000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"
     # Text only by default. With the vision encoder loaded, 262,144 no longer fits (the engine needs
     # 10.48GB + 1GB headroom after weights, 10.86GB is left); 200,000 measured (image QA correct).
     vision: { enabled: false, max_context: 200000 }
@@ -303,9 +306,9 @@ models:
     # The model's native window: 256,644-token prompt, 5/5 needle retrieval.
     ctx_default: 262144
     # The same serving flags as the official entry (one request at a time, upstream issue #339).
-    # A request that arrives while one is running waits for the GPU (up to 8 queued, 10 minutes) instead of
-    # failing over to the CPU fallback, which reads a long prompt at ~23 tok/s on 12 cores.
-    extra_args: "--max-concurrency 1 --max-pending-requests 8 --pending-timeout-ms 600000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"
+    # A request that arrives while one is running waits in the engine's FIFO (up to 64 waiting, 20 minutes)
+    # instead of failing over to the CPU fallback; see the official entry above for the numbers.
+    extra_args: "--max-concurrency 1 --max-pending-requests 64 --pending-timeout-ms 1200000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"
     # Vision on: the smaller weights leave room for the vision encoder at the full window
     # (27.6GiB on the card with --vision at 262,144, image QA correct), so images cost no context.
     vision: { enabled: true, max_context: 262144 }
@@ -336,9 +339,9 @@ models:
     vram_reserve_gb: 1.0
     kv_kb_per_token: 16.6
     ctx_default: 262144
-    # A request that arrives while one is running waits for the GPU (up to 8 queued, 10 minutes) instead of
-    # failing over to the CPU fallback, which reads a long prompt at ~23 tok/s on 12 cores.
-    extra_args: "--max-concurrency 1 --max-pending-requests 8 --pending-timeout-ms 600000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"
+    # A request that arrives while one is running waits in the engine's FIFO (up to 64 waiting, 20 minutes)
+    # instead of failing over to the CPU fallback; see the official entry above for the numbers.
+    extra_args: "--max-concurrency 1 --max-pending-requests 64 --pending-timeout-ms 1200000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"
     # As the official NVFP4 artifact: with the vision encoder loaded, 200,000 fits and 262,144 does not.
     vision: { enabled: false, max_context: 200000 }
     # NInfer answers a `strict: true` tool with 400 strict_tools_not_supported; Hermes sends them.
@@ -368,12 +371,12 @@ models:
     kv_kb_per_token: 16.6
     ctx_default: 262144
     # The same serving flags as the other NInfer entries (one request at a time, upstream issue #339;
-    # waiting requests queue on the GPU instead of failing over to the CPU fallback).
+    # waiting requests queue on the GPU, first come first served, instead of failing over to the CPU fallback).
     # --presence-penalty 1.5: the model card's remedy for endless repetition (0 to 2). With the card's
     # thinking-mode default of 0 this abliterated model looped in its reasoning until the 32,768-token
     # thinking budget ran out, 13 to 90 times a day (engine log: thinking 32,768/32,768, 96-99% MTP
     # acceptance). Temperature, top-p and top-k stay at the model's own defaults.
-    extra_args: "--max-concurrency 1 --max-pending-requests 8 --pending-timeout-ms 600000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking --presence-penalty 1.5"
+    extra_args: "--max-concurrency 1 --max-pending-requests 64 --pending-timeout-ms 1200000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking --presence-penalty 1.5"
     # Vision on. With the encoder loaded the NVFP4 weights leave room for 200,000 tokens, not 262,144
     # (measured 2026-10-08: 262,144 with vision starts only on an otherwise empty card, 31.4GiB of
     # 31.8, with no room for the embedder this card also serves; 200,000 runs at 29.3GiB, image QA correct).

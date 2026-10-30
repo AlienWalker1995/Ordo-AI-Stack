@@ -1,8 +1,10 @@
 """Unit tests for the model-gateway GPU-lease fallback gate.
 
 router_settings.fallbacks sends ANY error from the GPU deployment to the CPU model;
-the gate (services/model-gateway/gpu_lease_fallback_gate.py) always allows that hop, so
-a GPU failure degrades to the CPU model instead of failing the caller. It still reads
+the gate (services/model-gateway/gpu_lease_fallback_gate.py) allows that hop, so a GPU
+failure degrades to the CPU model instead of failing the caller, except when the GPU only
+refused the request because its one-at-a-time queue was busy: that request is not moved
+to the CPU (chat runs one request at a time, first come first served). It still reads
 ops-controller's /metrics (ordo_gpu_resident_evicted{resident="inference-engine-gpu"},
 ordo_gpu_chat_up) and logs the lease state for observability.
 
@@ -18,6 +20,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 
 _litellm = ModuleType("litellm")
@@ -26,6 +30,18 @@ _custom_logger = ModuleType("litellm.integrations.custom_logger")
 
 
 _custom_logger.CustomLogger = object
+
+
+class _ServiceUnavailableError(Exception):
+    """Stands in for litellm.ServiceUnavailableError (keyword-only like the real one)."""
+
+    def __init__(self, *, message, llm_provider, model):
+        super().__init__(message)
+        self.llm_provider = llm_provider
+        self.model = model
+
+
+_litellm.ServiceUnavailableError = _ServiceUnavailableError
 _litellm.integrations = _integrations
 _integrations.custom_logger = _custom_logger
 sys.modules.setdefault("litellm", _litellm)
@@ -92,9 +108,25 @@ def _install_client(monkeypatch, *, text: str | None = None, exc: Exception | No
     return calls
 
 
-def _hop_kwargs(key: str = "metadata") -> dict:
-    """request_kwargs as the router assembles them on a fallback hop out of local-chat."""
-    return {key: {"original_model_group": "local-chat"}}
+def _hop_kwargs(key: str = "metadata", gpu_error: str | None = None) -> dict:
+    """request_kwargs as the router assembles them on a fallback hop out of local-chat.
+
+    gpu_error is the failed GPU attempt's message, which Router.log_retry leaves as the last
+    previous_models breadcrumb.
+    """
+    meta: dict = {"original_model_group": "local-chat"}
+    if gpu_error is not None:
+        meta["previous_models"] = ({"exception_type": "RateLimitError", "exception_string": gpu_error},)
+    return {key: meta}
+
+
+# The messages NInfer's queue errors carry, as LiteLLM reports them (gateway log, 2026-10-29).
+QUEUE_FULL = "litellm.RateLimitError: RateLimitError: OpenAIException - inference request queue is full"
+QUEUE_EXPIRED = (
+    "litellm.ServiceUnavailableError: ServiceUnavailableError: OpenAIException - "
+    "inference request expired while waiting for admission"
+)
+BAD_REQUEST = "litellm.BadRequestError: OpenAIException - strict_tools_not_supported"
 
 
 def _deployments() -> list:
@@ -212,3 +244,38 @@ async def test_hook_logs_unreadable_metrics_at_most_once_per_minute(monkeypatch,
             assert out == _deployments()
     warnings = [r for r in caplog.records if "cannot read" in r.getMessage()]
     assert len(warnings) == 1
+
+
+# --- the busy GPU queue is not a GPU failure --------------------------------------
+
+
+async def test_hook_refuses_the_cpu_when_the_gpu_queue_is_full(monkeypatch):
+    """Chat is one request at a time, first come first served: "queue is full" means the GPU is
+    healthy and busy, so the request is not run beside it on the CPU."""
+    _install_client(monkeypatch, text=METRICS_NORMAL)
+    hook = gate.GpuLeaseFallbackGate()
+    with pytest.raises(_ServiceUnavailableError, match="GPU chat queue is busy"):
+        await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs(gpu_error=QUEUE_FULL))
+
+
+async def test_hook_refuses_the_cpu_when_the_request_expired_in_the_gpu_queue(monkeypatch):
+    _install_client(monkeypatch, text=METRICS_NORMAL)
+    hook = gate.GpuLeaseFallbackGate()
+    with pytest.raises(_ServiceUnavailableError):
+        await hook.async_filter_deployments(
+            CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs("litellm_metadata", gpu_error=QUEUE_EXPIRED)
+        )
+
+
+async def test_hook_still_allows_the_cpu_for_any_other_gpu_error(monkeypatch):
+    _install_client(monkeypatch, text=METRICS_NORMAL)
+    hook = gate.GpuLeaseFallbackGate()
+    out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs(gpu_error=BAD_REQUEST))
+    assert out == _deployments()
+
+
+def test_queue_error_markers_match_only_queue_errors():
+    assert gate.is_gpu_queue_error(QUEUE_FULL)
+    assert gate.is_gpu_queue_error(QUEUE_EXPIRED)
+    assert not gate.is_gpu_queue_error(BAD_REQUEST)
+    assert not gate.is_gpu_queue_error("")

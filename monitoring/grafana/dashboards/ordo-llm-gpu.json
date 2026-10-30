@@ -8,7 +8,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "10s",
   "time": {
     "from": "now-30m",
@@ -24,7 +24,7 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "GPU chat output (tok/s, all requests)",
+      "title": "GPU output (tok/s, 5m)",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -33,23 +33,34 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "suffix: tok/s",
           "decimals": 1
         },
         "overrides": []
       },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
       "targets": [
         {
           "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
+          "legendFormat": "GPU",
           "refId": "A"
         }
       ],
-      "description": "Output tokens per second served by the GPU chat engine, counted at the model gateway (LiteLLM), so it works for any engine (llama.cpp or NInfer; NInfer has no /metrics). LiteLLM's per-token latency metric is not used: it reads impossibly high for streamed requests."
+      "description": "Generated tokens per second on the GPU chat engine, counted at the model gateway when each request finishes (works for NInfer, which has no /metrics). The engine serves one request at a time, so this is also the speed of the request being served, minus the time spent reading its prompt."
     },
     {
       "id": 2,
       "type": "stat",
-      "title": "CPU fallback generation (tok/s)",
+      "title": "GPU prompt reading (tok/s, 5m)",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -58,22 +69,34 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
-          "decimals": 1
+          "unit": "suffix: tok/s",
+          "decimals": 0
         },
         "overrides": []
       },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
       "targets": [
         {
-          "expr": "llamacpp:predicted_tokens_seconds{job=\"inference-engine-cpu\"}",
+          "expr": "sum(rate(litellm_input_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
+          "legendFormat": "GPU",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "Prompt tokens per second the GPU reads before it can answer. Agent requests carry ~100k tokens of context, so this is most of the GPU's work."
     },
     {
       "id": 3,
       "type": "stat",
-      "title": "GPU chat time to first token, p50 (s)",
+      "title": "GPU request time, median (s)",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -83,17 +106,29 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "decimals": 1
+          "decimals": 1,
+          "noValue": "no requests"
         },
         "overrides": []
       },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(litellm_llm_api_time_to_first_token_metric_bucket[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1)))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(litellm_llm_api_latency_metric_bucket[15m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1)))",
+          "legendFormat": "GPU",
           "refId": "A"
         }
       ],
-      "description": "Measured at the model gateway (LiteLLM), so it works for any GPU chat engine."
+      "description": "Median time from the gateway sending a request to the GPU engine until it finishes: waiting in the one-at-a-time queue, reading the prompt and generating the answer."
     },
     {
       "id": 4,
@@ -112,18 +147,29 @@
         },
         "overrides": []
       },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
       "targets": [
         {
           "expr": "litellm_in_flight_requests",
-          "legendFormat": "Gateway (all chat)",
+          "legendFormat": "gateway",
           "refId": "A"
         },
         {
-          "expr": "llamacpp:requests_processing{job=\"inference-engine-cpu\"}",
-          "legendFormat": "CPU fallback",
+          "expr": "llamacpp:requests_deferred{job=\"inference-engine-cpu\"}",
+          "legendFormat": "CPU waiting",
           "refId": "B"
         }
-      ]
+      ],
+      "description": "Requests the model gateway is handling. The GPU serves one at a time and the rest wait in its first-come-first-served queue (up to 64); the CPU fallback also serves one at a time."
     },
     {
       "id": 5,
@@ -170,7 +216,7 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Token throughput (tok/s)",
+      "title": "Generated tokens per second",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -179,7 +225,12 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none"
+          "unit": "suffix: tok/s",
+          "decimals": 1,
+          "custom": {
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
         },
         "overrides": []
       },
@@ -187,25 +238,29 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
         }
       },
       "targets": [
         {
           "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
-          "legendFormat": "GPU output (gateway)",
+          "legendFormat": "GPU",
           "refId": "A"
         },
         {
-          "expr": "llamacpp:predicted_tokens_seconds{job=\"inference-engine-cpu\"}",
-          "legendFormat": "CPU fallback generation",
+          "expr": "rate(llamacpp:tokens_predicted_total{job=\"inference-engine-cpu\"}[5m])",
+          "legendFormat": "CPU fallback",
           "refId": "B"
         }
-      ]
+      ],
+      "description": "Output tokens per second, 5 minute rate. GPU from the gateway, CPU from llama.cpp."
     },
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Tokens generated (5m rate)",
+      "title": "Prompt tokens read per second",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -214,7 +269,12 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none"
+          "unit": "suffix: tok/s",
+          "decimals": 1,
+          "custom": {
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
         },
         "overrides": []
       },
@@ -222,20 +282,112 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
         }
       },
       "targets": [
         {
-          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
-          "legendFormat": "GPU (gateway)",
+          "expr": "sum(rate(litellm_input_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1))",
+          "legendFormat": "GPU",
           "refId": "A"
         },
         {
-          "expr": "rate(llamacpp:tokens_predicted_total{job=\"inference-engine-cpu\"}[5m])",
+          "expr": "rate(llamacpp:prompt_tokens_total{job=\"inference-engine-cpu\"}[5m])",
           "legendFormat": "CPU fallback",
           "refId": "B"
         }
-      ]
+      ],
+      "description": "Prompt tokens per second, 5 minute rate."
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "GPU request time (s)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 1,
+          "custom": {
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(litellm_llm_api_latency_metric_bucket[15m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1)))",
+          "legendFormat": "median",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(litellm_llm_api_latency_metric_bucket[15m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://inference-engine-gpu:8080/v1\"}) * 0 + 1)))",
+          "legendFormat": "slowest 5%",
+          "refId": "B"
+        }
+      ],
+      "description": "Gateway to GPU engine and back, including the wait in the queue."
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "CPU fallbacks per hour",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "custom": {
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (exception_class) (increase(litellm_deployment_successful_fallbacks_total{requested_model=\"local-chat\"}[1h]))",
+          "legendFormat": "{{exception_class}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(litellm_deployment_failed_fallbacks_total{requested_model=\"local-chat\"}[1h]))",
+          "legendFormat": "fallback failed",
+          "refId": "B"
+        }
+      ],
+      "description": "local-chat requests moved to the CPU, by the GPU error that caused it. A busy GPU queue no longer moves a request (it waits its turn), so RateLimitError should stay at zero."
     },
     {
       "id": 8,
@@ -245,7 +397,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 18
+        "y": 26
       },
       "fieldConfig": {
         "defaults": {
@@ -275,7 +427,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 18
+        "y": 26
       },
       "fieldConfig": {
         "defaults": {
@@ -303,7 +455,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 26
+        "y": 34
       },
       "fieldConfig": {
         "defaults": {
@@ -331,7 +483,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 26
+        "y": 34
       },
       "fieldConfig": {
         "defaults": {
