@@ -19,6 +19,7 @@ every few minutes (`ordo deploy --install-schedule` registers it). Each run is o
      - no GPU lease is held
      - no one-off job container of the project is running (an eval in progress)
      - the default agent is idle: no turn in flight and no `hermes` CLI session running in it
+       (the agent is drained when this is the only gate left; see below)
   3. fast-forward the checkout, `ordo build --all`, check the gates again (a build takes minutes),
      then `ordo apply`, which ends with `ordo doctor`
   4. record the result in <out>/deploy/state.json and post it to the operator's Discord channel
@@ -26,6 +27,15 @@ every few minutes (`ordo deploy --install-schedule` registers it). Each run is o
 A failed deploy is reported once and not retried: the fix is a new commit on main (a revert, or a
 fix), which the next run deploys. A deploy that has waited an hour is reported once, with the gate
 that holds it.
+
+The agent is busy around the clock (kanban workers, crons, chat), so waiting for it to be idle by
+chance can starve deploys for days (2026-10-19 to 10-30: 12 merged pull requests never deployed). A
+deploy that has waited DRAIN_AFTER_SECONDS with the agent as the only gate drains it: `hermes pause`
+holds NEW work (cron, kanban dispatch, new chat turns) while in-flight work finishes, the deploy runs
+once the agent is idle, and `hermes resume` lifts the pause. Only a pause this command set is ever
+lifted (its reason starts with DRAIN_REASON); an operator's own pause is left alone and makes the deploy
+wait. A drain that has not emptied the agent within DRAIN_MAX_SECONDS is lifted and reported, and the
+deploy goes back to waiting for an idle agent.
 
 The second gate check narrows the window in which a turn can start before `ordo apply` recreates
 the agent to the length of the apply itself (render and recreate; the builds are already done).
@@ -63,6 +73,13 @@ WAIT_REPORT_SECONDS = 3600
 APPLY_REFUSED = 2
 SCHEDULED_TASK_NAME = "Ordo deploy"
 SCHEDULE_MINUTES = 2
+# Draining the agent for a deploy: started once a deploy has waited this long with a busy agent as the
+# only gate, given up (pause lifted, reported) when the agent is still busy this long after.
+DRAIN_AFTER_SECONDS = 1800
+DRAIN_MAX_SECONDS = 7200
+# The reason the drain's `hermes pause` carries: how a pause this command set is told from an operator's.
+DRAIN_REASON = "ordo deploy draining"
+AGENT_BUSY = "the agent is busy"
 # What `waiting` holds when origin/main itself could not be fetched (no commit to name).
 UNFETCHED = "origin/main (not fetched)"
 # Changes made on the checkout outside a pull request are saved as one once they have been unchanged
@@ -100,6 +117,22 @@ print(json.dumps({"active_agents": state.get("active_agents"), "cli_sessions": s
 """
 
 
+# Run inside the agent container: the reason of Hermes' global pause (`hermes pause`, the ESTOP
+# sentinel in $HERMES_HOME, agent/estop.py), "" when paused without a readable reason, null when not paused.
+_AGENT_PAUSE_SCRIPT = r"""
+import json, os
+path = os.path.join(os.environ.get("HERMES_HOME") or "/opt/data", "ESTOP")
+if not os.path.exists(path):
+    print(json.dumps({"paused": False, "reason": None}))
+else:
+    try:
+        reason = json.load(open(path, encoding="utf-8-sig")).get("reason") or ""
+    except (OSError, ValueError, AttributeError):
+        reason = ""
+    print(json.dumps({"paused": True, "reason": reason}))
+"""
+
+
 class GateUnknown(Exception):
     """A gate could not be read. The pass waits, exactly as if the gate held."""
 
@@ -114,6 +147,9 @@ class Host(Protocol):
     def gpu_leased(self) -> bool: ...                 # GateUnknown when it cannot be read
     def running_jobs(self) -> list[str]: ...          # GateUnknown when it cannot be read
     def agent_busy(self) -> str | None: ...           # why the agent is busy; GateUnknown when unreadable
+    def agent_pause(self) -> str | None: ...          # the agent's pause reason ("" = none given); None = not paused
+    def pause_agent(self, reason: str) -> None: ...   # `hermes pause`: hold new work, in-flight work finishes
+    def resume_agent(self) -> None: ...               # `hermes resume`
     def build(self, log: Path) -> int: ...
     def apply(self, log: Path) -> int: ...
     def notify(self, text: str) -> None: ...
@@ -142,6 +178,10 @@ class State:
     waiting_reported: bool = False
     waiting_reason: str = ""
     deploying_from: str = ""     # the head before the fast-forward of the deploy in progress
+    # The agent drained for a deploy: since when (0 = not draining), and the commit a drain gave up on
+    # (it is not drained for again; a newer commit is).
+    drain_since: float = 0.0
+    drain_abandoned: str = ""
     # Changes found on the checkout outside a pull request: their tree and since when unchanged, and
     # the pull request that holds them (its number, branch and head commit, and the tree it holds).
     local_tree: str = ""
@@ -187,7 +227,7 @@ def blocking_gate(host: Host) -> str | None:
             return f"a one-off job is running ({', '.join(jobs)})"
         busy = host.agent_busy()
         if busy:
-            return f"the agent is busy ({busy})"
+            return f"{AGENT_BUSY} ({busy})"
     except GateUnknown as e:
         return f"a gate could not be read: {e}"
     return None
@@ -353,6 +393,59 @@ def _open_rescue_pr(host: Host, state: State, state_path: Path, target: str, *, 
     return _holding(number, state.rescue_branch)
 
 
+def _drain(host: Host, state: State, state_path: Path, target: str, reason: str, now: float) -> str:
+    """Pause the agent's new work when it is the only thing holding a long-waiting deploy, and give the
+    drain up when it takes too long. Returns the reason the deploy waits, with the drain's part in it."""
+    agent_only = reason.startswith(AGENT_BUSY)
+    if state.drain_since:
+        if now - state.drain_since < DRAIN_MAX_SECONDS:
+            return f"{reason}; draining since {_clock(state.drain_since)}: new work is paused until the deploy runs"
+        _release_drain(host, state, state_path)
+        state.drain_abandoned = target
+        state.save(state_path)
+        _report(host, f"Deploy of `{short(target)}` gave up draining the agent after "
+                      f"{DRAIN_MAX_SECONDS // 60} min ({reason}); new work is resumed and the deploy waits "
+                      f"for an idle agent.")
+        return reason
+    waited = now - state.waiting_since if state.waiting == target else 0.0
+    if not agent_only or waited < DRAIN_AFTER_SECONDS or state.drain_abandoned == target:
+        return reason
+    try:
+        paused = host.agent_pause()
+        if paused is not None:
+            # Someone else's pause: new work is already held, and it is theirs to lift.
+            return f"{reason}; the agent is paused by someone else ({paused or 'no reason given'})"
+        host.pause_agent(f"{DRAIN_REASON} for {short(target)}")
+    except GateUnknown as e:
+        return f"{reason}; the agent could not be paused for a drain: {e}"
+    state.drain_since = now
+    state.save(state_path)
+    _report(host, f"Deploy of `{short(target)}` has waited {int(waited // 60)} min on a busy agent: new cron, "
+                  f"kanban and chat work is paused until in-flight work finishes and the deploy runs.")
+    return f"{reason}; draining since {_clock(now)}: new work is paused until the deploy runs"
+
+
+def _release_drain(host: Host, state: State, state_path: Path) -> None:
+    """Lift the drain's pause, and only the drain's: a pause someone set or replaced since is left.
+    A pause that cannot be read or lifted keeps the drain recorded, so the next pass tries again."""
+    if not state.drain_since:
+        return
+    try:
+        paused = host.agent_pause()
+        if paused is not None and paused.startswith(DRAIN_REASON):
+            host.resume_agent()
+    except GateUnknown as e:
+        print(f"could not lift the drain's pause (tried again next pass): {e}", file=sys.stderr)
+        return
+    state.drain_since = 0.0
+    state.save(state_path)
+    print("the drain's pause is lifted: new agent work resumes")
+
+
+def _clock(epoch: float) -> str:
+    return dt.datetime.fromtimestamp(epoch, dt.UTC).strftime("%H:%M UTC")
+
+
 def _wait(host: Host, state: State, state_path: Path, target: str, reason: str, now: float) -> int:
     if state.waiting != target:
         state.waiting, state.waiting_since, state.waiting_reported = target, now, False
@@ -375,8 +468,10 @@ def _wait(host: Host, state: State, state_path: Path, target: str, reason: str, 
 
 def _finish(host: Host, state: State, state_path: Path, target: str, *, ok: bool, result: str,
             log: Path) -> int:
+    _release_drain(host, state, state_path)
     state.waiting, state.waiting_since, state.waiting_reported, state.waiting_reason = "", 0.0, False, ""
     state.deploying_from = ""
+    state.drain_abandoned = ""
     state.last_result, state.last_log = result, str(log)
     if ok:
         state.deployed, state.failed = target, ""
@@ -414,6 +509,7 @@ def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
     except GateUnknown as e:
         return _wait(host, state, state_path, UNFETCHED, f"origin/{BRANCH} could not be fetched: {e}", now)
     if target in (state.deployed, state.failed):
+        _release_drain(host, state, state_path)
         if state.waiting:   # a wait (an unreachable remote, say) that resolved into nothing to do
             state.waiting, state.waiting_since, state.waiting_reported, state.waiting_reason = "", 0.0, False, ""
             state.save(state_path)
@@ -433,7 +529,9 @@ def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
         problem = f"the checkout could not be read: {e}"
     problem = problem or blocking_gate(host)
     if problem:
-        return _wait(host, state, state_path, target, problem, now)
+        if state.waiting != target:
+            state.waiting, state.waiting_since, state.waiting_reported, state.waiting_reason = target, now, False, ""
+        return _wait(host, state, state_path, target, _drain(host, state, state_path, target, problem, now), now)
 
     stamp = dt.datetime.fromtimestamp(now, dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     log = deploy_dir / "logs" / f"{stamp}-{short(target)}.log"
@@ -691,6 +789,37 @@ class RealHost:
         if sessions:
             reasons.append(f"CLI session(s): {'; '.join(sessions)}")
         return ", ".join(reasons) or None
+
+    def _agent_container(self) -> str | None:
+        try:
+            return bringup.find_running_container(self.project, AGENT_SERVICE)
+        except bringup.LeaseUnknown as e:
+            raise GateUnknown(str(e)) from e
+
+    def agent_pause(self) -> str | None:
+        container = self._agent_container()
+        if container is None:
+            return None
+        proc = self._docker(["exec", container, "python3", "-c", _AGENT_PAUSE_SCRIPT])
+        try:
+            report = json.loads(proc.stdout)
+            paused, reason = bool(report["paused"]), report["reason"]
+        except (ValueError, KeyError, TypeError) as e:
+            raise GateUnknown(f"the agent's pause is unreadable: {proc.stdout.strip()[:200]}") from e
+        return str(reason or "") if paused else None
+
+    def pause_agent(self, reason: str) -> None:
+        container = self._agent_container()
+        if container is None:
+            raise GateUnknown("the agent container is not running")
+        # As the hermes user, so the sentinel belongs to the agent like one an operator's `hermes pause` writes.
+        self._docker(["exec", "--user", "hermes", container, "hermes", "pause", "--reason", reason])
+
+    def resume_agent(self) -> None:
+        container = self._agent_container()
+        if container is None:
+            raise GateUnknown("the agent container is not running")
+        self._docker(["exec", "--user", "hermes", container, "hermes", "resume"])
 
     def _docker(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         try:

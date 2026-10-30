@@ -46,6 +46,10 @@ class FakeHost:
         self.pushes: list[tuple[str, str, str]] = []
         self.saved = 0
         self.open_pr_fails = False
+        # The agent's global pause: its reason ("" = none given), None when not paused.
+        self.paused: str | None = None
+        self.pause_fails = False
+        self.idle_when_paused = False      # the agent finishes its in-flight work once new work is held
 
     def fetch(self) -> str:
         return self.target
@@ -76,7 +80,22 @@ class FakeHost:
         return self.jobs
 
     def agent_busy(self) -> str | None:
+        if self.idle_when_paused and self.paused is not None:
+            return None
         return self.busy
+
+    def agent_pause(self) -> str | None:
+        return self.paused
+
+    def pause_agent(self, reason: str) -> None:
+        if self.pause_fails:
+            raise deploy.GateUnknown("docker exec: the agent is restarting")
+        self.calls.append("pause")
+        self.paused = reason
+
+    def resume_agent(self) -> None:
+        self.calls.append("resume")
+        self.paused = None
 
     def build(self, log: Path) -> int:
         self.calls.append("build")
@@ -801,3 +820,179 @@ def test_a_conflict_is_tried_again_once_origin_main_moves(tmp_path):
     host.target, host.replayed = "c" * 40, "r1"    # the conflicting commit reverted on main
     deploy.run_once(host, out=tmp_path, now=SETTLED + 120)
     assert len(host.pushes) == 1 and list(host.prs) == [500]
+
+
+# --------------------------------------------------------------------------- #
+# Draining a busy agent for a deploy.
+# --------------------------------------------------------------------------- #
+
+BUSY = "1 turn(s) in flight"
+T0 = 1000.0
+DRAIN_AT = T0 + deploy.DRAIN_AFTER_SECONDS
+
+
+def _busy_host() -> FakeHost:
+    host = FakeHost()
+    host.busy = BUSY
+    return host
+
+
+def test_a_busy_agent_is_not_drained_before_the_deploy_has_waited_long_enough(tmp_path):
+    host = _busy_host()
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT - 1)
+    assert "pause" not in host.calls and host.paused is None
+    assert state(tmp_path)["drain_since"] == 0.0
+
+
+def test_a_deploy_held_only_by_a_busy_agent_drains_it_once(tmp_path, capsys):
+    host = _busy_host()
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT + 120)
+    assert host.calls.count("pause") == 1
+    assert host.paused == f"{deploy.DRAIN_REASON} for {NEW[:12]}"
+    assert state(tmp_path)["drain_since"] == DRAIN_AT
+    assert host.notes == [f"Deploy of `{NEW[:12]}` has waited 30 min on a busy agent: new cron, kanban and chat "
+                          f"work is paused until in-flight work finishes and the deploy runs."]
+    assert "new work is paused until the deploy runs" in capsys.readouterr().out
+
+
+def test_a_drained_agent_is_deployed_and_resumed(tmp_path):
+    host = _busy_host()
+    host.idle_when_paused = True
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)          # pauses; the in-flight turn ends
+    assert deploy.run_once(host, out=tmp_path, now=DRAIN_AT + 120) == 0
+    assert host.calls == ["pause", "ff", "build", "apply", "resume"]
+    assert host.paused is None
+    saved = state(tmp_path)
+    assert saved["deployed"] == NEW and saved["drain_since"] == 0.0
+    assert host.notes[-1] == f"Deployed `{NEW[:12]}`: {OLD[:12]} -> {NEW[:12]}."
+
+
+def test_a_failed_deploy_still_resumes_the_agent(tmp_path):
+    host = _busy_host()
+    host.idle_when_paused = True
+    host.apply_code = 1
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    assert deploy.run_once(host, out=tmp_path, now=DRAIN_AT + 120) == 1
+    assert host.calls[-1] == "resume" and host.paused is None
+    assert state(tmp_path)["failed"] == NEW
+
+
+def test_an_operators_pause_is_never_lifted_by_a_deploy(tmp_path, capsys):
+    host = _busy_host()
+    host.paused = "maintenance"
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    assert "pause" not in host.calls and host.paused == "maintenance"
+    assert "paused by someone else (maintenance)" in capsys.readouterr().out
+    host.busy = None
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT + 120)
+    assert "resume" not in host.calls and host.paused == "maintenance"
+    assert state(tmp_path)["deployed"] == NEW
+
+
+def test_a_pause_replaced_during_the_drain_is_left_in_place(tmp_path):
+    host = _busy_host()
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    host.paused = "operator: hold everything"
+    host.busy = None
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT + 120)
+    assert "resume" not in host.calls and host.paused == "operator: hold everything"
+    assert state(tmp_path)["drain_since"] == 0.0
+
+
+def test_a_drain_that_takes_too_long_is_given_up_and_not_retried_for_that_commit(tmp_path):
+    host = _busy_host()
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT + deploy.DRAIN_MAX_SECONDS)
+    assert host.calls == ["pause", "resume"] and host.paused is None
+    saved = state(tmp_path)
+    assert saved["drain_since"] == 0.0 and saved["drain_abandoned"] == NEW
+    assert any(note.startswith(f"Deploy of `{NEW[:12]}` gave up draining the agent after 120 min") for note in host.notes)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT + 2 * deploy.DRAIN_MAX_SECONDS)
+    assert host.calls == ["pause", "resume"]
+
+
+def test_a_newer_commit_is_drained_for_after_a_drain_was_given_up(tmp_path):
+    host = _busy_host()
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT + deploy.DRAIN_MAX_SECONDS)
+    host.target = "c" * 40
+    later = DRAIN_AT + deploy.DRAIN_MAX_SECONDS + 60
+    deploy.run_once(host, out=tmp_path, now=later)
+    deploy.run_once(host, out=tmp_path, now=later + deploy.DRAIN_AFTER_SECONDS)
+    assert host.calls == ["pause", "resume", "pause"]
+
+
+@pytest.mark.parametrize("setup", [
+    lambda h: setattr(h, "leased", True),
+    lambda h: setattr(h, "jobs", ["ordo-evals-run-1"]),
+    lambda h: setattr(h, "dirty", ["ordo/cli.py"]),
+])
+def test_the_agent_is_not_drained_while_another_gate_holds(tmp_path, setup):
+    host = _busy_host()
+    setup(host)
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    assert "pause" not in host.calls
+
+
+def test_a_pause_that_cannot_be_set_waits_and_is_tried_again(tmp_path, capsys):
+    host = _busy_host()
+    host.pause_fails = True
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    assert state(tmp_path)["drain_since"] == 0.0
+    assert "could not be paused for a drain" in capsys.readouterr().out
+    host.pause_fails = False
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT + 120)
+    assert host.calls == ["pause"]
+
+
+def test_a_drain_is_lifted_when_there_is_nothing_left_to_deploy(tmp_path):
+    host = _busy_host()
+    deploy.run_once(host, out=tmp_path, now=T0)
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT)
+    host.target = OLD                       # main reverted to what the stack already runs
+    saved = state(tmp_path)
+    saved["deployed"] = OLD
+    (tmp_path / "deploy" / "state.json").write_text(json.dumps(saved), encoding="utf-8")
+    deploy.run_once(host, out=tmp_path, now=DRAIN_AT + 120)
+    assert host.calls == ["pause", "resume"] and host.paused is None
+
+
+@pytest.mark.parametrize("stdout, expected", [
+    (json.dumps({"paused": False, "reason": None}), None),
+    (json.dumps({"paused": True, "reason": "ordo deploy draining for abc"}), "ordo deploy draining for abc"),
+    (json.dumps({"paused": True, "reason": ""}), ""),
+])
+def test_the_real_host_reads_the_agents_pause(monkeypatch, stdout, expected):
+    host = _probe_host(monkeypatch, stdout)
+    assert host.agent_pause() == expected
+
+
+def test_an_unreadable_pause_fails_closed(monkeypatch):
+    host = _probe_host(monkeypatch, "not json")
+    with pytest.raises(deploy.GateUnknown):
+        host.agent_pause()
+
+
+def test_the_real_host_pauses_and_resumes_as_the_hermes_user(monkeypatch):
+    host = _probe_host(monkeypatch, "")
+    seen: list[list[str]] = []
+    monkeypatch.setattr(host, "_docker", lambda args: seen.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+    host.pause_agent("ordo deploy draining for abc")
+    host.resume_agent()
+    assert seen == [["exec", "--user", "hermes", "ordo-agent-1", "hermes", "pause", "--reason", "ordo deploy draining for abc"],
+                    ["exec", "--user", "hermes", "ordo-agent-1", "hermes", "resume"]]
+
+
+def test_the_pause_probe_script_parses():
+    compile(deploy._AGENT_PAUSE_SCRIPT, "<agent-pause>", "exec")
