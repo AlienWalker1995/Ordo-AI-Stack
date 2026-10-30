@@ -308,13 +308,15 @@ def container_problems(rows: list[dict[str, Any]]) -> list[str]:
 
 
 def container_health_check(project: str, *, settle_seconds: float = CONTAINER_SETTLE_SECONDS,
-                           read: Callable[[str], list[dict[str, Any]]] = read_container_states,
+                           read: Callable[[str], list[dict[str, Any]]] | None = None,
                            sleep: Callable[[float], None] = time.sleep,
                            clock: Callable[[], float] = time.monotonic) -> tuple[bool, str]:
     """(ok, one-line report) on every container's state and health.
 
     Waits up to `settle_seconds` while a healthcheck is still in its start period, so the check that
     ends an apply judges the services it just recreated instead of their first seconds."""
+    # Looked up at call time (not a default argument) so a test can replace the module's reader.
+    read = read or read_container_states
     deadline = clock() + settle_seconds
     try:
         rows = read(project)
