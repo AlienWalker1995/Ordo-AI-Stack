@@ -127,3 +127,18 @@ def pytest_runtest_makereport(item, call):
         reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
         report.outcome = "failed"
         report.longrepr = f"ORDO_REQUIRE_DOCKER=1 but this docker test skipped: {reason}"
+
+
+@pytest.fixture(autouse=True)
+def _doctor_judges_no_live_containers(request, monkeypatch):
+    """`ordo doctor` judges every container of the project (ordo/host/doctor.py container_health_check).
+    A test that runs doctor must judge a stub, never this machine's live stack: with a real daemon it
+    passed on a clean CI runner and failed on any host with an unhealthy container (2026-10-30).
+    Tests marked `docker` exercise the real daemon on purpose and keep it."""
+    if request.node.get_closest_marker("docker"):
+        return
+    try:
+        from ordo.host import doctor
+    except ImportError:
+        return
+    monkeypatch.setattr(doctor, "read_container_states", lambda project: [])
