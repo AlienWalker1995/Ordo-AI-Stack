@@ -17,6 +17,7 @@ import yaml
 from . import backup_policy
 from .bind_configs import parse_config_mounts
 from .buildspec import BuildSpec
+from .engines import Serves
 from .gpu import GpuArbitration
 from .hardware import HardwareProfile
 from .secret_files import SecretFileRef, parse_secret_files
@@ -192,6 +193,9 @@ class PluginService:
     # service). A one-shot init step declares `on-failure`, so a transient error is retried but a
     # clean exit stays exited instead of being restarted forever (model-gateway-keys' policy).
     restart: str = ""
+    # The model this service serves, if any (ordo/render/engines.py). The render stamps it on the
+    # service as `ordo.serves.*` labels; the registry, metrics and dashboard read those labels.
+    serves: Serves | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PluginService:
@@ -240,6 +244,7 @@ class PluginService:
             ulimits=dict(d.get("ulimits", {}) or {}),
             resources={str(k): str(v) for k, v in (d.get("resources", {}) or {}).items()},
             restart=_restart_policy(name, d.get("restart", "")),
+            serves=Serves.from_manifest(d.get("serves"), where),
         )
 
 

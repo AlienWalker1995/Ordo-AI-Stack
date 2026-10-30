@@ -14,28 +14,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from . import engines
 from .gpu import GpuClaim
 from .models_volume import CHAT_SERVICE, NeededFile, required_model_files
+from .stack import expand_env
 
-# The compose services that serve a model, and the id clients address it by. The chat ids are the
-# model-gateway's stable aliases (`local-chat`, `local-chat-cpu`, `local-embed`).
-SERVED_MODEL_IDS: dict[str, tuple[str, str]] = {
-    # service: (model id, kind)
-    CHAT_SERVICE: ("local-chat", "chat"),
-    "inference-engine-cpu": ("local-chat-cpu", "chat"),
-    "inference-engine-embed": ("local-embed", "embedding"),
-    "comfyui": ("comfyui", "comfyui"),
-    "stt": ("voice-stt", "stt"),
-    "tts": ("voice-tts", "tts"),
-}
+# ComfyUI-style services load whichever checkpoints a workflow names; every other one loads one model.
+_MULTI_MODEL_KINDS = frozenset({"image"})
 
-# A service whose model is not a file in the models volume names it in its environment instead.
-_MODEL_ENV_KEYS: dict[str, str] = {
-    "stt": "WHISPER__MODEL",   # the Hugging Face repo faster-whisper loads (services/voice)
-}
-
-# ComfyUI loads whichever checkpoints a workflow names; every other service loads one model.
-_MULTI_MODEL_SERVICES = frozenset({"comfyui"})
+# `--ctx-size N` (llama.cpp's spelling) in a service's command is its context window.
+_CTX_FLAG = "--ctx-size"
 
 
 def model_files(doc: dict, env: Mapping[str, str]) -> list[NeededFile]:
@@ -61,51 +49,57 @@ def _ctx(value: str | None) -> int | None:
         return None
 
 
-def _source(service: str, spec: dict, doc: dict, env: Mapping[str, str]) -> dict[str, str]:
+def _source(service: str, spec: dict, served: Mapping[str, str], doc: dict, env: Mapping[str, str]) -> dict[str, str]:
     if service == CHAT_SERVICE:
         return {"file": env["LLAMACPP_MODEL"]} if env.get("LLAMACPP_MODEL") else {}
-    env_key = _MODEL_ENV_KEYS.get(service)
-    if env_key:
-        value = (spec.get("environment") or {}).get(env_key)
+    if served["model_env"]:   # a model named in the service's environment (a repo id), not a file
+        value = (spec.get("environment") or {}).get(served["model_env"])
         return {"file": str(value)} if value else {}
     loaded = [f for f in required_model_files(doc, env, [service]) if not f.optional]
     return {"file": loaded[0].file} if loaded else {}
 
 
-def _config(service: str, env: Mapping[str, str]) -> dict[str, Any]:
+def _config(service: str, spec: dict, env: Mapping[str, str]) -> dict[str, Any]:
     if service == CHAT_SERVICE:
         config: dict[str, Any] = {"ctx": _ctx(env.get("LLAMACPP_CTX_SIZE"))}
         if env.get("LLAMACPP_MMPROJ"):
             config["mmproj"] = env["LLAMACPP_MMPROJ"]
         return config
-    if service == "inference-engine-cpu":
-        return {"ctx": _ctx(env.get("LLAMACPP_CPU_CTX"))}
+    command = spec.get("command") or []
+    args = [expand_env(str(arg), dict(env)) for arg in (command.split() if isinstance(command, str) else command)]
+    if _CTX_FLAG in args[:-1]:
+        return {"ctx": _ctx(args[args.index(_CTX_FLAG) + 1])}
     return {}
 
 
 def served_models(doc: dict, env: Mapping[str, str], claims: Sequence[GpuClaim]) -> dict[str, dict[str, Any]]:
-    """One record per model the rendered stack serves, keyed by model id.
+    """One record per model the rendered stack serves, keyed by model id: every service whose
+    labels declare one (ordo/render/engines.py), so a new engine needs no change here.
 
     The record shape is the one `/registry/models` has always answered (id, kind, service,
     runtime, source.file, gpu_uuid, enabled, config.ctx/mmproj, est_vram_gb), because the
-    dashboard and Hermes read it. A service the render does not run has no record."""
+    dashboard and Hermes read it, plus the engine's device, metrics reader and fallback target.
+    A service the render does not run has no record."""
     services = doc.get("services") or {}
     vram_by_service = {c.service: c.vram_gb for c in claims}
     records: dict[str, dict[str, Any]] = {}
-    for service, (model_id, kind) in SERVED_MODEL_IDS.items():
-        spec = services.get(service)
-        if spec is None:
+    for service, spec in services.items():
+        served = engines.read(spec.get("labels"))
+        if served is None:
             continue
-        records[model_id] = {
-            "id": model_id,
-            "kind": kind,
+        records[served["model"]] = {
+            "id": served["model"],
+            "kind": served["kind"],
             "service": service,
-            "runtime": "multi-model" if service in _MULTI_MODEL_SERVICES else "single-model",
-            "source": _source(service, spec, doc, env),
+            "runtime": "multi-model" if served["kind"] in _MULTI_MODEL_KINDS else "single-model",
+            "source": _source(service, spec, served, doc, env),
             "gpu_uuid": pinned_gpu(spec),
             "enabled": True,
-            "config": _config(service, env),
+            "config": _config(service, spec, env),
             "est_vram_gb": vram_by_service.get(service, 0.0),
+            "device": served["device"],
+            "metrics": {"format": served["metrics"], "path": served["metrics_path"]},
+            "fallback_for": served["fallback_for"] or None,
         }
     return records
 

@@ -17,6 +17,11 @@ env:
 # that would ship a guaranteed crash).
 services:
   - name: stt
+    serves:
+      model: voice-stt
+      kind: stt
+      metrics: none
+      model_env: WHISPER__MODEL
     # Speech-to-text (faster-whisper, OpenAI-compatible /v1/audio/transcriptions on :8000).
     # sha-pinned for reproducibility. CTranslate2 int8 has no Blackwell kernels → Pascal 1070.
     image: fedirz/faster-whisper-server@sha256:0b64050ad0b9244745746b652473ee42a8d5454d501877a252c3e65f631ffc99
@@ -56,6 +61,10 @@ services:
       retries: 5
       start_period: 90s
   - name: tts
+    serves:
+      model: voice-tts
+      kind: tts
+      metrics: none
     # Text-to-speech: Kokoro-82M behind kokoro-fastapi (OpenAI-compatible /v1/audio/speech on
     # :8880, raw `pcm` included, which Hermes streams sentence by sentence). The lightest and
     # fastest engine benchmarked on the 1070 (2026-10-16): ~0.8 GB of VRAM, first audio of a

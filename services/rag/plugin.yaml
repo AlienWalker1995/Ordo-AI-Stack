@@ -30,6 +30,10 @@ services:
       timeout: 10s
       retries: 3
   - name: inference-engine-embed
+    serves:
+      model: local-embed
+      kind: embedding
+      metrics: none
     # Embedding server — same upstream llama.cpp build as the chat backend, run in --embeddings mode
     # on EmbeddingGemma 2 (text). rag-ingestion + the qdrant-rag MCP both embed against THIS so ingest and
     # query share the same 768-dim space. Stock upstream server image (Docker pulls it).
