@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from pathlib import Path
@@ -34,20 +35,27 @@ LLAMACPP_EMBED_URL = os.environ.get("LLAMACPP_EMBED_URL", "http://inference-engi
 # The Grafana dashboard the Performance page embeds (monitoring/grafana/dashboards), kiosk mode.
 GRAFANA_EMBED_PATH = "/grafana/d/ordo-llm-gpu/ordo-performance?orgId=1&kiosk&theme=dark&refresh=10s"
 
-# Tokens generated per second by each chat server, one series per `job` label. A rate over a
-# counter rather than an instantaneous gauge, because a gauge goes stale when a server is evicted
-# and a sparkline of stale samples draws a flat line that never happened.
-# GPU: the gateway's output-token counter for the deployment at inference-engine-gpu:8080, the same expression
-# as the Grafana GPU panels. It holds for either engine there; llama.cpp's own counter does not,
-# because NInfer serves no /metrics. Relabelled job="inference-engine-gpu" so both series parse alike.
-# CPU: the llama.cpp CPU fallback's own counter.
-_GPU_TOKEN_RATE_QUERY = (
-    'label_replace(sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() '
-    '(max by (model_id) (litellm_deployment_latency_per_output_token_count'
-    '{api_base="http://inference-engine-gpu:8080/v1"}) * 0 + 1)), "job", "inference-engine-gpu", "", "")'
-)
-_CPU_TOKEN_RATE_QUERY = 'sum by (job) (rate(llamacpp:tokens_predicted_total{job="inference-engine-cpu"}[5m]))'
-_TOKEN_RATE_QUERY = f"{_GPU_TOKEN_RATE_QUERY} or {_CPU_TOKEN_RATE_QUERY}"
+# Model-engine figures, from ops-controller's ordo_engine_* family (ordo/control/engine_metrics.py):
+# every engine the registry lists, read the engine's own way, labelled by `engine` (its service).
+# Nothing here names an engine. Speeds divide tokens by the time spent on them, so a queue does not
+# read as a slow model; prompt work excludes prefix-cache hits.
+_ENGINE_RATE_QUERIES = {
+    # tokens generated per second now (5 minute rate)
+    "output_tps": "sum by (engine) (rate(ordo_engine_output_tokens_total[5m]))",
+    # tokens per second while generating, over the last hour
+    "generation_tps": ("sum by (engine) (increase(ordo_engine_output_tokens_total[1h]))"
+                       " / sum by (engine) (increase(ordo_engine_output_seconds_total[1h]))"),
+    # prompt tokens per second while computing prompts, over the last hour
+    "prompt_tps": ("sum by (engine) (increase(ordo_engine_prompt_tokens_processed_total[1h]))"
+                   " / sum by (engine) (increase(ordo_engine_prompt_seconds_total[1h]))"),
+    # share of prompt tokens reused from the prefix cache, over the last hour
+    "cache_reuse": ("sum by (engine) (increase(ordo_engine_prompt_tokens_cached_total[1h]))"
+                    " / (sum by (engine) (increase(ordo_engine_prompt_tokens_cached_total[1h]))"
+                    " + sum by (engine) (increase(ordo_engine_prompt_tokens_processed_total[1h])))"),
+    "waiting": "sum by (engine) (ordo_engine_requests_waiting)",
+}
+# The history the Overview draws: tokens generated per second, one series per engine.
+_ENGINE_OUTPUT_SERIES_QUERY = "sum by (engine) (rate(ordo_engine_output_tokens_total[5m]))"
 
 # A switch is one ops-controller call that renders and recreates the changed set in one compose
 # call (600s at most there, DockerBackend.recreate_services), so this outlasts it.
@@ -208,12 +216,36 @@ def _status_line(status_gpu: dict | None, attention: list[dict], host_containers
 # overview + activity
 # ---------------------------------------------------------------------------------------------
 
+async def _engine_rates() -> dict[str, dict] | None:
+    """engine -> {output_tps, generation_tps, prompt_tps, cache_reuse, waiting}, from Prometheus.
+    None when Prometheus cannot be read (the monitoring profile is off, or it is down); a figure
+    with no samples yet (an engine idle for the window) is absent from its engine's dict."""
+    names = list(_ENGINE_RATE_QUERIES)
+    answers = await asyncio.gather(*(
+        _get_json(f"{PROMETHEUS_URL}/api/v1/query?{urlencode({'query': _ENGINE_RATE_QUERIES[n]})}",
+                  timeout=10.0, dep="PROMETHEUS")
+        for n in names))
+    if any(not a or a.get("status") != "success" for a in answers):
+        return None
+    rates: dict[str, dict] = {}
+    for name, answer in zip(names, answers, strict=True):
+        for result in answer.get("data", {}).get("result", []):
+            engine = result.get("metric", {}).get("engine")
+            try:
+                value = float(result["value"][1])
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+            if engine and math.isfinite(value):
+                rates.setdefault(engine, {})[name] = round(value, 3 if name == "cache_reuse" else 1)
+    return rates
+
+
 @router.get("/overview")
 async def overview() -> dict:
-    status, services, registry, hardware, cards, rag, throughput, served, host_containers, managed = \
+    status, services, registry, hardware, cards, rag, rates, host_containers, managed = \
         await asyncio.gather(
             _ops_json("/status"), _ops_json("/services"), _ops_json("/registry/models"),
-            _hardware(), _service_cards(), _rag(), _throughput(), _served(),
+            _hardware(), _service_cards(), _rag(), _engine_rates(),
             _host_containers(), _ops_json("/projects"),
         )
     status_gpu = (status or {}).get("gpu") if status else None
@@ -225,16 +257,20 @@ async def overview() -> dict:
                                        host_containers=host_containers, managed=managed)
     host_rows = [r for r in rows if r["project"] != console.ORDO_PROJECT]
     attention = console.build_attention(cards, containers, hardware, status_gpu, host_rows=host_rows)
-    engine = console.chat_engine(status_gpu, containers)
-    medians = console.chat_medians(throughput, served, _registry(registry))
+    names = console.service_names(cards)
+    engines = console.model_engines(_registry(registry), containers, status_gpu, rates, names)
     return {
         "status": _status_line(status_gpu, attention, host_containers_down=host_containers is None),
         # A one-shot job that finished ("done", exit 0) is not a service that should be up.
         "services": console.service_counts(rows),
         # Whether the rows outside the ordo project could be read at all.
         "host_containers": "up" if host_containers is not None else "down",
-        "gpus": console.gpu_cards((hardware or {}).get("gpus") or [], _registry(registry), status_gpu),
-        "chat": {**engine, **medians},
+        "gpus": console.gpu_cards((hardware or {}).get("gpus") or [], _registry(registry), status_gpu, names),
+        # Every model engine, and who answers local-chat now. `rates_available` is False when the
+        # speeds could not be read (Prometheus is part of the monitoring profile).
+        "engines": engines,
+        "chat": console.chat_summary(engines, status_gpu),
+        "rates_available": rates is not None,
         "attention": attention,
         "host": {k: (hardware or {}).get(k) for k in
                  ("cpu_pct", "ram_used_gb", "ram_total_gb", "ram_pct",
@@ -255,12 +291,13 @@ async def drift() -> dict:
 
 @router.get("/activity")
 async def activity(limit: int = Query(25, ge=1, le=100)) -> dict:
-    history, audit, renders = await asyncio.gather(
+    history, audit, renders, cards = await asyncio.gather(
         _ops_json("/jobs/history"), _ops_json("/audit?limit=100"), _comfy_json("/history?max_items=40"),
+        _service_cards(),
     )
     items = console.merge_activity(
         (history or {}).get("history", []), (audit or {}).get("entries", []),
-        console.summarise_renders(renders or {}, 40), limit,
+        console.summarise_renders(renders or {}, 40), limit, names=console.service_names(cards),
     )
     return {"items": items}
 
@@ -400,19 +437,20 @@ async def _delete(name: str) -> dict:
 
 @router.get("/perf/series")
 async def perf_series(hours: int = Query(24, ge=1, le=168)) -> dict:
+    """Tokens generated per second by every measured engine, keyed by engine (its service)."""
     end = int(time.time())
     start = end - hours * 3600
     step = max(60, hours * 3600 // 288)
-    query = urlencode({"query": _TOKEN_RATE_QUERY, "start": start, "end": end, "step": step})
+    query = urlencode({"query": _ENGINE_OUTPUT_SERIES_QUERY, "start": start, "end": end, "step": step})
     data = await _get_json(f"{PROMETHEUS_URL}/api/v1/query_range?{query}", timeout=15.0, dep="PROMETHEUS")
     if not data or data.get("status") != "success":
-        return {"available": False, "gpu": [], "cpu": []}
-    series: dict[str, list[list[Any]]] = {"gpu": [], "cpu": []}
+        return {"available": False, "series": {}}
+    series: dict[str, list[list[Any]]] = {}
     for result in data.get("data", {}).get("result", []):
-        key = {"inference-engine-gpu": "gpu", "inference-engine-cpu": "cpu"}.get(result.get("metric", {}).get("job"))
-        if key:
-            series[key] = [[int(t), round(float(v), 2)] for t, v in result.get("values", [])]
-    return {"available": True, **series}
+        engine = result.get("metric", {}).get("engine")
+        if engine:
+            series[engine] = [[int(t), round(float(v), 2)] for t, v in result.get("values", [])]
+    return {"available": True, "series": series}
 
 
 @router.get("/perf/grafana")

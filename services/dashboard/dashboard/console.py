@@ -10,22 +10,13 @@ in-use model file cannot be deleted) be tested without a running stack.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import PurePosixPath
 
 # Services the control plane refuses to cycle because they serve the request itself. Mirrors
 # ordo.control.broker.DockerBackend.SELF_REFERENTIAL (a repo test keeps the two equal); the dashboard
 # only uses it to hide buttons that would always be refused.
 NOT_CONTROLLABLE = frozenset({"agent", "ops-controller"})
-
-# How a registry entry's service reads on a GPU card.
-_TENANT_LABELS = {
-    # The GPU chat service, whichever engine serves it (llama.cpp or NInfer).
-    "inference-engine-gpu": "GPU chat",
-    "inference-engine-embed": "Embeddings",
-    "comfyui": "ComfyUI",
-    "stt": "Whisper",
-    "tts": "Kokoro",
-}
 
 # Audit actions that only read state. They are most of the log (Hermes polls) and none of them
 # is something a person would want in an activity feed.
@@ -73,6 +64,9 @@ _RAM_WARN_PCT = 90
 # it, never a bare number (one slow turn must not read as the model's speed).
 PROVISIONAL_SAMPLE_THRESHOLD = 10
 
+# The model-gateway alias every consumer calls for chat (the core chat engine serves it).
+CHAT_MODEL = "local-chat"
+
 
 # ---------------------------------------------------------------------------------------------
 # small helpers
@@ -83,12 +77,17 @@ def short_gpu_name(name: str) -> str:
     return re.sub(r"^(NVIDIA\s+)?(GeForce\s+)?", "", name or "").strip() or (name or "")
 
 
-def lease_label(job_id: str) -> str:
-    """A gate's lease is named after the service it guards: 'gate-comfyui' -> 'ComfyUI'."""
-    if job_id.startswith("gate-"):
-        service = job_id[len("gate-"):]
-        return _TENANT_LABELS.get(service, service)
-    return job_id
+def lease_label(job_id: str, names: Mapping[str, str] | None = None) -> str:
+    """A gate's lease is named after the service it guards ('gate-comfyui' -> 'comfyui'), shown
+    by that service's card name when `names` (service -> card name, `service_names`) has one."""
+    service = job_id[len("gate-"):] if job_id.startswith("gate-") else job_id
+    return (names or {}).get(service, service)
+
+
+def service_names(cards: list[dict]) -> dict[str, str]:
+    """service -> the name its dashboard card shows, from the catalog cards plugins declare."""
+    return {str(c.get("ops_service") or c.get("id")): str(c["name"])
+            for c in cards or [] if c.get("name") and (c.get("ops_service") or c.get("id"))}
 
 
 def _exit_code(status: str) -> int | None:
@@ -139,32 +138,29 @@ def _verdict(row: dict | None) -> str:
 
 
 # ---------------------------------------------------------------------------------------------
-# GPUs and the chat engine
+# GPUs and the model engines
 # ---------------------------------------------------------------------------------------------
 
-def _resident_gpu(registry: dict) -> str | None:
-    for entry in (registry or {}).values():
-        if entry.get("service") == "inference-engine-gpu":
-            return entry.get("gpu_uuid")
-    return None
+def _resident_services(status_gpu: dict | None) -> set[str]:
+    """The GPU residents the scheduler knows: loaded (idle_cached) or stopped for a lease (evicted)."""
+    status_gpu = status_gpu or {}
+    return set(status_gpu.get("idle_cached") or {}) | set(status_gpu.get("evicted_residents") or {})
 
 
-def gpu_cards(hardware_gpus: list[dict], registry: dict, status_gpu: dict | None) -> list[dict]:
-    """One card per GPU, biggest first: who lives on it, and who has borrowed it right now.
+def gpu_cards(hardware_gpus: list[dict], registry: dict, status_gpu: dict | None,
+              names: Mapping[str, str] | None = None) -> list[dict]:
+    """One card per GPU, biggest first: the models that live on it, and who has borrowed it now.
 
-    Only the card the resident chat model lives on is scheduled, so only that card can be
-    borrowed; leases in /status `running` are the borrowers.
+    A card can be borrowed when a scheduled resident lives on it; leases in /status `running` are
+    the borrowers. Tenants are the registry's model ids, so any engine a plugin adds is listed.
     """
-    resident_uuid = _resident_gpu(registry)
-    borrowers = [lease_label(j.get("id", "")) for j in (status_gpu or {}).get("running", [])]
+    residents = _resident_services(status_gpu)
+    borrowable = {e.get("gpu_uuid") for e in (registry or {}).values() if e.get("service") in residents}
+    borrowers = [lease_label(j.get("id", ""), names) for j in (status_gpu or {}).get("running", [])]
     cards = []
     for gpu in hardware_gpus or []:
         uuid = gpu.get("uuid")
-        tenants = [
-            _TENANT_LABELS.get(e.get("service", ""), e.get("service", ""))
-            for e in (registry or {}).values()
-            if e.get("gpu_uuid") == uuid
-        ]
+        tenants = sorted(model_id for model_id, e in (registry or {}).items() if e.get("gpu_uuid") == uuid)
         cards.append({
             "uuid": uuid,
             "name": short_gpu_name(gpu.get("name", "")),
@@ -173,56 +169,78 @@ def gpu_cards(hardware_gpus: list[dict], registry: dict, status_gpu: dict | None
             "util_pct": gpu.get("utilization_pct"),
             "temp_c": gpu.get("temp_c"),
             "tenants": tenants,
-            "borrowed_by": borrowers if uuid and uuid == resident_uuid else [],
+            "borrowed_by": borrowers if uuid and uuid in borrowable else [],
         })
     cards.sort(key=lambda c: -(c.get("vram_total_gb") or 0))
     return cards
 
 
-def chat_engine(status_gpu: dict | None, containers_by_id: dict) -> dict:
-    """Which engine is answering chat right now: gpu, cpu (the fallback), none or unknown.
+# What a model engine is doing, from its container and the scheduler.
+#   serving   running and answering
+#   starting  running, its health check not passed yet
+#   lent      stopped on purpose: a GPU lease borrowed its card
+#   stopped   not running, and nothing says it should be
+#   down      crashed, restarting or unhealthy
+_ENGINE_STATE = {"up": "serving", "starting": "starting", "unhealthy": "down", "failed": "down",
+                 "done": "stopped", "stopped": "stopped"}
 
-    A render borrowing the GPU evicts the resident model, and the gateway then serves chat from
-    the CPU fallback: that is the system working, and the page must say so plainly rather than
-    show the GPU server as down.
+# The order engines are listed in: what people talk to first.
+_KIND_ORDER = {"chat": 0, "embedding": 1, "image": 2, "stt": 3, "tts": 4}
+
+
+def model_engines(registry: dict, containers_by_id: dict, status_gpu: dict | None,
+                  rates: dict[str, dict] | None, names: Mapping[str, str] | None = None) -> list[dict]:
+    """Every engine the registry lists, with its state and, where it is measured, its speed.
+
+    `rates` is engine (service) -> the ordo_engine_* figures the dashboard reads from Prometheus
+    (routes_console._engine_rates); None when they could not be read. An engine that stands in for
+    another (`fallback_for`) is marked `standing_in` while the one it covers is not serving.
     """
+    evicted = set((status_gpu or {}).get("evicted_residents") or {})
+    borrowers = [lease_label(j.get("id", ""), names) for j in (status_gpu or {}).get("running", [])]
+    engines = []
+    for model_id, entry in (registry or {}).items():
+        service = entry.get("service", "")
+        if service in evicted:
+            state = "lent"
+            reason = f"GPU lent to {', '.join(borrowers)}" if borrowers else "GPU lent for a lease"
+        else:
+            state = _ENGINE_STATE.get(_verdict(containers_by_id.get(service)), "stopped")
+            reason = ""
+        measured = ((entry.get("metrics") or {}).get("format") or "none") != "none"
+        engines.append({
+            "model": model_id,
+            "engine": service,
+            "kind": entry.get("kind"),
+            "device": entry.get("device"),
+            "file": (entry.get("source") or {}).get("file"),
+            "ctx": (entry.get("config") or {}).get("ctx"),
+            "fallback_for": entry.get("fallback_for"),
+            "state": state,
+            "reason": reason,
+            "measured": measured,
+            "speeds": (rates or {}).get(service) if measured and rates is not None else None,
+        })
+    serving = {e["model"] for e in engines if e["state"] == "serving"}
+    for e in engines:
+        e["standing_in"] = bool(e["fallback_for"]) and e["state"] == "serving" and e["fallback_for"] not in serving
+    engines.sort(key=lambda e: (_KIND_ORDER.get(e["kind"], 9), bool(e["fallback_for"]), e["model"]))
+    return engines
+
+
+def chat_summary(engines: list[dict], status_gpu: dict | None) -> dict:
+    """Who answers `local-chat`, the model every consumer calls, right now: its own engine, an
+    engine standing in for it, or nobody. `model` is the engine record answering, or None."""
     if status_gpu is None:
-        return {"engine": "unknown", "reason": "The control plane did not answer"}
-    evicted = "inference-engine-gpu" in (status_gpu.get("evicted_residents") or {})
-    gpu_up = _verdict(containers_by_id.get("inference-engine-gpu")) in ("up", "starting") and not evicted
-    if gpu_up:
-        return {"engine": "gpu", "reason": ""}
-    borrowers = [lease_label(j.get("id", "")) for j in status_gpu.get("running", [])]
-    if borrowers:
-        reason = f"The GPU is lent to {', '.join(borrowers)}"
-    else:
-        reason = "The GPU chat model is not running"
-    if _verdict(containers_by_id.get("inference-engine-cpu")) in ("up", "starting"):
-        return {"engine": "cpu", "reason": reason}
-    return {"engine": "none", "reason": reason}
-
-
-def chat_medians(throughput: dict, served: dict, registry: dict) -> dict:
-    """The Overview's GPU and CPU median speeds, from the ROLE series: a model swap changes the
-    file name, not the role, so the median survives it instead of restarting from zero samples.
-    Each carries its sample count and span, and the file the server loads now (the sparkline's
-    label), and says whether it is provisional (fewer than PROVISIONAL_SAMPLE_THRESHOLD samples),
-    so the page never decides that for itself."""
-    roles = (throughput or {}).get("roles") or {}
-    resident = resident_gpu_file(registry)
-    out = {}
-    for key, role in (("gpu", "gpu-chat"), ("cpu", "cpu-fallback")):
-        r = roles.get(role) or {}
-        n = r.get("n") or 0
-        out[key] = {
-            "p50": r.get("p50"),
-            "n": n,
-            "provisional": 0 < n < PROVISIONAL_SAMPLE_THRESHOLD,
-            "first_ts": r.get("first_ts"),
-            "last_ts": r.get("last_ts"),
-            "model": served.get(key) or (resident if key == "gpu" else None),
-        }
-    return out
+        return {"state": "unknown", "model": None, "reason": "The control plane did not answer"}
+    primary = next((e for e in engines if e["model"] == CHAT_MODEL), None)
+    if primary and primary["state"] == "serving":
+        return {"state": "primary", "model": primary, "reason": ""}
+    reason = (primary or {}).get("reason") or f"{CHAT_MODEL} is not serving"
+    stand_in = next((e for e in engines if e["standing_in"] and e["fallback_for"] == CHAT_MODEL), None)
+    if stand_in:
+        return {"state": "fallback", "model": stand_in, "reason": reason}
+    return {"state": "none", "model": None, "reason": reason}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -326,19 +344,15 @@ def summarise_renders(history: dict, limit: int) -> list[dict]:
     return renders[:limit]
 
 
-# The GPU chat service, by its compose id (#415 renamed it from `llamacpp`): the resident a lease
-# evicts when its VRAM demand cannot share the card.
-_CHAT_SERVICE = "inference-engine-gpu"
-
-
-def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], limit: int) -> list[dict]:
+def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], limit: int,
+                   names: Mapping[str, str] | None = None) -> list[dict]:
     """Renders, GPU leases and operator actions in one newest-first feed.
 
     Every item carries the same keys; the lease fields (holder, started, ended, duration_s,
-    evicted_chat) are null/false on non-lease items. Gate leases are kept: the render they
-    admitted stands beside them as its own item, and the lease says who held the GPU, for how
-    long, and whether the chat model was out of the GPU while it ran (the broker records the
-    evicted residents on the lease as it starts; an older record without them reads false).
+    evicted) are null/empty on non-lease items. Gate leases are kept: the render they admitted
+    stands beside them as its own item, and the lease says who held the GPU, for how long, and
+    which residents were stopped while it ran (the broker records the evicted residents on the
+    lease as it starts; an older record without them reads as none), by their card names.
     Read-only audit entries are dropped.
     """
     items: list[dict] = []
@@ -349,13 +363,13 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
         items.append({"ts": r["ts"], "kind": "render", "title": title,
                       "severity": "ok" if r.get("ok") else "critical",
                       "holder": None, "started": None, "ended": None, "duration_s": None,
-                      "evicted_chat": False})
+                      "evicted": []})
     for lease in leases or []:
         job_id = lease.get("id", "")
         ts = lease.get("ended") or lease.get("started")
         if ts is None:
             continue
-        holder = lease_label(job_id)
+        holder = lease_label(job_id, names)
         started, ended = lease.get("started"), lease.get("ended")
         duration = round(ended - started) if isinstance(started, int | float) \
             and isinstance(ended, int | float) and ended >= started else None
@@ -367,7 +381,7 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
         items.append({"ts": float(ts), "kind": "gpu", "title": title,
                       "severity": "ok" if outcome == "completed" else "warning",
                       "holder": holder, "started": started, "ended": ended, "duration_s": duration,
-                      "evicted_chat": _CHAT_SERVICE in (lease.get("evicted") or [])})
+                      "evicted": [lease_label(s, names) for s in lease.get("evicted") or []]})
     for entry in audit or []:
         action = entry.get("action", "")
         if action in _READ_ONLY_ACTIONS or action in _LEASE_ACTIONS or entry.get("ts") is None:
@@ -382,7 +396,7 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
         items.append({"ts": float(entry["ts"]), "kind": "action", "title": title,
                       "severity": "info" if ok else "warning",
                       "holder": None, "started": None, "ended": None, "duration_s": None,
-                      "evicted_chat": False})
+                      "evicted": []})
     items.sort(key=lambda i: i["ts"], reverse=True)
     return items[:limit]
 
@@ -403,14 +417,6 @@ def served_file(v1_models: dict | None) -> str | None:
     if not data or not data[0].get("id"):
         return None
     return PurePosixPath(str(data[0]["id"])).name
-
-
-def resident_gpu_file(registry: dict) -> str | None:
-    """The file the GPU chat server is declared to serve, whether or not it is loaded now."""
-    for entry in (registry or {}).values():
-        if entry.get("service") == "inference-engine-gpu":
-            return (entry.get("source") or {}).get("file")
-    return None
 
 
 def in_use_files(served: dict, model_config: dict) -> set[str]:
