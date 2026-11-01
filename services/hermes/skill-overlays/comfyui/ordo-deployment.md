@@ -34,3 +34,10 @@ single machine do not apply here.
   `list_workflows`, `get_comfyui_queue`, `get_comfyui_history`, `interrupt_comfyui`, and model
   listing and downloads. They submit through the same gate.
 
+- **The graphs in `workflows/` are generic upstream examples, not this stack's models.** The
+  SD 1.5, SDXL (txt2img, img2img, inpaint), Flux Dev and Wan graphs name checkpoints this stack does
+  not install, and `animatediff_video.json` needs a node pack it does not have. A POST to
+  `$COMFYUI_URL/prompt` takes the GPU lease before ComfyUI validates the graph, so a graph that
+  names a missing model still evicts the language model and then fails. Before submitting any
+  example, read the loader's installed files from `$COMFYUI_URL/object_info/<LoaderClass>`, swap in a
+  file that exists, or start from a template this stack ships for its own models.

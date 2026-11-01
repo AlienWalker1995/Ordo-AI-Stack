@@ -244,6 +244,13 @@ def test_the_deployment_notes_forbid_the_engine_address_and_name_the_variable():
     assert "Never install or launch ComfyUI" in notes
 
 
+def test_the_deployment_notes_warn_that_example_graphs_name_models_the_stack_lacks():
+    """Submitting an example takes the GPU lease before validation, so a missing model costs a turn."""
+    notes = (OVERLAY / "ordo-deployment.md").read_text(encoding="utf-8")
+    assert "generic upstream examples" in notes
+    assert "$COMFYUI_URL/object_info/<LoaderClass>" in notes
+
+
 PERSONAL_PATTERNS = {
     "an email address": r"[\w.+-]+@[\w-]+\.[\w.]+",
     "an IPv4 address": r"\b\d{1,3}(?:\.\d{1,3}){3}\b(?!:8188)",
