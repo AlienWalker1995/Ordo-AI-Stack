@@ -1,0 +1,287 @@
+/* ────────────────────────────────────────────────────────────────────────
+   Ordo Caption Studio — Tailwind v4
+   Prefixed (jcs:), no preflight, scoped to .jcs-root
+   ──────────────────────────────────────────────────────────────────────── */
+
+@import "tailwindcss" prefix(jcs);
+
+/* Disable preflight — we don't want Tailwind's CSS reset in ComfyUI */
+@layer base {
+  /* intentionally empty — overrides Tailwind preflight */
+}
+
+/* ── Custom theme tokens ───────────────────────────────────────────────── */
+@theme {
+  --color-panel: #16162a;
+  --color-surface: #1a1a2e;
+  --color-surface-raised: #2e2e48;
+  --color-border: #3a3a54;
+  --color-border-light: #52527a;
+  --color-text: #d4d4e0;
+  --color-text-muted: #8888a8;
+  --color-text-dim: #666688;
+  --color-accent: #4a9eff;
+  --color-danger: #f66;
+  --color-warning: #ffcc00;
+}
+
+/* ── Root scope ─────────────────────────────────────────────────────── */
+.jcs-root {
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11px;
+  line-height: 1.4;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.jcs-root *,
+.jcs-root *::before,
+.jcs-root *::after {
+  box-sizing: border-box;
+}
+
+/* ── Base resets — override user-agent styles inside our root ──────── */
+.jcs-root button,
+.jcs-root input,
+.jcs-root select,
+.jcs-root textarea {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────
+   Kill all browser chrome so Tailwind utilities apply cleanly.
+   Must be clearly visible against #16162a panel backgrounds.          */
+.jcs-root button {
+  appearance: none;
+  -webkit-appearance: none;
+  background: #3c3c5e;
+  color: var(--color-text);
+  border: 1px solid #5a5a82;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+.jcs-root button:hover {
+  background: #4e4e74;
+  border-color: #7a7aa0;
+}
+.jcs-root button:active {
+  background: #5a5a84;
+}
+
+/* ── Selects ─────────────────────────────────────────────────────────  */
+.jcs-root select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: #32324e;
+  border: 1px solid #52527a;
+  border-radius: 4px;
+  padding: 2px 18px 2px 6px;
+  cursor: pointer;
+  /* chevron */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 5 5-5z' fill='%238888a8'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 5px center;
+}
+.jcs-root select:hover {
+  border-color: #7a7aa0;
+}
+.jcs-root select:focus {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+/* ── Text / number inputs ────────────────────────────────────────────  */
+.jcs-root input[type="text"],
+.jcs-root input[type="number"] {
+  appearance: none;
+  -webkit-appearance: none;
+  background: #28283e;
+  border: 1px solid #52527a;
+  border-radius: 4px;
+  padding: 2px 6px;
+  outline: none;
+}
+.jcs-root input[type="text"]:focus,
+.jcs-root input[type="number"]:focus {
+  border-color: var(--color-accent);
+}
+/* hide number spinners */
+.jcs-root input[type="number"]::-webkit-inner-spin-button,
+.jcs-root input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.jcs-root input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* ── Color inputs ────────────────────────────────────────────────────  */
+.jcs-root input[type="color"] {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding: 0;
+  border: 1px solid #52527a;
+  border-radius: 3px;
+  background: none;
+}
+.jcs-root input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 1px;
+}
+.jcs-root input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+/* ── Checkboxes ──────────────────────────────────────────────────────  */
+.jcs-root input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border: 1px solid #52527a;
+  border-radius: 3px;
+  background: #28283e;
+  cursor: pointer;
+  position: relative;
+  margin: 0;
+  flex-shrink: 0;
+}
+.jcs-root input[type="checkbox"]:checked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.jcs-root input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 5px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* ── Range sliders (scrubber, parameter sliders) ─────────────────────
+   Fully custom track + thumb to match the dark theme.                 */
+.jcs-root input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+}
+
+/* Track */
+.jcs-root input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #3a3a58;
+}
+.jcs-root input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #3a3a58;
+  border: none;
+}
+
+/* Thumb */
+.jcs-root input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  border: 2px solid #fff;
+  margin-top: -4px; /* center on track */
+  box-shadow: 0 0 3px rgba(0,0,0,0.5);
+  transition: transform 0.1s;
+}
+.jcs-root input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  border: 2px solid #fff;
+  box-shadow: 0 0 3px rgba(0,0,0,0.5);
+}
+.jcs-root input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+.jcs-root input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.25);
+  background: #6ab4ff;
+}
+
+/* ── Transport scrubber — wider track, accent fill ───────────────────
+   Uses a dedicated class so it doesn't affect parameter sliders.      */
+.jcs-root .jcs-scrubber::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(
+    to right,
+    var(--color-accent) var(--jcs-scrub-pct, 0%),
+    #3a3a58 var(--jcs-scrub-pct, 0%)
+  );
+}
+.jcs-root .jcs-scrubber::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #3a3a58;
+}
+.jcs-root .jcs-scrubber::-moz-range-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-accent);
+}
+.jcs-root .jcs-scrubber::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -4px;
+}
+.jcs-root .jcs-scrubber::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Transport button icons — fixed-size icon buttons ────────────────  */
+.jcs-root .jcs-transport-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  font-size: 12px;
+  border-radius: 4px;
+  background: #3c3c5e;
+  border-color: #5a5a82;
+}
+.jcs-root .jcs-transport-btn:hover {
+  background: #4e4e74;
+  border-color: #7a7aa0;
+}
+.jcs-root .jcs-transport-btn.jcs-play-btn {
+  width: 32px;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+.jcs-root .jcs-transport-btn.jcs-play-btn:hover {
+  background: #5eb3ff;
+  border-color: #5eb3ff;
+}
