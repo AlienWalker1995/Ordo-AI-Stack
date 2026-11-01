@@ -1,5 +1,5 @@
 {
-  "_doc": "ComfyUI custom node packs the stack declares. scripts/comfyui/boot.sh reconciles each one to its pinned commit on every start (clone when missing, fetch and detach when drifted), then installs its requirements.txt (and, for packs that ship a comfy-env-root.toml, builds their isolated pixi worker env via `comfy-env install`). Packs on the comfyui-app volume that are NOT listed here are left untouched (operator-installed, undeclared); add a pack here to make it reproducible. Bump a ref deliberately and say why in the entry's note.",
+  "_doc": "ComfyUI custom node packs the stack declares, pinned upstream. scripts/comfyui/boot.sh reconciles each one to its pinned commit on every start (clone when missing or a zip copy, fetch and detach when drifted, submodules initialised), then installs its requirements.txt (and, for packs that ship a comfy-env-root.toml, builds their isolated pixi worker env via `comfy-env install`). The Ordo-authored packs are not listed here: they live in services/comfyui/nodes/ and boot.sh copies them in. Only declared packs (this file + the repo-owned ones) get their dependencies installed; a pack on the comfyui-app volume that is in neither is left on disk untouched but gets no dependencies. The `name` is the directory under custom_nodes/ (kept equal to the dir the pack already had, so graphs and python_module names do not move). Bump a ref deliberately and say why in the entry's note.",
   "packs": [
     {
       "name": "ComfyUI-LTXVideo",
@@ -30,6 +30,60 @@
       "url": "https://github.com/PozzettiAndrea/ComfyUI-GeometryPack.git",
       "ref": "1cbd14431bc88df27e5368f3e375b6bafd09006e",
       "note": "2026-07-31 main @ 1cbd144 (upstream HEAD, same comfy-kitchen worker-env fix). Declared because ComfyUI-TRELLIS2 lists it in [node_reqs] and its nodes/comfy-env.toml is solved in the same comfy-env pixi workspace, so an unpinned copy would make the TRELLIS2 env build unreproducible."
+    },
+    {
+      "name": "ComfyUI-GGUF",
+      "url": "https://github.com/city96/ComfyUI-GGUF.git",
+      "ref": "c09b4b799b44efcc69d3b13ff1acad5a882c0d62",
+      "note": "2026-01-12 `stable` @ c09b4b7 = registry 1.1.10, the zip copy that was on the volume (all 17 files byte-identical to this tree). UnetLoaderGGUF / DualCLIPLoaderGGUF: the FLUX-GGUF and LTX-2.3 UI graphs, the timelapse flux2_edit template and the ordo-comfyui-flux2 skill templates."
+    },
+    {
+      "name": "comfyui-videohelpersuite",
+      "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+      "ref": "3234937ff5f3ca19068aaba5042771514de2429d",
+      "note": "2025-12-17 main @ 3234937 = registry 1.7.9, the zip copy that was on the volume (all 45 files byte-identical). VHS_VideoCombine / VHS_LoadVideo / VHS_BatchManager: the social-relay reel and caption workflows, minimax_h3_v2v, ordo_last_mile_video and the LTX-2.3 UI graphs."
+    },
+    {
+      "name": "comfyui-kjnodes",
+      "url": "https://github.com/kijai/ComfyUI-KJNodes.git",
+      "ref": "f4bae1f9960e5d643573a2ecf7abd56453a21821",
+      "note": "2026-10-20 v1.5.3 (latest release, after ComfyUI v0.41.1). The volume held registry 1.3.6 (c0c3108) with a hand patch to nodes/ltxv_nodes.py (2026-05-17: LTX2SamplingPreviewOverride crashed API-only /prompt runs on serv.last_node_id=None); upstream fixed the same crash in da29878 (2026-05-29, in 1.4.x), so pinning 1.3.6 would have reverted it. Every KJNodes class our graphs use (26, incl. VAELoaderKJ, ImageResizeKJv2, LTX2_NAG, LTXVChunkFeedForward, SimpleCalculatorKJ) exists in 1.5.3."
+    },
+    {
+      "name": "comfyui-easy-use",
+      "url": "https://github.com/yolain/ComfyUI-Easy-Use.git",
+      "ref": "b5e31ef12ad9d0b187b545c2707735cc7d581c52",
+      "note": "2026-01-23 tag v1.3.6, the zip copy that was on the volume (194 files byte-identical; the other two were install-time examples). `easy showAnything` / forLoopStart / forLoopEnd: the LTX-2.3 UI graphs and FLUX KONTEXT. The ComfyUI-Easy-Use-Frontend submodule is source only (web_version is prebuilt)."
+    },
+    {
+      "name": "rgthree-comfy",
+      "url": "https://github.com/rgthree/rgthree-comfy.git",
+      "ref": "683836c46e898668936c433502504cc0627482c5",
+      "note": "2026-04-07 main @ 683836c = registry 1.0.2604070017, the zip copy that was on the volume (all 258 files byte-identical). Power Lora Loader / Image Comparer: the LTX-2.3 UI graphs and the unified_reel_ltx_2_3 skill workflows."
+    },
+    {
+      "name": "comfyui-image-saver",
+      "url": "https://github.com/alexopus/ComfyUI-Image-Saver.git",
+      "ref": "a165bc158fc3d796a91f53da37338e4818289fd8",
+      "note": "2025-12-19 tag v1.19.0, the zip copy that was on the volume (all 26 files byte-identical). Image Saver / Seed Generator: the FLUX-Base, FLUX-GGUF, FLUX-Nunchaku and FLUX-Tools UI graphs."
+    },
+    {
+      "name": "comfyui-mxtoolkit",
+      "url": "https://github.com/Smirnov75/ComfyUI-mxToolkit.git",
+      "ref": "7f7a0e584f12078a1c589645d866ae96bad0cc35",
+      "note": "2025-05-07 main @ 7f7a0e5 = registry 0.9.92 (upstream HEAD), the zip copy that was on the volume (all 12 files byte-identical). mxSlider / mxSlider2D: the FLUX-* UI graphs."
+    },
+    {
+      "name": "comfyui_ultimatesdupscale",
+      "url": "https://github.com/ssitu/ComfyUI_UltimateSDUpscale.git",
+      "ref": "c164c303c099b9b5d117d15f438604377432e8d2",
+      "note": "2026-03-27 main @ c164c30 = registry 1.7.2, the zip copy that was on the volume (all 44 tracked files byte-identical, and the repositories/ultimate_sd_upscale submodule at the recorded 2322caa). UltimateSDUpscale: the FLUX-* UI graphs (upscale stage)."
+    },
+    {
+      "name": "was-node-suite-comfyui",
+      "url": "https://github.com/WASasquatch/was-node-suite-comfyui.git",
+      "ref": "ea935d1044ae5a26efa54ebeb18fe9020af49a45",
+      "note": "2025-06-02 main @ ea935d1, the clean git checkout that was on the volume. Number to Int / Text to Number / Text Multiline / Seed: the FLUX-* UI graphs. Its requirements.txt pulls three unpinned git+https deps of its own author's; unchanged from what every boot already installed."
     }
   ]
 }
