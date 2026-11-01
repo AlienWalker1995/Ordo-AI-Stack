@@ -73,9 +73,9 @@ def main() -> int:
     args = ap.parse_args()
     since = time.mktime(time.strptime(args.since, "%Y-%m-%d"))
 
+    import numpy as np
     from faster_whisper import WhisperModel
     from resemblyzer import VoiceEncoder, preprocess_wav
-    import numpy as np
     whisper = WhisperModel("small.en", device="cpu", compute_type="int8")
     enc = VoiceEncoder("cpu")
     refs = {s: enc.embed_utterance(preprocess_wav(f"{ASSETS}/{s}.wav")) for s in ("rick", "morty")}

@@ -147,7 +147,9 @@ def main() -> None:
     t_stt = time.time() - t0
 
     def fmt(t: float) -> str:
-        h = int(t // 3600); m = int(t // 60 % 60); s = t % 60
+        h = int(t // 3600)
+        m = int(t // 60 % 60)
+        s = t % 60
         return f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
 
     srt_path = f"{draft}/captions.srt"

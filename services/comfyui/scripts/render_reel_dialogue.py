@@ -289,7 +289,8 @@ def _line_match(wav: str, intended: str) -> tuple[float, float, str]:
     heard = " ".join(s.text for s in segs)
     # Both sides go through the same speller, so whisper's formatting is not scored as a
     # missing word: "6" vs "six", "$300,000,000" vs "300 million dollars".
-    tok = lambda s: re.findall(r"[a-z0-9']+", spoken(s).lower())
+    def tok(s):
+        return re.findall(r"[a-z0-9']+", spoken(s).lower())
     ratio = difflib.SequenceMatcher(None, tok(intended), tok(heard)).ratio()
     heard_tokens = tok(heard)
     heard_set = set(heard_tokens)
@@ -532,8 +533,8 @@ def compose(full_wav: str, dur: float, gameplay: str, assets: str,
     cards = cards or []
 
     fc = [
-        f"[1:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-        f"crop=1080:1920,setpts=PTS-STARTPTS,eq=saturation=1.12[bg]",
+        "[1:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+        "crop=1080:1920,setpts=PTS-STARTPTS,eq=saturation=1.12[bg]",
         # The avatar art is a bust that ends in a straight cut at the waist; fading the bottom
         # AVATAR_FADE of its alpha keeps that edge from reading as a floating torso.
         f"[2:v]scale=-1:640,format=rgba,{AVATAR_FADE_GEQ}[rk]",
@@ -586,7 +587,7 @@ def compose(full_wav: str, dur: float, gameplay: str, assets: str,
 
 # --- captions --------------------------------------------------------------
 
-# Hormozi-style caption (matches the original @primus.relay reels): white words
+# Hormozi-style caption (matches the original channel's reels): white words
 # that fill to a bright highlight as they're spoken, colour rotating per phrase.
 # Standard V4+ format WITH SecondaryColour so \kf karaoke works (Primary=filled
 # highlight, Secondary=white=unspoken). Top-anchored (Align 8, MarginV 660): under
@@ -667,7 +668,9 @@ def transcribe_captions(line_clips: list[tuple[str, float]], ass: str) -> int:
         die("transcription produced no words", clips=[c for c, _ in line_clips])
 
     def ts(x: float) -> str:
-        h = int(x // 3600); m = int(x // 60 % 60); s = x % 60
+        h = int(x // 3600)
+        m = int(x // 60 % 60)
+        s = x % 60
         return f"{h:d}:{m:02d}:{s:05.2f}"
 
     with open(ass, "w") as f:
