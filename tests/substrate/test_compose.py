@@ -638,6 +638,39 @@ def test_comfyui_models_on_named_volume():
     assert not [v for v in c["services"]["dashboard"]["volumes"] if v.startswith("comfyui-models:")]
 
 
+def test_comfyui_output_on_named_volume_at_every_readers_old_path():
+    # The asset scan (--enable-assets) walks the output tree whenever GET /object_info finds it
+    # idle; on the 9p bind a ~4,000-file tree took 25-44 s and blocked ComfyUI's HTTP loop. So the
+    # outputs live on a named volume, and every reader mounts it at the path it used before.
+    from ordo.render.agents import AgentRegistry
+    from ordo.render.dashboards import DashboardRegistry
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": ["comfyui"], "agent": "hermes"})
+    rendered = render(src, CATALOG, REGISTRY, agents=AgentRegistry.load(ROOT / "services"),
+                      dashboards=DashboardRegistry.load(ROOT / "services"))
+    c = rendered.compose_dict()
+    assert "comfyui-output" in c["volumes"]
+    expected = {
+        "comfyui": "comfyui-output:/root/ComfyUI/output",
+        # over the subpath of the /workspace/data bind that skills read and move outputs at
+        "agent": "comfyui-output:/workspace/data/comfyui-output",
+        # GET /api/orchestration/outputs lists COMFYUI_OUTPUT_DIR, default /comfyui-output
+        "dashboard": "comfyui-output:/comfyui-output:ro",
+    }
+    for name, mount in expected.items():
+        vols = c["services"][name]["volumes"]
+        assert mount in vols, f"{name} missing {mount}"
+        bad = [v for v in vols if "${" in v and "comfyui-output" in v]
+        assert not bad, f"{name} still binds comfyui-output over 9p: {bad}"
+    agent_vols = c["services"]["agent"]["volumes"]
+    data_bind = next(i for i, v in enumerate(agent_vols) if v.endswith(":/workspace/data"))
+    assert agent_vols.index(expected["agent"]) > data_bind  # the volume lands on top of the bind
+    # storage_purge.py, run in the agent from the /c/dev mirror checkout, purges the volume here
+    assert c["services"]["agent"]["environment"]["COMFYUI_OUTPUT_DIR"] == "/workspace/data/comfyui-output"
+    # transient renders: never in the `ordo backup` archive, as when they were a host directory
+    assert rendered.manifest()["backup"]["comfyui-output"] == "skip"
+
+
 # ── LiteLLM Postgres + key bootstrap + the internal MCP network (spec §3) ─────────────────────
 def test_litellm_db_is_core_pinned_and_healthchecked():
     c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")

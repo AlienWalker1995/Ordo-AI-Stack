@@ -29,7 +29,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | `qdrant-data` named volume | Vector DB storage (RAG profile) | Qdrant native |
 | `data/dashboard/` | Throughput samples, benchmarks, job tracking | JSON |
 | `hermes-home` named volume | Hermes agent brain (sessions, config, skills, cron) | JSON / SQLite / YAML |
-| `data/comfyui-output/` | Generated media (renders) | mixed |
+| `comfyui-output` named volume | Generated media (renders); `comfyui` writes it at `/root/ComfyUI/output`, the agent reads and moves files at `/workspace/data/comfyui-output`, the dashboard lists it at `/comfyui-output` (RO). Not a host directory: see [ComfyUI outputs](#comfyui-outputs) | mixed |
 | `comfyui-app` named volume | ComfyUI app tree + custom nodes — app version pinned by `COMFYUI_APP_REF`, declared node packs pinned by `scripts/comfyui/custom_nodes.json`, both reconciled on boot ([configuration.md](configuration.md#comfyui-application-version)) | mixed |
 | `couchdb-data` named volume | CouchDB (Obsidian LiveSync) | CouchDB native |
 | `open-webui-data` named volume | Open WebUI accounts + uploads | SQLite / files |
@@ -171,6 +171,48 @@ A model switch (the dashboard's Models page, or `POST /model-config` on `ops-con
 
 **ComfyUI:** add a model with the `download_comfyui_model` MCP tool (`url` plus `category`, e.g. `checkpoints`, `loras`, `vae`). It calls `ops-controller` `POST /models/download`, which writes into the `comfyui-models` **named volume** (the same volume ComfyUI reads RO), so the file lands where ComfyUI looks with no copy step. One download runs at a time; poll `get_comfyui_model_download_status`. Music3 weight URLs are listed under `weights:` in `services/song-gen/plugin.yaml`.
 
+### ComfyUI outputs
+
+ComfyUI's render outputs live in the `comfyui-output` **named volume**, not under `data/`. ComfyUI's
+asset system (`--enable-assets`) rescans its models, input and output trees whenever `GET
+/object_info` finds it idle, and a stat on the Windows 9p bind costs about 2,000 times one on ext4
+(6.86 ms vs 0.003 ms): a ~4,000-file output tree took 25-44 s per scan and blocked ComfyUI's HTTP
+loop. Every reader mounts the volume at the path it used before:
+
+| Service | Path | Access |
+|---|---|---|
+| `comfyui` | `/root/ComfyUI/output` | RW (writes renders) |
+| `agent` (Hermes) | `/workspace/data/comfyui-output` (over its `/workspace/data` bind; `COMFYUI_OUTPUT_DIR`) | RW (skills read and move outputs; the weekly storage purge deletes old ones) |
+| `dashboard` | `/comfyui-output` | RO (`GET /api/orchestration/outputs`) |
+
+**From Windows**, Docker Desktop exposes the volume (compose names it `ordo_comfyui-output`) at:
+
+```
+\wsl.localhost\docker-desktop\mnt\docker-desktop-disk\data\docker\volumes\ordo_comfyui-output\_data
+```
+
+Open it in Explorer or `Test-Path` it from PowerShell; Docker Desktop must be running.
+
+**One-time move from the old `data/comfyui-output/` bind** (an install that predates the volume).
+Run it after `ordo apply` has recreated `comfyui`, so compose has created the volume. It copies
+every file and directory the volume lacks and never overwrites one, so it is idempotent and safe
+after ComfyUI has already written new renders; it ends by checking that every source path is in
+the volume. From the repo root, in Git Bash:
+
+```bash
+docker volume inspect ordo_comfyui-output >/dev/null   # refuse if compose has not created it
+MSYS_NO_PATHCONV=1 docker run --rm -u 0 \
+  -v "$(pwd)/data/comfyui-output:/src:ro" -v ordo_comfyui-output:/dst \
+  --entrypoint sh curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 -c '
+  cd /src &&
+  find . -mindepth 1 | while IFS= read -r p; do [ -e "/dst/$p" ] || cp -a "$p" "/dst/$p" || exit 1; done &&
+  find . -mindepth 1 | while IFS= read -r p; do [ -e "/dst/$p" ] || { echo "MISSING $p"; exit 1; }; done &&
+  echo "seeded: $(find . -type f | wc -l) files present in the volume"'
+```
+
+Then delete the host directory (`rm -rf data/comfyui-output`): nothing mounts it any more, and a
+leftover copy is a second place outputs appear to live.
+
 ### RAG Ingestion (`--profile rag`)
 
 1. `rag-ingestion` watches `data/rag-input/` for new files.
@@ -201,11 +243,11 @@ Hermes keeps its own state in the `hermes-home` named volume (mounted at `/home/
 | `models-gguf` volume | llama.cpp GGUF weights | yes | yes |
 | `comfyui-models` volume | ComfyUI weights | yes | yes |
 | `comfyui-app` volume | ComfyUI app + custom nodes | yes | yes |
+| `comfyui-output` volume | ComfyUI render outputs | yes | yes |
 | `data/rag-input/` | RAG drop zone | yes | yes |
 | `data/ops-controller/` | Audit log | yes | yes |
 | `litellm-db-data` volume | LiteLLM Postgres (virtual keys, teams, spend) | yes | yes |
 | `data/dashboard/` | Throughput / benchmarks | yes | yes |
-| `data/comfyui-output/` | Render outputs | yes | yes |
 
 ### Ephemeral
 
@@ -232,7 +274,7 @@ rendered stack in `out/` (`--stack DIR` for another), so render first.
 | `pg_dump` | `litellm-db-data`, `langfuse-db-data` | `pg_dump -Fc` in the running server, online | loads the dump into a temporary database beside the live one, then (clients stopped) renames it over the live one in one transaction and drops the old copy |
 | `stopped` | `hermes-home`, `qdrant-data`, `couchdb-data`, `open-webui-data`, `grafana-data`, the Langfuse ClickHouse, Redis and MinIO volumes | stops the services writing the volume, snapshots its files, starts them again | stops the writers, unpacks into a staging directory in the volume, swaps it in by renames, starts them |
 | `live` | `caddy_data`, `caddy_config`, the Tailscale `ts-state-*` volumes, `comfyui-app` | snapshot with the services running (no database in them) | as `stopped` |
-| `skip` | `models-gguf`, `comfyui-models`, `ltx-models`, `hf-hub-cache`, `codebase-memory-cache`, `prometheus-data`, `alertmanager-data`, `langfuse-clickhouse-logs` | not saved: re-derivable (`ordo fetch`, `download_comfyui_model`), a cache, or metrics and logs | nothing |
+| `skip` | `models-gguf`, `comfyui-models`, `comfyui-output` (transient renders, purged after 21 days), `ltx-models`, `hf-hub-cache`, `codebase-memory-cache`, `prometheus-data`, `alertmanager-data`, `langfuse-clickhouse-logs` | not saved: re-derivable (`ordo fetch`, `download_comfyui_model`), a cache, or metrics and logs | nothing |
 
 A raw copy of a running database's files is not a backup, so every database is either dumped with
 its own tool or copied with its server stopped. Services are stopped and started with
@@ -255,7 +297,7 @@ secret:** it is written outside the checkout and readable by its owner only (mod
 ACL granting the current user alone on Windows). Keep a copy off the machine.
 
 Host directories under `data/` are plain files on the host disk and are not in the archive: copy
-them with your host backup (`data/ops-controller/audit*.log`, `data/dashboard/`, `data/comfyui-output/`).
+them with your host backup (`data/ops-controller/audit*.log`, `data/dashboard/`).
 Never restore `data/ops-controller/scheduler-state.json`: it is the live GPU lease state.
 
 ### Restore
@@ -315,7 +357,7 @@ ordo up --all
 |---|---|---|
 | `data/ops-controller/audit.log` | Optional: archive rotated files (`audit.1.log` ... `audit.5.log`) before they age out; rotation bounds the size on its own | As needed |
 | `data/rag-input/` | Remove processed files | As needed |
-| `data/comfyui-storage/output/` | Prune old outputs | As needed |
+| `comfyui-output` volume | `scripts/storage_purge.py` deletes outputs older than 21 days (the agent's weekly Storage Purge cron) | Weekly |
 | `models-gguf` volume | Remove unused models | Quarterly |
 
 ```bash

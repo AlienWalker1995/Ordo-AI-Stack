@@ -161,7 +161,7 @@ def test_execute_removes_expired_drafts_keeps_recent(tmp_path):
     root = tmp_path / "data"
     _build_tree(root, NOW)
     plan = sp.plan_purge(root, NOW)
-    sp.execute_purge(plan, root)
+    sp.execute_purge(plan)
     assert not (root / "drafts" / "2026-01-01_old").exists()
     assert (root / "drafts" / "2026-06-10_new").exists()
 
@@ -176,7 +176,7 @@ def test_execute_removes_stale_unrendered_drafts_keeps_fresh_and_undated(tmp_pat
         (pending / name / "script.txt").write_text("hello")
     plan = sp.plan_purge(root, NOW)
     assert [p.name for p in plan["drafts-pending"]["targets"]] == [stale]
-    sp.execute_purge(plan, root, force=True)
+    sp.execute_purge(plan, force=True)
     assert sorted(p.name for p in pending.iterdir()) == sorted([fresh, "undated"])
 
 
@@ -184,7 +184,7 @@ def test_execute_removes_old_comfyui_files_keeps_recent(tmp_path):
     root = tmp_path / "data"
     _build_tree(root, NOW)
     plan = sp.plan_purge(root, NOW)
-    sp.execute_purge(plan, root)
+    sp.execute_purge(plan)
     assert not (root / "comfyui-output" / "old.png").exists()
     assert (root / "comfyui-output" / "new.png").exists()
     assert not (root / "comfyui-storage" / "ComfyUI" / "input" / "old_input.png").exists()
@@ -195,7 +195,7 @@ def test_execute_keeps_newest_three_backups(tmp_path):
     root = tmp_path / "data"
     _build_tree(root, NOW)
     plan = sp.plan_purge(root, NOW)
-    sp.execute_purge(plan, root)
+    sp.execute_purge(plan)
     remaining = sorted(p.name for p in (root / "_backups").iterdir())
     assert remaining == ["20260301-000000", "20260401-000000", "20260501-000000"]
 
@@ -208,7 +208,7 @@ def test_cap_guard_aborts_bucket_without_force(tmp_path):
     (root / "drafts" / "2026-01-02_b").mkdir(parents=True)
     (root / "drafts" / "2026-01-02_b" / "v.mp4").write_bytes(b"x")
     plan = sp.plan_purge(root, NOW)
-    result = sp.execute_purge(plan, root, force=False)
+    result = sp.execute_purge(plan, force=False)
     assert result["drafts"]["aborted"] is True
     assert (root / "drafts" / "2026-01-01_a").exists()  # nothing deleted
 
@@ -220,6 +220,54 @@ def test_cap_guard_bypassed_with_force(tmp_path):
     (root / "drafts" / "2026-01-02_b").mkdir(parents=True)
     (root / "drafts" / "2026-01-02_b" / "v.mp4").write_bytes(b"x")
     plan = sp.plan_purge(root, NOW)
-    result = sp.execute_purge(plan, root, force=True)
+    result = sp.execute_purge(plan, force=True)
     assert result["drafts"]["aborted"] is False
     assert not (root / "drafts" / "2026-01-01_a").exists()
+
+
+# --- the ComfyUI output bucket lives on its own volume, outside data/ ---
+
+def test_comfyui_output_dir_outside_data_root_is_purged_there(tmp_path):
+    # In the agent container the outputs are the comfyui-output volume at
+    # /workspace/data/comfyui-output, while data_root is the mirror checkout's data/.
+    root = tmp_path / "data"
+    _build_tree(root, NOW)
+    volume = tmp_path / "comfyui-output-volume"
+    now_epoch = NOW.timestamp()
+    _aged_file(volume / "old.png", 30, now_epoch)
+    _aged_file(volume / "job" / "old_frame.png", 30, now_epoch)
+    _aged_file(volume / "new.png", 2, now_epoch)
+    plan = sp.plan_purge(root, NOW, comfyui_output_dir=volume)
+    assert plan["comfyui-output"]["root"] == volume
+    assert plan["comfyui-output"]["total"] == 3
+    sp.execute_purge(plan, force=True)
+    assert not (volume / "old.png").exists()
+    assert not (volume / "job" / "old_frame.png").exists()
+    assert (volume / "new.png").exists()
+    # the stale copy under data/ is no longer the output bucket: left alone
+    assert (root / "comfyui-output" / "old.png").exists()
+
+
+def test_a_target_outside_its_bucket_root_is_never_deleted(tmp_path):
+    root = tmp_path / "data"
+    volume = tmp_path / "comfyui-output-volume"
+    elsewhere = tmp_path / "elsewhere.png"
+    _aged_file(elsewhere, 30, NOW.timestamp())
+    plan = sp.plan_purge(root, NOW, comfyui_output_dir=volume)
+    plan["comfyui-output"]["targets"].append(elsewhere)
+    sp.execute_purge(plan, force=True)
+    assert elsewhere.exists()
+
+
+def test_cli_reads_the_output_dir_from_the_environment(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "data"
+    root.mkdir()
+    volume = tmp_path / "comfyui-output-volume"
+    _aged_file(volume / "old.png", 30, datetime.now(UTC).timestamp())
+    _aged_file(volume / "new.png", 0, datetime.now(UTC).timestamp())
+    monkeypatch.setenv("COMFYUI_OUTPUT_DIR", str(volume))
+    monkeypatch.setattr("sys.argv", ["storage_purge.py", "--data-root", str(root), "--apply"])
+    assert sp.main() == 0
+    assert not (volume / "old.png").exists()
+    assert (volume / "new.png").exists()
+    assert "[comfyui-output] deleted 1 item(s)" in capsys.readouterr().out

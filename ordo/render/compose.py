@@ -43,12 +43,16 @@ _CORE = ["inference-engine-gpu", "litellm-db", "model-gateway", "model-gateway-k
 # How `ordo backup` saves the named volumes the core services own (ordo/render/backup_policy.py);
 # the plugin and agent manifests declare theirs under `backup:`. The model stores are re-derivable
 # (`ordo fetch`, `download_comfyui_model`) and far larger than everything else put together. The
-# ComfyUI app tree holds the operator's custom nodes and has no database in it.
+# ComfyUI app tree holds the operator's custom nodes and has no database in it. ComfyUI's render
+# outputs are mounted by the comfyui plugin, the agent and the dashboard, so the declaration lives
+# here, where it holds whichever of them a render enables; they are transient (scripts/storage_purge.py
+# deletes them after 21 days) and were never in the archive when they were a host directory.
 CORE_BACKUP: dict[str, str] = {
     "litellm-db-data": "pg_dump",
     "models-gguf": "skip",
     "comfyui-models": "skip",
     "comfyui-app": "live",
+    "comfyui-output": "skip",
 }
 
 # Build contexts for the SUBSTRATE images: the project images with NO manifest (`_model_gateway`,

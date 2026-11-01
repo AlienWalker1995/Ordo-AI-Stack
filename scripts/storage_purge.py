@@ -12,7 +12,10 @@ Retention policy (introduced in #51):
     (metrics rewrites meta.json and would reset mtime).
   - Unrendered reel drafts (data/drafts-pending/<YYYY-MM-DD>_<slug>/): delete > 3
     days. Each is a news story written for the next render; by then it is stale.
-  - ComfyUI output (data/comfyui-output/): delete files > 21 days (mtime).
+  - ComfyUI output: delete files > 21 days (mtime). It lives on the comfyui-output
+    named volume, not in data/, so this bucket reads --comfyui-output-dir (default:
+    $COMFYUI_OUTPUT_DIR, which the agent container sets to its mount of the volume,
+    /workspace/data/comfyui-output; else data/comfyui-output).
   - ComfyUI input/temp (data/comfyui-storage/ComfyUI/{input,temp}): > 21 days.
   - Backups/snapshots (data/_backups/*, data/hermes/state-snapshots/*): keep
     newest 3 per location.
@@ -26,6 +29,7 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
@@ -124,14 +128,14 @@ def _plan_drafts(root, now, max_age_days, folder="drafts"):
             if draft_expired(d.name, now, max_age_days):
                 targets.append(d)
                 size += _dir_size(d)
-    return {"targets": targets, "total": total, "bytes": size}
+    return {"targets": targets, "total": total, "bytes": size, "root": root}
 
 
-def _plan_mtime(root, now, subdirs, max_age_days):
+def _plan_mtime(root, now, dirs, max_age_days):
+    """Files older than max_age_days (mtime) under each of ``dirs``, all inside ``root``."""
     now_epoch = now.timestamp()
     targets, total, size = [], 0, 0
-    for rel in subdirs:
-        d = root / rel
+    for d in dirs:
         if not d.is_dir():
             continue
         for p in d.rglob("*"):
@@ -145,7 +149,7 @@ def _plan_mtime(root, now, subdirs, max_age_days):
             if is_older_than(st.st_mtime, now_epoch, max_age_days):
                 targets.append(p)
                 size += st.st_size
-    return {"targets": targets, "total": total, "bytes": size}
+    return {"targets": targets, "total": total, "bytes": size, "root": root}
 
 
 def _plan_keep_newest(root, locations, keep):
@@ -160,38 +164,44 @@ def _plan_keep_newest(root, locations, keep):
             d = loc / name
             targets.append(d)
             size += _dir_size(d)
-    return {"targets": targets, "total": total, "bytes": size}
+    return {"targets": targets, "total": total, "bytes": size, "root": root}
 
 
 def plan_purge(data_root, now, draft_days=DRAFT_MAX_AGE_DAYS,
                mtime_days=COMFY_MAX_AGE_DAYS, keep=BACKUPS_KEEP,
-               pending_days=PENDING_DRAFT_MAX_AGE_DAYS):
-    """Walk every bucket and return what *would* be deleted. No side effects."""
+               pending_days=PENDING_DRAFT_MAX_AGE_DAYS, comfyui_output_dir=None):
+    """Walk every bucket and return what *would* be deleted. No side effects.
+
+    Each bucket carries the ``root`` its deletions must stay inside: ``data_root``, except the
+    ComfyUI output bucket, which is ``comfyui_output_dir`` (default ``data_root/comfyui-output``).
+    """
+    output_dir = Path(comfyui_output_dir) if comfyui_output_dir else data_root / "comfyui-output"
+    comfy_input_dirs = [data_root / rel for rel in COMFY_INPUT_DIRS]
     return {
         "drafts": _plan_drafts(data_root, now, draft_days),
         "drafts-pending": _plan_drafts(data_root, now, pending_days, folder="drafts-pending"),
-        "comfyui-output": _plan_mtime(data_root, now, ["comfyui-output"], mtime_days),
-        "comfyui-input": _plan_mtime(data_root, now, COMFY_INPUT_DIRS, mtime_days),
+        "comfyui-output": _plan_mtime(output_dir, now, [output_dir], mtime_days),
+        "comfyui-input": _plan_mtime(data_root, now, comfy_input_dirs, mtime_days),
         "backups": _plan_keep_newest(data_root, BACKUP_LOCATIONS, keep),
     }
 
 
-def execute_purge(plan, data_root, force=False):
+def execute_purge(plan, force=False):
     """Delete the planned targets, per-bucket cap-guarded unless ``force``.
 
-    Every target is re-checked with ``within_root`` before unlinking — deletions
-    can never escape ``data_root``.
+    Every target is re-checked with ``within_root`` against its bucket's ``root``
+    before unlinking, so deletions can never escape the directory a bucket covers.
     """
     results = {}
     for bucket, p in plan.items():
-        targets, total, size = p["targets"], p["total"], p["bytes"]
+        targets, total, size, root = p["targets"], p["total"], p["bytes"], p["root"]
         if exceeds_cap(len(targets), total, size) and not force:
             results[bucket] = {"deleted": 0, "freed": 0, "aborted": True,
                                "would_delete": len(targets), "would_free": size}
             continue
         deleted, freed = 0, 0
         for t in targets:
-            if not within_root(t, data_root):
+            if not within_root(t, root):
                 continue
             try:
                 if t.is_dir():
@@ -252,13 +262,16 @@ def main():
     parser.add_argument("--force", action="store_true", help="Bypass the per-bucket safety cap")
     parser.add_argument("--json", action="store_true", help="Machine-readable output")
     parser.add_argument("--data-root", default=None, help="Override data/ root (testing)")
+    parser.add_argument("--comfyui-output-dir", default=os.environ.get("COMFYUI_OUTPUT_DIR") or None,
+                        help="ComfyUI output dir (the comfyui-output volume's mount; "
+                             "default: $COMFYUI_OUTPUT_DIR, else <data-root>/comfyui-output)")
     args = parser.parse_args()
 
     data_root = Path(args.data_root) if args.data_root else Path(__file__).resolve().parent.parent / "data"
     now = datetime.now(UTC)
 
-    plan = plan_purge(data_root, now)
-    applied = execute_purge(plan, data_root, force=args.force) if args.apply else None
+    plan = plan_purge(data_root, now, comfyui_output_dir=args.comfyui_output_dir)
+    applied = execute_purge(plan, force=args.force) if args.apply else None
 
     if args.json:
         out = {

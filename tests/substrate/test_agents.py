@@ -135,10 +135,13 @@ def test_render_agent_mounts_brain_workspace_and_mirror(tmp_path):
     # (/workspace/data/hermes/skills/...). Without it that path falls through to the host copy
     # under the /workspace/data bind and silently runs stale scripts.
     assert "hermes-home:/workspace/data/hermes" in vols
+    # ComfyUI's outputs, the same way: the comfyui-output volume over the path skills read them at.
+    assert "comfyui-output:/workspace/data/comfyui-output" in vols
     assert any(v.endswith(":/workspace/data") for v in vols)
     assert any(v.endswith(":/c/dev") for v in vols)
     # Compose requires a bare-name volume source to be declared at top level or it refuses to start.
     assert "hermes-home" in (c.get("volumes") or {})
+    assert "comfyui-output" in (c.get("volumes") or {})
 
 
 def test_render_agent_mounts_file_secrets_readonly(tmp_path):
