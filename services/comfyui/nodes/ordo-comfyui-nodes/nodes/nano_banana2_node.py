@@ -4,7 +4,7 @@ OrdoNanoBanana2Node — text-to-image generation via LiteLLM proxy (Gemini Flash
 
 import logging
 
-from .litellm_utils import call_litellm_image_generation, SAFETY_CATEGORIES
+from .litellm_utils import SAFETY_CATEGORIES, call_litellm_image_generation
 
 logger = logging.getLogger("Ordo")
 

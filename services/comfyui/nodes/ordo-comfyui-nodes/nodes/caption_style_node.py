@@ -1,7 +1,8 @@
 """Ordo Caption Style — visual configuration node for captions."""
 
 import logging
-from .caption_types import DEFAULT_STYLE, STYLE_PRESETS, PRESET_NAMES, _resolve_preset_font, get_system_fonts
+
+from .caption_types import DEFAULT_STYLE, PRESET_NAMES, STYLE_PRESETS, _resolve_preset_font, get_system_fonts
 
 logger = logging.getLogger("Ordo")
 

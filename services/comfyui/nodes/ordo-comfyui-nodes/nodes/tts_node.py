@@ -3,8 +3,6 @@
 import asyncio
 import io
 import logging
-import torch
-import numpy as np
 
 logger = logging.getLogger("Ordo")
 

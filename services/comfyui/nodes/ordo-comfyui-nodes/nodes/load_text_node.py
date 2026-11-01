@@ -1,9 +1,10 @@
 # Forked from VibeVoice-ComfyUI (MIT licensed) by Fabio Sarracino
 # Modified for Ordo-ComfyUI: updated class name and CATEGORY
 
-import os
-import logging
 import hashlib
+import logging
+import os
+
 import folder_paths
 
 # Setup logging
@@ -45,7 +46,7 @@ class OrdoLoadTextFromFileNode:
         try:
             for f in os.listdir(dir_path):
                 if os.path.isfile(os.path.join(dir_path, f)):
-                    if f.lower().endswith(('.txt')):
+                    if f.lower().endswith('.txt'):
                         files.append(f)
         except Exception as e:
             logger.warning(f"Error listing files in {source_dir}: {e}")
@@ -82,7 +83,7 @@ class OrdoLoadTextFromFileNode:
             if not os.path.exists(file_path):
                 raise Exception(f"File not found: {file_path}")
 
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, encoding='utf-8') as f:
                 text_content = f.read()
 
             if not text_content.strip():
@@ -125,7 +126,7 @@ class OrdoLoadTextFromFileNode:
             with open(file_path, 'rb') as f:
                 m.update(f.read())
             return m.digest().hex()
-        except:
+        except Exception:
             return f"{file}_error"
 
     @classmethod

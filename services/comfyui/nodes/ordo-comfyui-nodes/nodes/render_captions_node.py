@@ -10,13 +10,12 @@ Supports multi-track captions and per-word style overrides.
 
 import gc
 import logging
-import math
 
 import numpy as np
 import torch
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from .caption_types import DEFAULT_STYLE, hex_to_rgb, hex_to_rgba
+from .caption_types import DEFAULT_STYLE, hex_to_rgb
 
 logger = logging.getLogger("Ordo")
 
@@ -418,7 +417,6 @@ class OrdoRenderCaptionsNode:
         shadow_rgb = hex_to_rgb(shadow_color_hex)
         shadow_alpha = int(shadow_opacity * 255)
         fill_rgb = hex_to_rgb(fill_color_hex)
-        stroke_rgb = hex_to_rgb(stroke_color_hex)
 
         sx, sy = style.get("shadow_offset_x", 4), style.get("shadow_offset_y", 4)
 

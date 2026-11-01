@@ -13,7 +13,6 @@ not invoked from the ComfyUI GUI directly.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 
 SCRIPT_PATH = "/root/ComfyUI/scripts/render_reel.py"

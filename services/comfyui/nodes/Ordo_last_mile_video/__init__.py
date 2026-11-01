@@ -6,13 +6,13 @@ Three small nodes that fill gaps in the installed pack set:
 - OrdoAudioConcat: concatenate two ComfyUI AUDIO dicts (main VO + endcard audio)
 """
 
-from .nodes.word_timings_to_text import OrdoWordTimingsToText
-from .nodes.dvd_logo_overlay import OrdoDVDLogoOverlay
 from .nodes.audio_concat import OrdoAudioConcat
 from .nodes.bypass_toggle import OrdoBypassToggle
 from .nodes.caption_fixups import OrdoCaptionFixups
+from .nodes.dvd_logo_overlay import OrdoDVDLogoOverlay
 from .nodes.llm_refine import OrdoLLMRefine
 from .nodes.stage_bypass_panel import OrdoStageBypassPanel
+from .nodes.word_timings_to_text import OrdoWordTimingsToText
 
 NODE_CLASS_MAPPINGS = {
     "OrdoWordTimingsToText": OrdoWordTimingsToText,

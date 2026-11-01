@@ -34,12 +34,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {}
 # ── Caption nodes (always available) ─────────────────────────────────────
 
 try:
+    from .nodes.caption_studio_node import OrdoCaptionStudioNode
     from .nodes.caption_style_node import OrdoCaptionStyleNode
-    from .nodes.transcribe_node import OrdoTranscribeAudioNode
-    from .nodes.tts_node import OrdoTTSEdgeNode
     from .nodes.render_captions_node import OrdoRenderCaptionsNode
     from .nodes.timing_editor_node import OrdoTimingEditorNode
-    from .nodes.caption_studio_node import OrdoCaptionStudioNode
+    from .nodes.transcribe_node import OrdoTranscribeAudioNode
+    from .nodes.tts_node import OrdoTTSEdgeNode
 
     NODE_CLASS_MAPPINGS["OrdoCaptionStyle"] = OrdoCaptionStyleNode
     NODE_DISPLAY_NAME_MAPPINGS["OrdoCaptionStyle"] = "Ordo Caption Style"
@@ -76,9 +76,9 @@ except Exception as e:
 # ── AI Image Generation nodes ─────────────────────────────────────────────
 
 try:
-    from .nodes.proxy_config_node import OrdoProxyConfigNode
-    from .nodes.nano_banana2_node import OrdoNanoBanana2Node
     from .nodes.nano_banana2_edit_node import OrdoNanoBanana2EditNode
+    from .nodes.nano_banana2_node import OrdoNanoBanana2Node
+    from .nodes.proxy_config_node import OrdoProxyConfigNode
     NODE_CLASS_MAPPINGS["OrdoProxyConfig"] = OrdoProxyConfigNode
     NODE_CLASS_MAPPINGS["OrdoNanoBanana2"] = OrdoNanoBanana2Node
     NODE_CLASS_MAPPINGS["OrdoNanoBanana2Edit"] = OrdoNanoBanana2EditNode

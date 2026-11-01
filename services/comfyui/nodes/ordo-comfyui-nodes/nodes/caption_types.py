@@ -10,9 +10,9 @@ ORDO_WORD_TIMINGS: list of dicts, each with keys:
 ORDO_CAPTION_STYLE: dict with visual configuration keys (see DEFAULT_STYLE).
 """
 
+import logging
 import os
 import sys
-import logging
 
 logger = logging.getLogger("Ordo")
 

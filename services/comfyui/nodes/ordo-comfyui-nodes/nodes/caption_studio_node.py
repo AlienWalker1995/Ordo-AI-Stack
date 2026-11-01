@@ -11,18 +11,14 @@ import io
 import json
 import logging
 import math
-import os
 import wave
 
 import numpy as np
-import torch
 from PIL import Image
 
 from .caption_types import (
     DEFAULT_STYLE,
     STYLE_PRESETS,
-    PRESET_NAMES,
-    OVERRIDE_FIELDS,
     _resolve_preset_font,
     get_system_fonts,
 )

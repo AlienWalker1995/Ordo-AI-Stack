@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional, Tuple
 
 logger = logging.getLogger("Ordo")
 
@@ -45,7 +44,7 @@ def _split_shots(inner: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
-def _parse_shot_header(part: str) -> Tuple[Optional[str], Optional[str], str]:
+def _parse_shot_header(part: str) -> tuple[str | None, str | None, str]:
     """Return (shot_id, time_range, rest) or (None, None, part)."""
     m = re.match(
         r"(S\d+)\s+\[([^\]]+)\]\s*:\s*(.*)",
@@ -73,8 +72,8 @@ def _parse_fields(rest: str) -> dict[str, str]:
 
 
 def _fields_to_paragraph(
-    shot_id: Optional[str],
-    time_range: Optional[str],
+    shot_id: str | None,
+    time_range: str | None,
     fields: dict,
 ) -> str:
     lines = []
@@ -164,8 +163,8 @@ def _nano_still_plus_interior_context(
 
 
 def _still_prompt_for_shot(
-    shot_id: Optional[str],
-    time_range: Optional[str],
+    shot_id: str | None,
+    time_range: str | None,
     fields: dict,
     prefer_key: str,
 ) -> str:
@@ -183,7 +182,7 @@ def _still_prompt_for_shot(
 
 def convert_shot_breakdown_to_ltx_prompt_v3(
     raw: str, max_chars: int = 6000
-) -> Tuple[str, str, str]:
+) -> tuple[str, str, str]:
     """
     Middle-only LTX prompt (drops first and last shot blocks from the narrative),
     plus prompts for first/last stills (Nano Banana 2).
@@ -196,7 +195,7 @@ def convert_shot_breakdown_to_ltx_prompt_v3(
     inner = _strip_xml_wrappers(raw)
     shots = _split_shots(inner)
 
-    parsed_blocks: list[tuple[Optional[str], Optional[str], dict[str, str]]] = []
+    parsed_blocks: list[tuple[str | None, str | None, dict[str, str]]] = []
     for part in shots:
         sid, tr, rest = _parse_shot_header(part)
         if sid is None:
@@ -221,7 +220,7 @@ def convert_shot_breakdown_to_ltx_prompt_v3(
     )
 
     if len(parsed_blocks) == 1:
-        middle_shots: list[tuple[Optional[str], Optional[str], dict]] = []
+        middle_shots: list[tuple[str | None, str | None, dict]] = []
     else:
         middle_shots = parsed_blocks[1:-1]
 

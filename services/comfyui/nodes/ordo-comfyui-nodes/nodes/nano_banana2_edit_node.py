@@ -5,12 +5,13 @@ Accepts a primary reference image plus up to 5 additional optional images.
 """
 
 import logging
+
 import torch
 
 from .litellm_utils import (
+    SAFETY_CATEGORIES,
     build_image_content_parts,
     call_litellm_image_generation,
-    SAFETY_CATEGORIES,
 )
 
 logger = logging.getLogger("Ordo")

@@ -5,16 +5,15 @@ Provides tensor ↔ base64 conversion, multimodal content building,
 and the core API call to a LiteLLM /v1/chat/completions endpoint.
 """
 
-import io
 import base64
+import io
 import logging
 import random
 
 import numpy as np
+import requests
 import torch
 from PIL import Image
-
-import requests
 
 logger = logging.getLogger("Ordo")
 
@@ -228,7 +227,7 @@ def call_litellm_image_generation(
         )
     except requests.Timeout:
         raise RuntimeError(
-            f"Request to LiteLLM proxy timed out after 120s. "
+            "Request to LiteLLM proxy timed out after 120s. "
             "The model may be overloaded — try again later."
         )
 

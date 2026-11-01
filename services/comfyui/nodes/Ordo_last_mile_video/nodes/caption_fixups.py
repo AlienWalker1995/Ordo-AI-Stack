@@ -26,7 +26,6 @@ Lines starting with `#` are comments. Blank lines ignored.
 import logging
 import re
 
-
 logger = logging.getLogger("Ordo")
 
 
