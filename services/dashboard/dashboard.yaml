@@ -87,6 +87,10 @@ volumes:
   # delete removes the file the backends load; 9p bind retired 2026-08-07 (see ordo/render/compose.py).
   - models-gguf:/gguf-models
   - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/dashboard:/data/dashboard
+  # ComfyUI's render outputs (the comfyui-output volume, services/comfyui/plugin.yaml), read-only at
+  # the path GET /api/orchestration/outputs lists (COMFYUI_OUTPUT_DIR's default in
+  # routes_orchestration.py). Before this mount that route always answered an empty list.
+  - comfyui-output:/comfyui-output:ro
   # ${BASE_PATH}/out/ (not ./) on the two binds below: ops-controller recreates the dashboard
   # with the project dir at its own /config mount, where ./x resolves to a host path that
   # does not exist (tests/substrate/test_compose.py pins this).

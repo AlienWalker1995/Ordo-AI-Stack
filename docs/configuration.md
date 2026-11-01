@@ -400,7 +400,6 @@ Host bind mounts (reachable from Windows):
 | `data/ops-controller/` | Audit logs |
 | *(none)* | MCP config is no longer host-bind state: `ordo render` writes `out/mcp/servers.json` and `out/model-gateway/mcp_servers.yaml` |
 | `data/dashboard/` | Dashboard throughput / benchmark data |
-| `data/comfyui-output/` | ComfyUI render outputs |
 | `models/gguf/` | Optional host copy of GGUFs (`ordo fetch --models-dir`, the native path); not mounted by services |
 
 Named volumes (state; back up via a helper container, see [data.md](data.md)):
@@ -415,6 +414,7 @@ Named volumes (state; back up via a helper container, see [data.md](data.md)):
 | `models-gguf` | llama.cpp GGUF weights (what the backends actually read) |
 | `comfyui-models` | ComfyUI checkpoints, LoRAs, VAEs, encoders |
 | `comfyui-app` | ComfyUI application tree + custom nodes (version-pinned — see below) |
+| `comfyui-output` | ComfyUI render outputs (the asset scan walks them; reachable from Windows over `\\wsl.localhost`, see [data.md](data.md#comfyui-outputs)) |
 | `langfuse-db-data` | Langfuse Postgres (projects, users, API keys, datasets, scores) |
 | `langfuse-clickhouse-data` / `langfuse-clickhouse-logs` | Langfuse traces + observations (the high-volume half) |
 | `langfuse-redis-data` | Langfuse ingestion queue |

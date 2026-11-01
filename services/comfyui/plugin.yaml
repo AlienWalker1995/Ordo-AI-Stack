@@ -152,8 +152,16 @@ services:
       # where ComfyUI reads. (The old COMFYUI_MODELS_PATH override relocated the host
       # bind — moot for a named volume, removed.)
       - comfyui-models:/root/ComfyUI/models:ro
-      # Render outputs — staged under the V2 data root.
-      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/comfyui-output:/root/ComfyUI/output
+      # Render outputs: a NAMED VOLUME (ext4), not the old data/comfyui-output 9p bind. The
+      # asset system (--enable-assets) scans models, input AND output whenever GET /object_info
+      # finds it idle; one stat on the 9p bind cost 6.86 ms vs 0.003 ms on a volume, so a
+      # ~4,000-file output tree took 25-44 s per scan and blocked the HTTP loop (the UI asset
+      # panel timed out with an empty list). Every reader mounts this same volume at the path it
+      # used before: the agent at /workspace/data/comfyui-output, the dashboard at
+      # /comfyui-output. Backup: `skip` in compose.CORE_BACKUP (transient renders, purged after
+      # 21 days by scripts/storage_purge.py). Windows access and the one-time seed from the old
+      # host dir: docs/data.md "ComfyUI outputs".
+      - comfyui-output:/root/ComfyUI/output
       # Boot reconciler + the repo-owned workflow templates it seeds. Read-only, and tiny —
       # the 9p pathology that drove the app tree and the weights onto named volumes is an
       # I/O-volume problem, not a "no binds ever" rule; inference-engine-gpu mounts its run script the
