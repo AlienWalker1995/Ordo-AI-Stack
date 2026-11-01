@@ -1,5 +1,5 @@
 {
-  "_doc": "ComfyUI custom node packs the stack declares. scripts/comfyui/boot.sh reconciles each one to its pinned commit on every start (clone when missing, fetch and detach when drifted), then installs its requirements.txt. Packs on the comfyui-app volume that are NOT listed here are left untouched (operator-installed, undeclared); add a pack here to make it reproducible. Bump a ref deliberately and say why in the entry's note.",
+  "_doc": "ComfyUI custom node packs the stack declares. scripts/comfyui/boot.sh reconciles each one to its pinned commit on every start (clone when missing, fetch and detach when drifted), then installs its requirements.txt (and, for packs that ship a comfy-env-root.toml, builds their isolated pixi worker env via `comfy-env install`). Packs on the comfyui-app volume that are NOT listed here are left untouched (operator-installed, undeclared); add a pack here to make it reproducible. Bump a ref deliberately and say why in the entry's note.",
   "packs": [
     {
       "name": "ComfyUI-LTXVideo",
@@ -18,6 +18,18 @@
       "url": "https://github.com/wildminder/ComfyUI-Chatterbox.git",
       "ref": "4597af8f59d4460d441e13533eae24b092e40952",
       "note": "2026-10-16 v2.0.3. OSS Chatterbox TTS (Resemble AI) for the dark-patterns-reel narration, replacing VibeVoice. Node classes ChatterboxTTS/MTLTTS/SRT/Dialog/VC; only extra dep is s3tokenizer. Classic English pack (ResembleAI/chatterbox: ve/t3_cfg/s3gen.safetensors + tokenizer.json + conds.pt) is pre-staged into the comfyui-models volume at tts/chatterbox/resembleai_default_voice so first run does not float-download."
+    },
+    {
+      "name": "ComfyUI-TRELLIS2",
+      "url": "https://github.com/PozzettiAndrea/ComfyUI-TRELLIS2.git",
+      "ref": "3e696f2cf174dba141c9efce0205e9a2d87e908a",
+      "note": "2026-07-31 main @ 3e696f2 (upstream HEAD; dev at cdcd578 needs comfy-env 0.4.x). Only change over the May copy (9b87851) is comfy-kitchen in the worker env, which ComfyUI 0.41's comfy/quant_ops imports. The heavy nodes must run in the comfy-env pixi worker (trellis2-nodes): in-process they hit comfy-aimdo lazy weight init and Trellis2ImageToShape dies with StopIteration in model.py's device property. CUDA deps (cumesh_vb, o_voxel_vb_ap, flex_gemm_ap, drtk) come from the pack's nodes/comfy-env.toml via boot.sh's comfy-env step, never the main env."
+    },
+    {
+      "name": "ComfyUI-GeometryPack",
+      "url": "https://github.com/PozzettiAndrea/ComfyUI-GeometryPack.git",
+      "ref": "1cbd14431bc88df27e5368f3e375b6bafd09006e",
+      "note": "2026-07-31 main @ 1cbd144 (upstream HEAD, same comfy-kitchen worker-env fix). Declared because ComfyUI-TRELLIS2 lists it in [node_reqs] and its nodes/comfy-env.toml is solved in the same comfy-env pixi workspace, so an unpinned copy would make the TRELLIS2 env build unreproducible."
     }
   ]
 }
