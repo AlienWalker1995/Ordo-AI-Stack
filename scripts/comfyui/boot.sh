@@ -231,11 +231,64 @@ install_custom_node_deps() {
   done
 }
 
+# --- 5. comfy-env isolated worker envs --------------------------------------------------
+# Some packs (ComfyUI-TRELLIS2, ComfyUI-GeometryPack) run their heavy nodes in a subprocess
+# worker inside a pixi env that comfy-env builds from the pack's nodes/comfy-env.toml (the
+# pack's own install.py is just `comfy_env.install()`, which ComfyUI-Manager would run on
+# install). requirements.txt only puts comfy-env itself in the main env, so step 4 alone never
+# builds the worker env. When it is missing, comfy-env silently falls back to importing the
+# nodes in the main process, where DynamicVRAM (comfy-aimdo) is on and comfy.ops creates
+# weights lazily: TRELLIS2's `device` property then dies with StopIteration. The worker never
+# runs main.py, so aimdo stays off there and the pack works as upstream designed it.
+#
+# comfy-env downloads pixi from the floating `releases/latest` URL when ~/.pixi/bin/pixi is
+# missing; pre-placing a pinned, checksum-verified binary there means it never does. 0.68.1 is
+# the last pixi release before comfy-env 0.3.89 (the version both packs pin) was published.
+#
+# `comfy-env install` hashes its inputs (comfy-env version + every nodes/comfy-env.toml) into
+# /root/.ce/install.hash and skips when they are unchanged, so the steady-state boot is
+# offline-safe; the first run solves and downloads the envs (several GB, minutes). One run
+# covers the whole workspace, later packs hit the hash. Best-effort like step 4: a failed
+# solve writes no hash (so the next boot retries) and must not block every other node.
+PIXI_VERSION=0.68.1
+PIXI_SHA256=01d29d4b78ab07badf57edda0b3d200bc705d5afb6da9960ebabe7010cd836e4
+PIXI_BIN=/root/.pixi/bin/pixi
+
+ensure_pinned_pixi() {
+  if [ -f "$PIXI_BIN" ] && echo "$PIXI_SHA256  $PIXI_BIN" | sha256sum -c --status; then
+    return 0
+  fi
+  log "installing pinned pixi ${PIXI_VERSION}"
+  local tmp="$PIXI_BIN.tmp"
+  mkdir -p "$(dirname "$PIXI_BIN")"
+  curl -fsSL --retry 3 -o "$tmp" \
+    "https://github.com/prefix-dev/pixi/releases/download/v${PIXI_VERSION}/pixi-x86_64-unknown-linux-musl" \
+    || { rm -f "$tmp"; log "WARN pixi download failed"; return 1; }
+  echo "$PIXI_SHA256  $tmp" | sha256sum -c --status \
+    || { rm -f "$tmp"; log "WARN pixi ${PIXI_VERSION} checksum mismatch"; return 1; }
+  chmod 755 "$tmp"
+  mv -f "$tmp" "$PIXI_BIN"
+}
+
+install_comfy_env_workers() {
+  local root dir
+  for root in "$COMFY_DIR"/custom_nodes/*/comfy-env-root.toml; do
+    [ -f "$root" ] || continue
+    command -v comfy-env >/dev/null || { log "WARN comfy-env not installed; worker envs not built"; return 0; }
+    # Without the pinned binary comfy-env would fetch pixi `latest`; skip rather than float.
+    ensure_pinned_pixi || { log "WARN no pinned pixi; worker envs not built"; return 0; }
+    dir="$(dirname "$root")"
+    log "comfy-env install for $(basename "$dir")"
+    comfy-env install --dir "$dir" || log "WARN comfy-env install failed for $dir"
+  done
+}
+
 reconcile_app
 install_runtime_deps
 seed_workflows
 reconcile_custom_nodes
 install_custom_node_deps
+install_comfy_env_workers
 
 log "handing off to the image entrypoint"
 exec bash /runner-scripts/entrypoint.sh
