@@ -42,12 +42,16 @@ class OrdoLoadTextFromFileNode:
         else:
             return []
 
+        # Runs on every /object_info. The output dir is a 9p bind holding thousands of renders, where a
+        # stat per entry (os.path.isfile on each name) cost ~22 s for 3,300 files. Filter on the name
+        # first, then ask scandir's entry, which answers from the directory listing's file type and
+        # only stats when the filesystem did not report one.
         files = []
         try:
-            for f in os.listdir(dir_path):
-                if os.path.isfile(os.path.join(dir_path, f)):
-                    if f.lower().endswith('.txt'):
-                        files.append(f)
+            with os.scandir(dir_path) as entries:
+                for entry in entries:
+                    if entry.name.lower().endswith('.txt') and entry.is_file():
+                        files.append(entry.name)
         except Exception as e:
             logger.warning(f"Error listing files in {source_dir}: {e}")
 
