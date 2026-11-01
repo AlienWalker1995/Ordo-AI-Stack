@@ -252,6 +252,7 @@ def test_existing_clone_is_fetched_from_the_declared_remote(tmp_path):
 # --- the declared set: repo-owned packs + the manifest, and only they get dependencies -----------
 
 NODES_DIR = ROOT / "services" / "comfyui" / "nodes"
+SCRIPTS_DIR = ROOT / "services" / "comfyui" / "scripts"
 PLUGIN = ROOT / "services" / "comfyui" / "plugin.yaml"
 
 
@@ -275,7 +276,8 @@ def _run_boot(comfy_dir, body, env=None, expect_rc=0):
         *(f"export {k}={shlex.quote(str(v))}" for k, v in (env or {}).items()),
         "DECLARED_PACKS=()",
         marker,
-        *(_boot_function(n) for n in ("sync_repo_nodes", "reconcile_custom_nodes", "install_custom_node_deps")),
+        *(_boot_function(n) for n in ("replace_dir_from_repo", "sync_repo_scripts", "sync_repo_nodes",
+                                      "reconcile_custom_nodes", "install_custom_node_deps")),
         body,
     ])
     r = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
@@ -424,3 +426,57 @@ def test_plugin_mounts_the_repo_nodes_read_only_as_config():
     text = PLUGIN.read_text(encoding="utf-8")
     assert "${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/comfyui/nodes:/comfyui-nodes:ro" in text
     assert re.search(r"^\s*config_mounts: \[.*/comfyui-nodes.*\]$", text, re.M)
+
+
+# --- repo-owned scripts: the reel renderers the repo-owned packs shell out to ---------------------
+
+def test_repo_scripts_replace_the_volume_scripts_dir(tmp_path):
+    src = tmp_path / "repo-scripts"
+    src.mkdir()
+    (src / "render_reel.py").write_text("# repo\n", encoding="utf-8")
+    (src / "spoken_text.py").write_text("def spoken(s): return s\n", encoding="utf-8")
+    (src / "__pycache__").mkdir()
+    (src / "__pycache__" / "spoken_text.cpython-313.pyc").write_text("stale", encoding="utf-8")
+    comfy = tmp_path / "comfy"
+    old = comfy / "scripts"
+    old.mkdir(parents=True)
+    (old / "render_reel.py").write_text("# hand-edited on the volume\n", encoding="utf-8")
+    (old / "render_reel_dialogue.py.pre-s4-20260924").write_text("# backup\n", encoding="utf-8")
+    _run_boot(comfy, "sync_repo_scripts", env={"COMFYUI_REPO_SCRIPTS": src})
+    assert sorted(f.name for f in old.iterdir()) == ["render_reel.py", "spoken_text.py"]
+    assert (old / "render_reel.py").read_text(encoding="utf-8") == "# repo\n"
+    assert not (comfy / "scripts.tmp").exists()
+
+
+def test_no_repo_scripts_mount_is_a_skip_not_a_failure(tmp_path):
+    comfy = tmp_path / "comfy"
+    (comfy / "scripts").mkdir(parents=True)
+    (comfy / "scripts" / "keep.py").write_text("", encoding="utf-8")
+    r = _run_boot(comfy, "sync_repo_scripts", env={"COMFYUI_REPO_SCRIPTS": tmp_path / "absent"})
+    assert "skipping repo scripts sync" in r.stdout
+    assert (comfy / "scripts" / "keep.py").exists()
+
+
+def test_every_script_a_repo_pack_runs_is_in_the_repo():
+    # The RenderReel node and the /dialogue_reel/render route shell out to /root/ComfyUI/scripts/*.
+    # A volume loss must not leave them importing fine but failing at call time.
+    referenced = set()
+    for init in NODES_DIR.glob("*/__init__.py"):
+        text = init.read_text(encoding="utf-8")
+        referenced |= set(re.findall(r"/root/ComfyUI/scripts/([A-Za-z0-9_.-]+\.py)", text))
+    assert {"render_reel.py", "render_reel_dialogue.py"} <= referenced
+    for name in referenced:
+        assert (SCRIPTS_DIR / name).is_file(), f"{name} is run by a repo pack but not in services/comfyui/scripts"
+    # render_reel_dialogue.py imports its sibling module from the same dir.
+    dialogue = (SCRIPTS_DIR / "render_reel_dialogue.py").read_text(encoding="utf-8")
+    assert "from spoken_text import spoken" in dialogue
+    assert (SCRIPTS_DIR / "spoken_text.py").is_file()
+
+
+def test_boot_syncs_scripts_and_the_plugin_mounts_them():
+    text = BOOT.read_text(encoding="utf-8")
+    body = text[text.index("\nreconcile_app\n"):]
+    assert body.index("sync_repo_scripts") < body.index("install_custom_node_deps")
+    plugin = PLUGIN.read_text(encoding="utf-8")
+    assert "${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/comfyui/scripts:/comfyui-app-scripts:ro" in plugin
+    assert re.search(r"^\s*config_mounts: \[.*/comfyui-app-scripts.*\]$", plugin, re.M)

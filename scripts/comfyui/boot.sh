@@ -180,34 +180,49 @@ seed_workflows() {
   log "seeded repo workflows -> user/default/workflows/ordo ($(ls -1 "$dst" | wc -l) file(s))"
 }
 
-# --- 3a. repo-owned node packs ----------------------------------------------------------
-# The node packs Ordo itself authors live in the repo (services/comfyui/nodes/<pack>/, bind-mounted
-# read-only at /comfyui-nodes) and are copied into custom_nodes/ on every start, so the volume copy
-# always equals the repo: edit them in git, never on the volume. Each copy is built beside the live
-# dir and swapped in whole, and carries a marker file; a marked dir whose pack has left the repo is
-# removed, so deleting a pack in git deletes it from the volume too. Unmarked dirs (the pinned
-# upstream packs, operator installs) are never touched here.
+# --- 3a. repo-owned node packs and scripts ---------------------------------------------
+# The code Ordo itself authors for ComfyUI lives in the repo and is copied onto the volume on every
+# start, so the volume copy always equals the repo: edit it in git, never on the volume.
+#   - node packs: services/comfyui/nodes/<pack>/ (read-only at /comfyui-nodes) -> custom_nodes/<pack>
+#   - scripts:    services/comfyui/scripts/      (read-only at /comfyui-app-scripts) -> scripts/
+#     (the reel renderers that the RenderReel node and the /dialogue_reel/render route run)
+# Each copy is built beside the live dir and swapped in whole (replace_dir_from_repo). Node pack dirs
+# carry a marker file; a marked dir whose pack has left the repo is removed, so deleting a pack in
+# git deletes it from the volume too. Unmarked pack dirs (the pinned upstream packs, operator
+# installs) are never touched here. scripts/ is owned whole by the repo.
 #
-# Failure posture: these packs are declared, so a failed copy dies (as reconcile_custom_nodes does)
-# rather than start ComfyUI on node code that is not the repo's.
+# Failure posture: this code is declared, so a failed copy dies (as reconcile_custom_nodes does)
+# rather than start ComfyUI on code that is not the repo's.
 REPO_NODES_MARKER=.ordo-repo-pack
+
+# Replace the directory $2 with a copy of the repo directory $1 ($3 names it in messages).
+replace_dir_from_repo() {
+  local src="$1" dst="$2" what="$3" tmp="$2.tmp"
+  rm -rf "$tmp"
+  cp -R "$src" "$tmp" || die "could not copy $what"
+  # Interpreter caches never travel with the source (a checkout someone ran python in has them).
+  find "$tmp" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+  rm -rf "$dst"
+  mv "$tmp" "$dst" || die "could not install $what"
+}
+
+sync_repo_scripts() {
+  local src="${COMFYUI_REPO_SCRIPTS:-/comfyui-app-scripts}"
+  [ -d "$src" ] || { log "no repo scripts at $src — skipping repo scripts sync"; return 0; }
+  replace_dir_from_repo "$src" "$COMFY_DIR/scripts" "repo scripts"
+  log "repo scripts synced -> scripts/ ($(ls -1 "$COMFY_DIR/scripts" | wc -l) file(s))"
+}
 
 sync_repo_nodes() {
   local src_root="${COMFYUI_REPO_NODES:-/comfyui-nodes}"
   [ -d "$src_root" ] || { log "no repo node packs at $src_root — skipping repo pack sync"; return 0; }
-  local src name dst tmp marker
+  local src name dst marker
   for src in "$src_root"/*/; do
     [ -d "$src" ] || continue
     name="$(basename "$src")"
     dst="$COMFY_DIR/custom_nodes/$name"
-    tmp="$dst.tmp"
-    rm -rf "$tmp"
-    cp -R "$src" "$tmp" || die "could not copy repo node pack $name"
-    # Interpreter caches never travel with the source (a checkout someone ran python in has them).
-    find "$tmp" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-    : > "$tmp/$REPO_NODES_MARKER"
-    rm -rf "$dst"
-    mv "$tmp" "$dst" || die "could not install repo node pack $name"
+    replace_dir_from_repo "$src" "$dst" "repo node pack $name"
+    : > "$dst/$REPO_NODES_MARKER"
     DECLARED_PACKS+=("$name")
     log "repo node pack $name synced"
   done
@@ -374,6 +389,7 @@ install_comfy_env_workers() {
 reconcile_app
 install_runtime_deps
 seed_workflows
+sync_repo_scripts
 sync_repo_nodes
 reconcile_custom_nodes
 install_custom_node_deps
