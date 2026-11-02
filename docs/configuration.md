@@ -383,7 +383,7 @@ A catalog model's `backend_image` replaces the image, never the device wiring. N
 
 **ComfyUI `CLI_ARGS`:** Set `COMFYUI_CLI_ARGS` under `site:` in `ordo.yaml` (it flows verbatim into the rendered `.env`) and re-render. Without it, the rendered default is `--cpu --enable-manager`.
 
-**ComfyUI custom-node deps:** The `comfyui` container's startup wrapper auto-installs every `requirements.txt` it finds under `/root/ComfyUI/custom_nodes/*/` before launching ComfyUI. Idempotent (pip skips already-satisfied specifiers). Adding a new custom node? Drop it under `data/comfyui-storage/ComfyUI/custom_nodes/` and, from the repo root, `ordo recreate comfyui` — its deps land automatically. Failures on individual files (e.g. malformed pin) are logged as `[deps] WARN failed` and don't block startup. Packs the stack depends on are additionally pinned by commit in `scripts/comfyui/custom_nodes.json`; a drifted pack is moved back to its pinned commit on boot ([ComfyUI application version](#comfyui-application-version)). A dropped-in pack keeps its local changes until you list it there; a pack without `.git` is replaced wholesale on the next boot after listing, so move any downloaded weights out of its directory before listing it.
+**ComfyUI custom-node deps:** The `comfyui` container's startup wrapper installs the `requirements.txt` of every **declared** pack before launching ComfyUI — the repo-owned packs under `services/comfyui/nodes/` and the upstream packs listed in `scripts/comfyui/custom_nodes.json`. Idempotent (pip skips already-satisfied specifiers). A pack that is on the volume but declared in neither gets no dependencies; declare it (add it to `custom_nodes.json` or drop it under `services/comfyui/nodes/`) to get them. Failures on individual files (e.g. malformed pin) are logged as `[deps] WARN failed` and don't block startup. Packs the stack depends on are additionally pinned by commit in `scripts/comfyui/custom_nodes.json`; a drifted pack is moved back to its pinned commit on boot ([ComfyUI application version](#comfyui-application-version)). A dropped-in pack keeps its local changes until you list it there; a pack without `.git` is replaced wholesale on the next boot after listing, so move any downloaded weights out of its directory before listing it.
 
 ## Data Persistence Rules
 
@@ -446,6 +446,15 @@ such as downloaded weights are left in place), so bump the ref deliberately inst
 the pack. A pack with no `.git` (a zip copy or hand install) is replaced wholesale, so move any
 weights out of its directory before listing it. Packs on the volume the file does not list are
 left untouched.
+
+**Repo-owned packs and scripts.** The Ordo-authored node packs under `services/comfyui/nodes/`
+and the reel render scripts under `services/comfyui/scripts/` are synced into the container at
+every boot: each pack's directory is replaced wholesale from the repo (local edits on the volume
+are lost), and `/root/ComfyUI/scripts` is wholly replaced by `services/comfyui/scripts/`. A
+pack that is removed from the repo but still carries the `.ordo-repo-pack` marker on the volume
+is deleted at the next boot; operator-installed packs without the marker are left alone. Only
+declared packs (repo-owned + `custom_nodes.json`) have their `requirements.txt` installed; an
+undeclared pack on the volume gets no dependencies.
 
 To move ComfyUI versions:
 

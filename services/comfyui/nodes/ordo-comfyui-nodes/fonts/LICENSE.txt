@@ -1,0 +1,19 @@
+Bundled Fonts — License Information
+====================================
+
+Anton-Regular.ttf
+  License: SIL Open Font License 1.1
+  Source: https://github.com/googlefonts/AntonFont
+  Copyright 2020 The Anton Project Authors
+
+Roboto-Regular.ttf, Roboto-Bold.ttf
+  License: Apache License 2.0
+  Source: https://github.com/googlefonts/roboto
+  Copyright 2011 Google Inc.
+
+PlayfairDisplay-Variable.ttf
+  License: SIL Open Font License 1.1
+  Source: https://github.com/clauseggers/Playfair-Display
+  Copyright 2017 The Playfair Display Project Authors
+
+All fonts are freely redistributable under their respective licenses.

@@ -134,7 +134,7 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
       GITHUB_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
     # Read at start: an edit recreates the service on the next `ordo apply` (ordo/render/bind_configs.py).
-    config_mounts: [/comfyui-scripts]
+    config_mounts: [/comfyui-scripts, /comfyui-nodes, /comfyui-app-scripts]
     volumes:
       # ComfyUI app code + custom nodes: a NAMED VOLUME (ext4 in the WSL2 VM), not the old
       # data/comfyui-storage Windows bind. ComfyUI v0.30's startup I/O deterministically
@@ -168,10 +168,18 @@ services:
       # same way. Keeping the logic in a tracked, reviewable script (rather than a 20-line
       # YAML string) is what makes the version reconcile testable instead of folklore.
       - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/scripts/comfyui:/comfyui-scripts:ro
+      # The Ordo-authored node packs (services/comfyui/nodes/<pack>/). boot.sh copies each one into
+      # custom_nodes/ on every start, so the repo is their only source and the volume copy is
+      # rebuilt from it; read-only and small (a few MB), like the boot script above.
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/comfyui/nodes:/comfyui-nodes:ro
+      # The reel render scripts those packs run (services/comfyui/scripts/), copied over
+      # /root/ComfyUI/scripts on every start the same way.
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/comfyui/scripts:/comfyui-app-scripts:ro
     command:
       # Reconcile the app checkout to COMFYUI_APP_REF, install the Comfy-Org runtime pins
-      # that ref declares, seed repo-owned workflows, reconcile the declared custom
-      # node packs, install custom-node deps, then exec the image entrypoint. See
+      # that ref declares, seed repo-owned workflows, sync the repo-owned scripts and node packs,
+      # reconcile the pinned custom node packs, install the declared packs' deps, then exec
+      # the image entrypoint. See
       # scripts/comfyui/boot.sh for the full rationale.
       # HF_TOKEN / GITHUB_TOKEN come from the env above (secrets.env).
       - bash

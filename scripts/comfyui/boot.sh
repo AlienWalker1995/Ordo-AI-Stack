@@ -20,7 +20,14 @@
 set -euo pipefail
 
 COMFY_DIR=/root/ComfyUI
-SITE_LIB64=/usr/local/lib64/python3.12/site-packages
+# The image's platform site-packages (/usr/local/lib64/python3.X/site-packages), asked of the
+# interpreter rather than written down: a hard-coded python3.12 here outlived the move to the
+# python 3.13 runtime and silently turned the comfy_kitchen cleanup below into a no-op.
+SITE_LIB64="$(python3 -c 'import sysconfig; print(sysconfig.get_path("platlib"))')"
+# Every node pack the stack declares: the repo-owned packs (sync_repo_nodes) and the pinned
+# upstream packs (reconcile_custom_nodes) append their names as they reconcile them. Steps 4 and 5
+# install dependencies for these packs only, never for whatever else sits on the volume.
+DECLARED_PACKS=()
 
 log() { echo "[boot] $*"; }
 die() { echo "[boot] FATAL: $*" >&2; exit 1; }
@@ -73,9 +80,17 @@ COMFY_ORG_PKGS=(
   comfy-kitchen
   comfy-aimdo
 )
-# Not in requirements.txt (optional GLSL shader renderer for the comfyui_underwater /
-# shader nodes) — pinned here to the version this stack is validated against.
-EXTRA_PINS=(comfy-angle==0.1.0)
+# Not in requirements.txt, so pinned here to the version this stack is validated against:
+# - comfy-angle: optional GLSL shader renderer for the comfyui_underwater / shader nodes.
+# - comfyui-manager: the Manager that `--enable-manager` (COMFYUI_CLI_ARGS) loads. For current
+#   ComfyUI it is a pip package (README "ComfyUI-Manager": `pip install -r manager_requirements.txt`,
+#   then `--enable-manager`), not a custom_nodes/ComfyUI-Manager clone; with the package present,
+#   comfyui_manager.should_be_disabled() blocks any legacy *comfyui-manager* pack dir by policy.
+#   Without it, main.py prints "the `comfyui-manager` package must be installed first" and turns
+#   the flag off. 4.3 (PyPI 2026-09-18, tag 4.3 of Comfy-Org/ComfyUI-Manager) is the latest
+#   release: three security fixes over the 4.2.2 that v0.41.1's manager_requirements.txt names, and
+#   no change to the ComfyUI modules it imports. warn_manager_pin_vs_ref logs a ref that moves on.
+EXTRA_PINS=(comfy-angle==0.1.0 comfyui-manager==4.3)
 
 installed_version() {
   python3 - "$1" <<'PY' 2>/dev/null || true
@@ -117,6 +132,7 @@ install_runtime_deps() {
     have="$(installed_version "$pkg")"
     if [ "$have" = "$want" ]; then log "dep ok: ${spec}"; else specs+=("$spec"); fi
   done
+  warn_manager_pin_vs_ref
 
   if [ ${#specs[@]} -eq 0 ]; then
     log "runtime deps already reconciled"
@@ -137,6 +153,21 @@ install_runtime_deps() {
   log "runtime deps reconciled"
 }
 
+# The ref's own manager_requirements.txt names the Manager version that ComfyUI release was cut
+# against. The pin above is deliberate (a newer release), so a difference is not an error, but it
+# is logged, so a COMFYUI_APP_REF bump that moves past the pin is noticed rather than downgraded.
+warn_manager_pin_vs_ref() {
+  local req="$COMFY_DIR/manager_requirements.txt" spec pinned="" ref_spec
+  for spec in "${EXTRA_PINS[@]}"; do
+    case $spec in comfyui-manager==*) pinned="${spec##*==}";; esac
+  done
+  [ -n "$pinned" ] && [ -f "$req" ] || return 0
+  ref_spec="$(grep -m1 -iE '^comfyui[-_]manager==' "$req" || true)"
+  if [ -n "$ref_spec" ] && [ "${ref_spec##*==}" != "$pinned" ]; then
+    log "NOTE comfyui-manager pinned ${pinned}; this ComfyUI ref's manager_requirements.txt names ${ref_spec##*==}"
+  fi
+}
+
 # --- 3. repo-owned workflow templates ---------------------------------------------------
 # Seeded into a repo-owned namespace under the user workflows dir so operator-authored
 # graphs in the sibling dirs are never overwritten. Anything in `ordo/` is generated from
@@ -147,6 +178,62 @@ seed_workflows() {
   mkdir -p "$dst"
   cp -f "$src"/*.json "$dst"/ 2>/dev/null || true
   log "seeded repo workflows -> user/default/workflows/ordo ($(ls -1 "$dst" | wc -l) file(s))"
+}
+
+# --- 3a. repo-owned node packs and scripts ---------------------------------------------
+# The code Ordo itself authors for ComfyUI lives in the repo and is copied onto the volume on every
+# start, so the volume copy always equals the repo: edit it in git, never on the volume.
+#   - node packs: services/comfyui/nodes/<pack>/ (read-only at /comfyui-nodes) -> custom_nodes/<pack>
+#   - scripts:    services/comfyui/scripts/      (read-only at /comfyui-app-scripts) -> scripts/
+#     (the reel renderers that the RenderReel node and the /dialogue_reel/render route run)
+# Each copy is built beside the live dir and swapped in whole (replace_dir_from_repo). Node pack dirs
+# carry a marker file; a marked dir whose pack has left the repo is removed, so deleting a pack in
+# git deletes it from the volume too. Unmarked pack dirs (the pinned upstream packs, operator
+# installs) are never touched here. scripts/ is owned whole by the repo.
+#
+# Failure posture: this code is declared, so a failed copy dies (as reconcile_custom_nodes does)
+# rather than start ComfyUI on code that is not the repo's.
+REPO_NODES_MARKER=.ordo-repo-pack
+
+# Replace the directory $2 with a copy of the repo directory $1 ($3 names it in messages).
+replace_dir_from_repo() {
+  local src="$1" dst="$2" what="$3" tmp="$2.tmp"
+  rm -rf "$tmp"
+  cp -R "$src" "$tmp" || die "could not copy $what"
+  # Interpreter caches never travel with the source (a checkout someone ran python in has them).
+  find "$tmp" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+  rm -rf "$dst"
+  mv "$tmp" "$dst" || die "could not install $what"
+}
+
+sync_repo_scripts() {
+  local src="${COMFYUI_REPO_SCRIPTS:-/comfyui-app-scripts}"
+  [ -d "$src" ] || { log "no repo scripts at $src — skipping repo scripts sync"; return 0; }
+  replace_dir_from_repo "$src" "$COMFY_DIR/scripts" "repo scripts"
+  log "repo scripts synced -> scripts/ ($(ls -1 "$COMFY_DIR/scripts" | wc -l) file(s))"
+}
+
+sync_repo_nodes() {
+  local src_root="${COMFYUI_REPO_NODES:-/comfyui-nodes}"
+  [ -d "$src_root" ] || { log "no repo node packs at $src_root — skipping repo pack sync"; return 0; }
+  local src name dst marker
+  for src in "$src_root"/*/; do
+    [ -d "$src" ] || continue
+    name="$(basename "$src")"
+    dst="$COMFY_DIR/custom_nodes/$name"
+    replace_dir_from_repo "$src" "$dst" "repo node pack $name"
+    : > "$dst/$REPO_NODES_MARKER"
+    DECLARED_PACKS+=("$name")
+    log "repo node pack $name synced"
+  done
+  for marker in "$COMFY_DIR"/custom_nodes/*/"$REPO_NODES_MARKER"; do
+    [ -f "$marker" ] || continue
+    name="$(basename "$(dirname "$marker")")"
+    if [ ! -d "$src_root/$name" ]; then
+      rm -rf "${COMFY_DIR:?}/custom_nodes/$name"
+      log "repo node pack $name is no longer in the repo — removed"
+    fi
+  done
 }
 
 # --- 3b. declared custom node packs -----------------------------------------------------
@@ -209,10 +296,18 @@ PY
         || die "checkout failed for $name; refusing to run undeclared node pack ${head:-<none>}"
       find "$work" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
     fi
+    # Some packs vendor code as a git submodule pinned by the pack's own tree (UltimateSDUpscale's
+    # repositories/ultimate_sd_upscale); without it the pack imports nothing. Offline-safe: a
+    # submodule already at its recorded commit fetches nothing.
+    if [ -f "$work/.gitmodules" ]; then
+      git -C "$work" submodule update -q --init --recursive \
+        || die "submodule update failed for $name; refusing to run an incomplete node pack"
+    fi
     if [ "$work" != "$dir" ]; then
       rm -rf "$dir"
       mv "$work" "$dir"
     fi
+    DECLARED_PACKS+=("$name")
     log "node pack $name at $(git -C "$dir" rev-parse --short HEAD)"
   done <<< "$lines"
 }
@@ -222,9 +317,16 @@ PY
 # re-resolved from scratch on every recreate. A custom node that is later removed takes its
 # dependency pins with it, instead of leaving a stale copy shadowing the image forever on
 # the volume. Best-effort by design — one broken node's requirements must not block boot.
+#
+# DECLARED packs only (DECLARED_PACKS: repo-owned + custom_nodes.json). Installing every pack's
+# requirements.txt into the one shared env let undeclared packs drive it: one pulled spacy/blis
+# sdist builds that cannot compile on py3.13, another flash-attn plus a torch pin that would have
+# downgraded the runtime, and resolver conflicts (compel vs transformers) followed. A pack on the
+# volume that is not declared gets no dependencies; declare it to get them.
 install_custom_node_deps() {
-  local r
-  for r in "$COMFY_DIR"/custom_nodes/*/requirements.txt; do
+  local name r
+  for name in "${DECLARED_PACKS[@]}"; do
+    r="$COMFY_DIR/custom_nodes/$name/requirements.txt"
     [ -f "$r" ] || continue
     log "installing $r"
     pip install --no-cache-dir --no-warn-script-location -q -r "$r" || log "WARN failed $r"
@@ -271,8 +373,9 @@ ensure_pinned_pixi() {
 }
 
 install_comfy_env_workers() {
-  local root dir
-  for root in "$COMFY_DIR"/custom_nodes/*/comfy-env-root.toml; do
+  local name root dir
+  for name in "${DECLARED_PACKS[@]}"; do
+    root="$COMFY_DIR/custom_nodes/$name/comfy-env-root.toml"
     [ -f "$root" ] || continue
     command -v comfy-env >/dev/null || { log "WARN comfy-env not installed; worker envs not built"; return 0; }
     # Without the pinned binary comfy-env would fetch pixi `latest`; skip rather than float.
@@ -286,6 +389,8 @@ install_comfy_env_workers() {
 reconcile_app
 install_runtime_deps
 seed_workflows
+sync_repo_scripts
+sync_repo_nodes
 reconcile_custom_nodes
 install_custom_node_deps
 install_comfy_env_workers

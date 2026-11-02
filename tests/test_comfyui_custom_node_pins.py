@@ -247,3 +247,277 @@ def test_existing_clone_is_fetched_from_the_declared_remote(tmp_path):
     _run_reconcile(comfy, man)
     assert _git(pack, "rev-parse", "HEAD") == shas[-1]
     assert _git(pack, "remote", "get-url", "origin") == str(up)
+
+
+# --- the declared set: repo-owned packs + the manifest, and only they get dependencies -----------
+
+NODES_DIR = ROOT / "services" / "comfyui" / "nodes"
+SCRIPTS_DIR = ROOT / "services" / "comfyui" / "scripts"
+PLUGIN = ROOT / "services" / "comfyui" / "plugin.yaml"
+
+
+def _boot_function(name):
+    m = re.search(rf"^{name}\(\) \{{.*?^\}}", BOOT.read_text(encoding="utf-8"), re.M | re.S)
+    assert m, f"{name}() not found in boot.sh"
+    return m.group(0)
+
+
+def _run_boot(comfy_dir, body, env=None, expect_rc=0):
+    """Run boot.sh's pack functions, then `body`, against a temp COMFY_DIR, with pip stubbed to log
+    its arguments to $COMFY_DIR/pip.log. Returns the CompletedProcess."""
+    text = BOOT.read_text(encoding="utf-8")
+    marker = re.search(r"^REPO_NODES_MARKER=.*$", text, re.M).group(0)
+    harness = "\n".join([
+        "set -euo pipefail",
+        'log() { echo "[boot] $*"; }',
+        'die() { echo "[boot] FATAL: $*" >&2; exit 1; }',
+        'pip() { echo "$*" >> "$COMFY_DIR/pip.log"; }',
+        f"export COMFY_DIR={shlex.quote(str(comfy_dir))}",
+        *(f"export {k}={shlex.quote(str(v))}" for k, v in (env or {}).items()),
+        "DECLARED_PACKS=()",
+        marker,
+        *(_boot_function(n) for n in ("replace_dir_from_repo", "sync_repo_scripts", "sync_repo_nodes",
+                                      "reconcile_custom_nodes", "install_custom_node_deps")),
+        body,
+    ])
+    r = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+    assert r.returncode == expect_rc, (
+        f"rc={r.returncode}, want {expect_rc}\nstdout:\n{r.stdout}\nstderr:\n{r.stderr}")
+    return r
+
+
+def _repo_nodes(tmp_path, packs):
+    """A stand-in for services/comfyui/nodes: {pack: {relative file: content}}."""
+    root = tmp_path / "repo-nodes"
+    root.mkdir()
+    for pack, files in packs.items():
+        for rel, content in files.items():
+            f = root / pack / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    return root
+
+
+def test_repo_packs_are_copied_in_and_replace_the_volume_copy(tmp_path):
+    src = _repo_nodes(tmp_path, {"ordo-pack": {"__init__.py": "# repo\n", "nodes/a.py": "A = 1\n",
+                                              "nodes/__pycache__/a.cpython-313.pyc": "stale"}})
+    comfy = tmp_path / "comfy"
+    old = comfy / "custom_nodes" / "ordo-pack"
+    (old / "nodes").mkdir(parents=True)
+    (old / "__init__.py").write_text("# hand-edited on the volume\n", encoding="utf-8")
+    (old / "nodes" / "gone.py").write_text("# removed in git\n", encoding="utf-8")
+    r = _run_boot(comfy, 'sync_repo_nodes; echo "declared: ${DECLARED_PACKS[*]}"',
+                  env={"COMFYUI_REPO_NODES": src})
+    assert (old / "__init__.py").read_text(encoding="utf-8") == "# repo\n"
+    assert (old / "nodes" / "a.py").exists()
+    assert not (old / "nodes" / "gone.py").exists(), "the volume copy must equal the repo"
+    assert not (old / "nodes" / "__pycache__").exists()
+    assert (old / ".ordo-repo-pack").exists()
+    assert not (comfy / "custom_nodes" / "ordo-pack.tmp").exists()
+    assert "declared: ordo-pack" in r.stdout
+
+
+def test_a_repo_pack_removed_from_git_is_removed_but_unmarked_packs_stay(tmp_path):
+    src = _repo_nodes(tmp_path, {"kept": {"__init__.py": ""}})
+    comfy = tmp_path / "comfy"
+    nodes = comfy / "custom_nodes"
+    (nodes / "dropped").mkdir(parents=True)
+    (nodes / "dropped" / ".ordo-repo-pack").write_text("", encoding="utf-8")
+    (nodes / "operator-pack").mkdir()
+    (nodes / "operator-pack" / "__init__.py").write_text("", encoding="utf-8")
+    _run_boot(comfy, "sync_repo_nodes", env={"COMFYUI_REPO_NODES": src})
+    assert (nodes / "kept").is_dir()
+    assert not (nodes / "dropped").exists()
+    assert (nodes / "operator-pack" / "__init__.py").exists()
+
+
+def test_no_repo_nodes_mount_is_a_skip_not_a_failure(tmp_path):
+    comfy = tmp_path / "comfy"
+    (comfy / "custom_nodes").mkdir(parents=True)
+    r = _run_boot(comfy, "sync_repo_nodes", env={"COMFYUI_REPO_NODES": tmp_path / "absent"})
+    assert "skipping repo pack sync" in r.stdout
+
+
+def test_dependencies_are_installed_for_declared_packs_only(tmp_path):
+    up, _ = _make_upstream(tmp_path)
+    ref = _commit(up, "requirements.txt", "pinned-dep==1\n", "deps")
+    src = _repo_nodes(tmp_path, {"ordo-pack": {"__init__.py": "", "requirements.txt": "repo-dep==2\n"}})
+    comfy = tmp_path / "comfy"
+    undeclared = comfy / "custom_nodes" / "UndeclaredPack"
+    undeclared.mkdir(parents=True)
+    (undeclared / "requirements.txt").write_text("flash-attn\n", encoding="utf-8")
+    man = tmp_path / "manifest.json"
+    _write_manifest(man, [{"name": "Pinned", "url": str(up), "ref": ref}])
+    _run_boot(comfy, "sync_repo_nodes; reconcile_custom_nodes; install_custom_node_deps",
+              env={"COMFYUI_REPO_NODES": src, "COMFYUI_NODE_MANIFEST": man})
+    installed = (comfy / "pip.log").read_text(encoding="utf-8")
+    assert "custom_nodes/ordo-pack/requirements.txt" in installed
+    assert "custom_nodes/Pinned/requirements.txt" in installed
+    assert "UndeclaredPack" not in installed
+
+
+def test_a_failed_dependency_install_does_not_block_boot(tmp_path):
+    src = _repo_nodes(tmp_path, {"a": {"requirements.txt": "x\n"}, "b": {"requirements.txt": "y\n"}})
+    comfy = tmp_path / "comfy"
+    (comfy / "custom_nodes").mkdir(parents=True)
+    r = _run_boot(comfy, "pip() { return 1; }; sync_repo_nodes; install_custom_node_deps; echo reached",
+                  env={"COMFYUI_REPO_NODES": src})
+    assert r.stdout.count("WARN failed") == 2 and "reached" in r.stdout
+
+
+def test_submodules_of_a_pinned_pack_are_checked_out(tmp_path):
+    # UltimateSDUpscale vendors its upscaler as a submodule; a clone without it imports nothing.
+    sub_root = tmp_path / "sub-root"
+    sub_root.mkdir()
+    sub, _ = _make_upstream(sub_root)
+    up, _ = _make_upstream(tmp_path)
+    _git(up, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(sub), "vendored")
+    _git(up, "commit", "-q", "-m", "add submodule")
+    ref = _git(up, "rev-parse", "HEAD")
+    comfy = tmp_path / "comfy"
+    (comfy / "custom_nodes").mkdir(parents=True)
+    man = tmp_path / "manifest.json"
+    _write_manifest(man, [{"name": "Pack", "url": str(up), "ref": ref}])
+    # Real packs use https submodule urls; local file:// ones need git's opt-in.
+    env = {"COMFYUI_NODE_MANIFEST": man, "GIT_CONFIG_COUNT": 1,
+           "GIT_CONFIG_KEY_0": "protocol.file.allow", "GIT_CONFIG_VALUE_0": "always"}
+    _run_boot(comfy, "reconcile_custom_nodes", env=env)
+    assert (comfy / "custom_nodes" / "Pack" / "vendored" / "node.py").read_text(encoding="utf-8") == "# v1\n"
+
+
+def test_repo_packs_are_loadable_and_never_shadow_a_pinned_pack():
+    packs = sorted(p for p in NODES_DIR.iterdir() if p.is_dir())
+    assert packs, "services/comfyui/nodes holds the Ordo-authored packs"
+    for pack in packs:
+        assert NAME.match(pack.name), f"{pack.name!r} is not a safe directory name"
+        assert (pack / "__init__.py").is_file(), f"{pack.name}: ComfyUI only loads a pack with an __init__.py"
+    assert not {p.name for p in packs} & {p["name"] for p in _packs()}, "a pack is either repo-owned or pinned"
+
+
+def test_boot_order_and_declared_only_installs():
+    text = BOOT.read_text(encoding="utf-8")
+    body = text[text.index("\nreconcile_app\n"):]
+    assert body.index("sync_repo_nodes") < body.index("install_custom_node_deps")
+    assert body.index("reconcile_custom_nodes") < body.index("install_custom_node_deps")
+    for fn in ("install_custom_node_deps", "install_comfy_env_workers"):
+        src = _boot_function(fn)
+        assert '"${DECLARED_PACKS[@]}"' in src, f"{fn} must iterate the declared packs"
+        assert "custom_nodes/*/" not in src, f"{fn} must not glob every pack on the volume"
+
+
+def test_site_lib64_is_derived_from_the_running_interpreter():
+    # A hard-coded python3.12 path outlived the move to python 3.13 and silently disabled the
+    # comfy_kitchen cleanup.
+    line = re.search(r"^SITE_LIB64=.*$", BOOT.read_text(encoding="utf-8"), re.M).group(0)
+    assert "sysconfig" in line and "platlib" in line
+    assert not re.search(r"python3\.\d+", line)
+
+
+def test_comfyui_manager_is_the_pinned_pip_package():
+    # --enable-manager loads the pip package; with it installed, the legacy custom_nodes pack is
+    # blocked by policy, so the package is what must be pinned.
+    pins = re.search(r"^EXTRA_PINS=\((.*)\)$", BOOT.read_text(encoding="utf-8"), re.M).group(1).split()
+    manager = [p for p in pins if p.startswith("comfyui-manager==")]
+    assert len(manager) == 1 and re.fullmatch(r"comfyui-manager==\d+(\.\d+)+", manager[0])
+    assert "--enable-manager" in PLUGIN.read_text(encoding="utf-8")
+
+
+def test_plugin_mounts_the_repo_nodes_read_only_as_config():
+    text = PLUGIN.read_text(encoding="utf-8")
+    assert "${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/comfyui/nodes:/comfyui-nodes:ro" in text
+    assert re.search(r"^\s*config_mounts: \[.*/comfyui-nodes.*\]$", text, re.M)
+
+
+# --- repo-owned scripts: the reel renderers the repo-owned packs shell out to ---------------------
+
+def test_repo_scripts_replace_the_volume_scripts_dir(tmp_path):
+    src = tmp_path / "repo-scripts"
+    src.mkdir()
+    (src / "render_reel.py").write_text("# repo\n", encoding="utf-8")
+    (src / "spoken_text.py").write_text("def spoken(s): return s\n", encoding="utf-8")
+    (src / "__pycache__").mkdir()
+    (src / "__pycache__" / "spoken_text.cpython-313.pyc").write_text("stale", encoding="utf-8")
+    comfy = tmp_path / "comfy"
+    old = comfy / "scripts"
+    old.mkdir(parents=True)
+    (old / "render_reel.py").write_text("# hand-edited on the volume\n", encoding="utf-8")
+    (old / "render_reel_dialogue.py.pre-s4-20260924").write_text("# backup\n", encoding="utf-8")
+    _run_boot(comfy, "sync_repo_scripts", env={"COMFYUI_REPO_SCRIPTS": src})
+    assert sorted(f.name for f in old.iterdir()) == ["render_reel.py", "spoken_text.py"]
+    assert (old / "render_reel.py").read_text(encoding="utf-8") == "# repo\n"
+    assert not (comfy / "scripts.tmp").exists()
+
+
+def test_no_repo_scripts_mount_is_a_skip_not_a_failure(tmp_path):
+    comfy = tmp_path / "comfy"
+    (comfy / "scripts").mkdir(parents=True)
+    (comfy / "scripts" / "keep.py").write_text("", encoding="utf-8")
+    r = _run_boot(comfy, "sync_repo_scripts", env={"COMFYUI_REPO_SCRIPTS": tmp_path / "absent"})
+    assert "skipping repo scripts sync" in r.stdout
+    assert (comfy / "scripts" / "keep.py").exists()
+
+
+def test_every_script_a_repo_pack_runs_is_in_the_repo():
+    # The RenderReel node and the /dialogue_reel/render route shell out to /root/ComfyUI/scripts/*.
+    # A volume loss must not leave them importing fine but failing at call time.
+    referenced = set()
+    for init in NODES_DIR.glob("*/__init__.py"):
+        text = init.read_text(encoding="utf-8")
+        referenced |= set(re.findall(r"/root/ComfyUI/scripts/([A-Za-z0-9_.-]+\.py)", text))
+    assert {"render_reel.py", "render_reel_dialogue.py"} <= referenced
+    for name in referenced:
+        assert (SCRIPTS_DIR / name).is_file(), f"{name} is run by a repo pack but not in services/comfyui/scripts"
+    # render_reel_dialogue.py imports its sibling module from the same dir.
+    dialogue = (SCRIPTS_DIR / "render_reel_dialogue.py").read_text(encoding="utf-8")
+    assert "from spoken_text import spoken" in dialogue
+    assert (SCRIPTS_DIR / "spoken_text.py").is_file()
+
+
+def test_boot_syncs_scripts_and_the_plugin_mounts_them():
+    text = BOOT.read_text(encoding="utf-8")
+    body = text[text.index("\nreconcile_app\n"):]
+    assert body.index("sync_repo_scripts") < body.index("install_custom_node_deps")
+    plugin = PLUGIN.read_text(encoding="utf-8")
+    assert "${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/comfyui/scripts:/comfyui-app-scripts:ro" in plugin
+    assert re.search(r"^\s*config_mounts: \[.*/comfyui-app-scripts.*\]$", plugin, re.M)
+
+
+# --- reel-render packs declare their TTS deps -------------------------------------------
+
+def test_render_reel_node_declares_kokoro_and_misaki():
+    req = NODES_DIR / "render_reel_node" / "requirements.txt"
+    assert req.is_file(), "render_reel_node needs a requirements.txt for its kokoro import"
+    text = req.read_text(encoding="utf-8")
+    assert re.search(r"^kokoro==\d", text, re.M), "pin kokoro to an exact version"
+    assert re.search(r"^misaki\[en\]==\d", text, re.M), "pin misaki[en] to an exact version"
+
+
+def test_dialogue_reel_endpoint_declares_kokoro():
+    req = NODES_DIR / "dialogue_reel_endpoint" / "requirements.txt"
+    assert req.is_file()
+    text = req.read_text(encoding="utf-8")
+    assert re.search(r"^kokoro==\d", text, re.M), "dialogue_reel_endpoint imports kokoro; pin it"
+    assert re.search(r"^resemblyzer==\d", text, re.M), "resemblyzer pin must survive the kokoro addition"
+
+
+def test_all_repo_pack_requirements_use_exact_pins():
+    # The PR title says "pin every pack"; a >= specifier lets a new release change the
+    # running env without a repo change.
+    for req in sorted(NODES_DIR.glob("*/requirements.txt")):
+        for line in req.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            assert "==" in line, f"{req.parent.name}/{req.name}: {line!r} is not an exact pin"
+            assert ">=" not in line and "<=" not in line, f"{req.parent.name}/{req.name}: {line!r} uses a range"
+
+
+# --- submodule update must not shallow-fetch ---------------------------------------------
+
+def test_submodule_update_does_not_shallow_fetch():
+    # --depth 1 fetches the submodule's default branch at depth 1; if the recorded commit
+    # is not on the default branch the shallow fetch fails and die blocks the whole boot.
+    text = BOOT.read_text(encoding="utf-8")
+    m = re.search(r"submodule update[^\\]*", text)
+    assert m, "submodule update command not found in boot.sh"
+    assert "--depth" not in m.group(0), f"submodule update still shallow-fetches: {m.group(0)!r}"
