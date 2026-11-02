@@ -84,6 +84,7 @@
           "values": false
         },
         "textMode": "value_and_name",
+        "graphMode": "none",
         "colorMode": "none"
       },
       "targets": [
@@ -121,6 +122,7 @@
           "values": false
         },
         "textMode": "value_and_name",
+        "graphMode": "none",
         "colorMode": "none"
       },
       "targets": [
@@ -158,6 +160,7 @@
           "values": false
         },
         "textMode": "value_and_name",
+        "graphMode": "none",
         "colorMode": "none"
       },
       "targets": [
@@ -195,6 +198,7 @@
           "values": false
         },
         "textMode": "value_and_name",
+        "graphMode": "none",
         "colorMode": "none"
       },
       "targets": [
@@ -263,7 +267,7 @@
           "decimals": 1,
           "custom": {
             "fillOpacity": 10,
-            "spanNulls": true
+            "spanNulls": false
           }
         },
         "overrides": []
@@ -302,7 +306,7 @@
           "decimals": 1,
           "custom": {
             "fillOpacity": 10,
-            "spanNulls": true
+            "spanNulls": false
           }
         },
         "overrides": []
@@ -341,7 +345,7 @@
           "decimals": 1,
           "custom": {
             "fillOpacity": 10,
-            "spanNulls": true
+            "spanNulls": false
           }
         },
         "overrides": []
@@ -380,7 +384,7 @@
           "decimals": 1,
           "custom": {
             "fillOpacity": 10,
-            "spanNulls": true
+            "spanNulls": false
           }
         },
         "overrides": []
@@ -463,7 +467,7 @@
           "decimals": 1,
           "custom": {
             "fillOpacity": 10,
-            "spanNulls": true
+            "spanNulls": false
           },
           "max": 1,
           "min": 0

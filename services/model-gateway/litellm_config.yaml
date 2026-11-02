@@ -250,13 +250,14 @@ general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   # config.yaml is the single source of truth for models AND MCP servers (the DB holds keys/spend).
   store_model_in_db: false
-  # Proactive health routing: an evicted inference-engine-gpu (GPU lease for a render) is pulled from the pool
-  # on the next probe instead of failing the first user request into the CPU fallback.
+  # Probes reach only the embedding engine. A chat probe is a real generation that takes the engine's
+  # one request slot and lands in its performance numbers. An evicted chat engine is found by the
+  # request that hits it, which router_settings.fallbacks moves to the CPU model.
   background_health_checks: true
   health_check_interval: 60
   enable_health_check_routing: true
   health_check_ignore_transient_errors: true
-  background_health_check_model_groups: ["local-chat", "local-embed"]
+  background_health_check_model_groups: ["local-embed"]
   # Postgres-backed keys/spend. Chat must not depend on the DB being up (private network).
   disable_error_logs: true
   proxy_batch_write_at: 60
@@ -280,7 +281,15 @@ router_settings:
   # Only local-chat fails over: the stable pins (local-chat-gpu, local-chat-cpu) are deliberate
   # and must error when their own backend is down, not silently reroute.
   fallbacks: [{"local-chat": ["__CPU_MODEL_NAME__"]}]
-  # Must exceed health_check_interval (the failure counter's TTL) so failures accumulate.
+  # Must exceed health_check_interval (60 s) so the embed probe's cadence stays inside the
+  # cooldown window: a failing inference-engine-embed gets re-probed while still in cooldown.
+  # Its probe result goes to the health-state cache (stale after ~10 min by default), not the
+  # failure counter. Chat is no longer probed (background_health_checks above): its
+  # unhealthiness accumulates from request failures, whose counter TTL is cooldown_time itself
+  # (litellm router_utils/cooldown_handlers.py). A failed chat deployment re-enters the pool when
+  # its cooldown expires, so cooldown_time is also the interval between failure-discovery
+  # attempts on a down chat engine: a still-evicted GPU takes one real failed request per
+  # cooldown window while traffic exists.
   cooldown_time: 120
   num_retries: 1
   # Without this, model_info.max_input_tokens is documentation only.

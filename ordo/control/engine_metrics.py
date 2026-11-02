@@ -114,6 +114,13 @@ def _count(value: str) -> float:
     return float(value.split(" ", 1)[0].replace(",", ""))
 
 
+def _stop_reason(text: str) -> str:
+    """The stop reason of a done line ("cancelled", "output limit", "tool calls 2"): the third
+    pipe-separated field, which the pinned NInfer source writes on every done line."""
+    parts = text.split(" | ")
+    return parts[2].strip() if len(parts) > 2 else ""
+
+
 class NinferLogReader:
     """Running totals over NInfer's request log, fed the lines since the last read."""
 
@@ -162,13 +169,21 @@ class NinferLogReader:
         except (KeyError, ValueError) as e:
             logger.warning("engine metrics: unreadable NInfer request line (%s): %s", e, text[:200])
             return
+        self.counters["queue_seconds"] += queue
+        # NInfer omits the prefill rate whenever the request computed no prompt tokens: a request
+        # cancelled before prefill (its prompt size and durations then describe a wait, not work),
+        # or one whose whole prompt came from the cache. Drop only the line that did no work --
+        # cancelled with no output. A fully-cached request that generated output, whether it
+        # completed or was cancelled mid-decode by a client disconnect, still reused the cache
+        # and spent generation time, so it is counted.
+        if "prefill" not in fields and _stop_reason(text) == "cancelled" and output == 0:
+            return
         self.counters["prompt_tokens_processed"] += max(prompt - cached, 0.0)
         self.counters["prompt_tokens_cached"] += cached
         self.counters["output_tokens"] += output
-        # TTFT includes the wait for the engine; a request cancelled while queued has TTFT < queue.
+        # TTFT includes the wait for the engine.
         self.counters["prompt_seconds"] += max(ttft - queue, 0.0)
         self.counters["output_seconds"] += max(total - ttft, 0.0)
-        self.counters["queue_seconds"] += queue
 
 
 class EngineCollector:

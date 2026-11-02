@@ -173,3 +173,14 @@ def test_cli_malformed_config_exits_2(tmp_path):
     cfg = tmp_path / "config.yaml"
     cfg.write_text("litellm_settings:\n  callbacks: prometheus\n")
     assert main([str(cfg), "langfuse_otel"], LANGFUSE_ENV) == 2
+
+
+def test_chat_engines_get_no_background_generation_probes():
+    """A probe is a real generation on the engine: once a minute they were 77% of the GPU's requests
+    and all of what the Performance page showed while it was idle. An evicted GPU is found by the
+    request that hits it, which router_settings.fallbacks moves to the CPU model."""
+    config = _template()
+    chat_groups = {d["model_name"] for d in config["model_list"] if d["model_info"].get("mode") == "chat"}
+    probed = set(config["general_settings"]["background_health_check_model_groups"])
+    assert probed == {"local-embed"}
+    assert not probed & chat_groups

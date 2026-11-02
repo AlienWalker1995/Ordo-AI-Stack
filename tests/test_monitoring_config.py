@@ -72,6 +72,22 @@ def test_speeds_are_measured_while_working_not_per_request():
     assert not [e for e in _exprs() if "litellm_llm_api_latency" in e or "latency_per_output_token" in e]
 
 
+def test_measured_speeds_leave_a_gap_when_there_is_nothing_to_measure():
+    """An idle engine divides 0 by 0, and an evicted one has no counters. Joining across that
+    draws a speed nobody measured."""
+    measured = [p for p in DASH["panels"] if p["type"] == "timeseries"
+                and any("rate(ordo_engine_" in t["expr"] for t in p.get("targets", []))]
+    assert measured
+    assert not [p["title"] for p in measured if p["fieldConfig"]["defaults"]["custom"]["spanNulls"]]
+
+
+def test_stat_tiles_show_only_their_value():
+    """A background sparkline draws over the number the tile exists to show."""
+    tiles = [p for p in DASH["panels"] if p["type"] == "stat"]
+    assert tiles
+    assert all(p["options"].get("graphMode") == "none" for p in tiles)
+
+
 def test_the_dashboard_shows_why_requests_moved_to_a_fallback():
     assert any("litellm_deployment_successful_fallbacks_total" in e and "exception_class" in e for e in _exprs())
 
