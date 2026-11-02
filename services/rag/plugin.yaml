@@ -85,7 +85,8 @@ services:
       WATCH_DIR: /watch
       CHUNK_SIZE: ${RAG_CHUNK_SIZE:-400}
       CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-50}
-      SCAN_INTERVAL_SEC: ${RAG_SCAN_INTERVAL_SEC:-15}
+      SCAN_INTERVAL_SEC: ${RAG_SCAN_INTERVAL_SEC:-120}
+      EMBED_BATCH_SIZE: ${RAG_EMBED_BATCH_SIZE:-16}
     volumes:
       - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/rag-input:/watch
       # Obsidian memory vault as a second (read-only) input root, nested inside the watch tree so

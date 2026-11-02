@@ -108,6 +108,27 @@ def test_scan_skips_vault_internals(ingest, tmp_path):
     assert [p.name for p in found] == ["note.md"]
 
 
+def test_scan_does_not_walk_into_hidden_directories(ingest, tmp_path, monkeypatch):
+    # A vault's .git holds thousands of files nothing will index, each a 9p round trip.
+    (tmp_path / ".git" / "objects").mkdir(parents=True)
+    (tmp_path / ".git" / "objects" / "note.md").write_text("internal", encoding="utf-8")
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "notes" / "note.md").write_text("fact", encoding="utf-8")
+    (tmp_path / "notes" / ".hidden.md").write_text("internal", encoding="utf-8")
+    (tmp_path / "notes" / "diagram.png").write_bytes(b"png")
+    visited = []
+    real_walk = ingest.os.walk
+
+    def recording_walk(top):
+        for root, dirnames, filenames in real_walk(top):
+            visited.append(root)
+            yield root, dirnames, filenames
+
+    monkeypatch.setattr(ingest.os, "walk", recording_walk)
+    assert ingest._iter_supported_files() == [tmp_path.resolve() / "notes" / "note.md"]
+    assert not [root for root in visited if ".git" in root]
+
+
 def test_ingest_path_refuses_hidden_files(ingest, tmp_path):
     hidden = tmp_path / ".trash" / "old.md"
     hidden.parent.mkdir()
@@ -183,3 +204,170 @@ def test_embed_falls_back_to_per_chunk_truncation(ingest, monkeypatch):
     assert len(vectors) == 2 and all(len(v) == 3 for v in vectors)
     # halving: 350 -> 175 -> 87 (fits under 100)
     assert any(texts == ["x" * 87] for texts in client.calls)
+
+
+# ── the retry loop: a large file must finish, and a failing one must not spin ───────────
+class _CountingEmbedClient:
+    """Answers every input, and records the batch sizes it was sent. Vectors carry the input's text
+    length so a test can see they stayed in order."""
+
+    def __init__(self, drop_last=False):
+        self.batch_sizes = []
+        self.drop_last = drop_last
+
+    def post(self, url, json=None, headers=None):
+        texts = json["input"]
+        self.batch_sizes.append(len(texts))
+        vectors = [[float(len(t))] for t in texts]
+        return _FakeResp(200, vectors=vectors[:-1] if self.drop_last else vectors)
+
+
+def _use_client(ingest, monkeypatch, client):
+    context = type("Ctx", (), {"__enter__": lambda s: client, "__exit__": lambda s, *a: False})()
+    monkeypatch.setattr(ingest.httpx, "Client", lambda timeout: context, raising=False)
+
+
+def test_a_large_file_is_embedded_in_bounded_requests(ingest, monkeypatch):
+    # One request per file timed out on every file over about 400 chunks (3.4 chunks/s against a
+    # 120 s timeout), and the engine kept computing the abandoned request.
+    client = _CountingEmbedClient()
+    _use_client(ingest, monkeypatch, client)
+    monkeypatch.setattr(ingest, "EMBED_BATCH_SIZE", 3)
+    vectors = ingest._embed(["a" * n for n in range(1, 8)])
+    assert client.batch_sizes == [3, 3, 1]
+    assert vectors == [[float(n)] for n in range(1, 8)]
+
+
+def test_a_short_embed_answer_fails_instead_of_misaligning_chunks(ingest, monkeypatch):
+    _use_client(ingest, monkeypatch, _CountingEmbedClient(drop_last=True))
+    with pytest.raises(RuntimeError, match="vectors"):
+        ingest._embed(["one", "two"])
+
+
+class _FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def _run_pass(ingest, paths, seen, backoff, attempts, fail):
+    def fake_ingest(path, state):
+        attempts.append(path.name)
+        if path.name in fail:
+            raise RuntimeError("timed out")
+        return True
+
+    original = ingest.ingest_path
+    ingest.ingest_path = fake_ingest
+    try:
+        ingest.ingest_pending(paths, {}, seen, backoff)
+    finally:
+        ingest.ingest_path = original
+
+
+def test_a_failing_file_backs_off_and_the_others_still_run(ingest, tmp_path):
+    bad = tmp_path / "bad.md"
+    bad.write_text("bad", encoding="utf-8")
+    clock = _FakeClock()
+    backoff = ingest.RetryBackoff(clock=clock)
+    seen, attempts = {}, []
+
+    def attempts_after(seconds):
+        attempts.clear()
+        clock.now += seconds
+        _run_pass(ingest, [bad], seen, backoff, attempts, {"bad.md"})
+        return len(attempts)
+
+    assert attempts_after(0) == 1
+    assert attempts_after(15) == 0
+    assert attempts_after(45) == 1      # 60 s after the first failure
+    assert attempts_after(60) == 0      # the wait doubled to 120 s
+    assert attempts_after(60) == 1
+    for _ in range(12):                 # however long it keeps failing, it never waits over the cap
+        clock.now += ingest.RETRY_MAX_SECONDS
+        assert attempts_after(0) == 1
+
+    good = tmp_path / "good.md"
+    good.write_text("good", encoding="utf-8")
+    attempts.clear()
+    _run_pass(ingest, [bad, good], seen, backoff, attempts, {"bad.md"})
+    assert attempts == ["good.md"]
+
+
+def test_editing_a_failing_file_retries_it_at_once(ingest, tmp_path):
+    note = tmp_path / "note.md"
+    note.write_text("first", encoding="utf-8")
+    backoff = ingest.RetryBackoff(clock=_FakeClock())
+    seen, attempts = {}, []
+    _run_pass(ingest, [note], seen, backoff, attempts, {"note.md"})
+    note.write_text("second, longer", encoding="utf-8")
+    _run_pass(ingest, [note], seen, backoff, attempts, set())
+    assert attempts == ["note.md", "note.md"]
+    # and a success clears the record
+    _run_pass(ingest, [note], seen, backoff, attempts, set())
+    assert attempts == ["note.md", "note.md"]
+
+
+def test_an_unchanged_file_is_not_read_again(ingest, tmp_path):
+    # Hashing every file on every scan kept the 9p mount busy around the clock.
+    note = tmp_path / "note.md"
+    note.write_text("text", encoding="utf-8")
+    backoff = ingest.RetryBackoff(clock=_FakeClock())
+    seen, attempts = {}, []
+    _run_pass(ingest, [note], seen, backoff, attempts, set())
+    _run_pass(ingest, [note], seen, backoff, attempts, set())
+    assert attempts == ["note.md"]
+    note.write_text("changed text", encoding="utf-8")
+    _run_pass(ingest, [note], seen, backoff, attempts, set())
+    assert attempts == ["note.md", "note.md"]
+
+
+class _ScrollClient:
+    def __init__(self, pages):
+        self.pages = list(pages)
+        self.requests = []
+
+    def post(self, url, json=None):
+        self.requests.append(json)
+        status, points, next_offset = self.pages.pop(0)
+        return types.SimpleNamespace(
+            status_code=status,
+            raise_for_status=lambda: None,
+            json=lambda: {"result": {"points": points, "next_page_offset": next_offset}},
+        )
+
+
+def test_what_is_indexed_comes_from_the_store_across_pages(ingest, monkeypatch):
+    # The record lived in the container's /tmp, so every recreate re-embedded the whole index.
+    client = _ScrollClient([
+        (200, [{"payload": {"source": "a.md", "digest": "1"}}, {"payload": {"source": "a.md", "digest": "1"}}], "next"),
+        (200, [{"payload": {"source": "b.md", "digest": "2"}}, {"payload": {"source": "old.md"}}], None),
+    ])
+    _use_client(ingest, monkeypatch, client)
+    assert ingest._indexed_digests() == {"a.md": "1", "b.md": "2"}
+    assert client.requests[1]["offset"] == "next"
+    assert all(request["with_vector"] is False for request in client.requests)
+
+
+def test_a_missing_collection_means_nothing_is_indexed(ingest, monkeypatch):
+    _use_client(ingest, monkeypatch, _ScrollClient([(404, [], None)]))
+    assert ingest._indexed_digests() == {}
+
+
+def test_the_batch_size_and_scan_interval_are_configured_by_the_plugin():
+    plugin = (ROOT / "services" / "rag" / "plugin.yaml").read_text(encoding="utf-8")
+    assert "EMBED_BATCH_SIZE: ${RAG_EMBED_BATCH_SIZE:-16}" in plugin
+    # A scan costs about 30 s of 9p round trips, so a shorter wait would keep the mount busy.
+    assert "SCAN_INTERVAL_SEC: ${RAG_SCAN_INTERVAL_SEC:-120}" in plugin
+
+
+def test_a_file_key_costs_no_filesystem_access(ingest, monkeypatch):
+    # resolve() stats every path component over the 9p mount, for every file, on every scan.
+    def no_resolve(self, strict=False):
+        raise AssertionError("resolve() must not be called")
+
+    watch_dir = ingest.WATCH_DIR
+    monkeypatch.setattr(ingest.Path, "resolve", no_resolve)
+    assert ingest._file_key(watch_dir / "notes" / "a.md") == "notes/a.md"

@@ -59,7 +59,7 @@ def test_chunk_empty():
 
 def test_file_key_relative():
     ingest = _load_ingest()
-    path = Path("/watch/docs/note.md")
+    path = ingest.WATCH_DIR / "docs" / "note.md"
     key = ingest._file_key(path)
     assert key.replace("\\", "/") == "docs/note.md"
 

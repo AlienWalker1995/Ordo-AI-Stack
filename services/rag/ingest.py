@@ -4,13 +4,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import re
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -46,8 +46,14 @@ WATCH_DIR = Path(os.environ.get("WATCH_DIR", "/watch")).resolve()
 CHUNK_SIZE = max(1, int(os.environ.get("CHUNK_SIZE", "400")))
 CHUNK_OVERLAP = max(0, int(os.environ.get("CHUNK_OVERLAP", "50")))
 SCAN_INTERVAL_SEC = max(5, int(os.environ.get("SCAN_INTERVAL_SEC", "15")))
+# Chunks per embedding request. The engine computes about 3.4 chunks a second and keeps computing a
+# request after its client gives up, so one request must stay far inside EMBED_TIMEOUT_SECONDS.
+EMBED_BATCH_SIZE = max(1, int(os.environ.get("EMBED_BATCH_SIZE", "16")))
+EMBED_TIMEOUT_SECONDS = 120.0
+# How long a file that failed waits before its next attempt: doubles from the first to the cap.
+RETRY_FIRST_SECONDS = 60.0
+RETRY_MAX_SECONDS = 3600.0
 HEARTBEAT_PATH = Path("/tmp/rag-ingestion.heartbeat")
-STATE_PATH = Path("/tmp/rag-ingestion-state.json")
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -85,9 +91,11 @@ def _chunk(text: str, size: int, overlap: int) -> list[str]:
 
 
 def _file_key(path: Path) -> str:
+    """The file's path under WATCH_DIR. Scans and watch events both name files under the resolved
+    WATCH_DIR, so this needs no filesystem access."""
     try:
-        return str(path.resolve().relative_to(WATCH_DIR)).replace("\\", "/")
-    except (ValueError, OSError):
+        return path.relative_to(WATCH_DIR).as_posix()
+    except ValueError:
         return path.name
 
 
@@ -135,17 +143,26 @@ def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace").strip()
 
 
-def _load_state() -> dict[str, str]:
-    if not STATE_PATH.is_file():
-        return {}
-    try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def _save_state(state: dict[str, str]) -> None:
-    STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+def _indexed_digests() -> dict[str, str]:
+    """{source: digest} of every file in the collection. The store is the record of what is indexed,
+    so a recreated container re-embeds nothing and an emptied store re-embeds everything."""
+    digests: dict[str, str] = {}
+    request = {"limit": 1000, "with_payload": ["source", "digest"], "with_vector": False}
+    with httpx.Client(timeout=30.0) as client:
+        while True:
+            r = client.post(f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points/scroll", json=request)
+            if r.status_code == 404:
+                return {}
+            r.raise_for_status()
+            result = r.json().get("result", {})
+            for point in result.get("points", []):
+                payload = point.get("payload") or {}
+                if payload.get("source") and payload.get("digest"):
+                    digests[payload["source"]] = payload["digest"]
+            next_offset = result.get("next_page_offset")
+            if next_offset is None:
+                return digests
+            request = {**request, "offset": next_offset}
 
 
 def _drop_collection_if_other_model() -> bool:
@@ -154,7 +171,7 @@ def _drop_collection_if_other_model() -> bool:
     Vectors from two models live in different spaces, so a model swap must re-embed everything;
     mixing them returns nonsense neighbours. Each point records the model that embedded it
     (`embed_model`); points written before that field existed count as another model. Returns True
-    when the collection was dropped, so the caller re-ingests every file.
+    when the collection was dropped.
     """
     url = f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}"
     with httpx.Client(timeout=30.0) as client:
@@ -214,21 +231,31 @@ def _embed_one(client: httpx.Client, chunk: str) -> list[float]:
     raise RuntimeError("embedding response contained no vector")
 
 
+def _embed_batch(client: httpx.Client, batch: list[str]) -> list[list[float]]:
+    r = client.post(
+        f"{EMBED_URL}/v1/embeddings",
+        json={"model": EMBED_MODEL, "input": batch},
+        headers={"Content-Type": "application/json"},
+    )
+    if r.status_code >= 400:
+        # One oversized chunk fails the whole batch — fall back to per-chunk
+        # embedding with truncation so the rest of the file still indexes.
+        logger.warning("Batch embed failed (%d); retrying per-chunk", r.status_code)
+        return [_embed_one(client, c) for c in batch]
+    items = r.json().get("data", [])
+    vectors = [item.get("embedding", []) for item in items if item.get("embedding")]
+    if len(vectors) != len(batch):
+        # Storing these would pair chunks with another chunk's vector.
+        raise RuntimeError(f"embedding response had {len(vectors)} vectors for {len(batch)} chunks")
+    return vectors
+
+
 def _embed(chunks: list[str]) -> list[list[float]]:
-    with httpx.Client(timeout=120.0) as client:
-        r = client.post(
-            f"{EMBED_URL}/v1/embeddings",
-            json={"model": EMBED_MODEL, "input": chunks},
-            headers={"Content-Type": "application/json"},
-        )
-        if r.status_code >= 400:
-            # One oversized chunk fails the whole batch — fall back to per-chunk
-            # embedding with truncation so the rest of the file still indexes.
-            logger.warning("Batch embed failed (%d); retrying per-chunk", r.status_code)
-            return [_embed_one(client, c) for c in chunks]
-    data = r.json()
-    items = data.get("data", [])
-    return [item.get("embedding", []) for item in items if item.get("embedding")]
+    vectors: list[list[float]] = []
+    with httpx.Client(timeout=EMBED_TIMEOUT_SECONDS) as client:
+        for start in range(0, len(chunks), EMBED_BATCH_SIZE):
+            vectors.extend(_embed_batch(client, chunks[start : start + EMBED_BATCH_SIZE]))
+    return vectors
 
 
 def _delete_existing(client: httpx.Client, source: str) -> None:
@@ -276,15 +303,16 @@ def _upsert_points(source: str, digest: str, chunks: list[str], vectors: list[li
 
 
 def _iter_supported_files() -> list[Path]:
-    if not WATCH_DIR.is_dir():
-        return []
-    return sorted(
-        [
-            path
-            for path in WATCH_DIR.rglob("*")
-            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS and not _is_hidden(path)
-        ]
-    )
+    """Every file to index. Hidden directories are not entered at all, and names alone decide the
+    rest: each extra stat here is a round trip over the 9p mount, repeated on every scan."""
+    found: list[Path] = []
+    for root, dirnames, filenames in os.walk(WATCH_DIR):
+        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+        for name in filenames:
+            path = Path(root) / name
+            if not name.startswith(".") and path.suffix.lower() in SUPPORTED_EXTENSIONS:
+                found.append(path)
+    return sorted(found)
 
 
 def ingest_path(path: Path, state: dict[str, str]) -> bool:
@@ -305,6 +333,61 @@ def ingest_path(path: Path, state: dict[str, str]) -> bool:
     state[source] = digest
     logger.info("Ingested %s (%d chunks)", source, len(chunks))
     return True
+
+
+def _file_signature(path: Path) -> tuple[int, int] | None:
+    """(modified time, size), or None when the file is gone. Telling that a file is unchanged from
+    this costs one stat, where hashing it reads the whole file over the 9p mount."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+class RetryBackoff:
+    """When each failed file may be tried again. A file that keeps failing is retried less and less
+    often, and editing it makes it due at once."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        # source -> (signature of the failed version, seconds to wait next, when it is due)
+        self._failures: dict[str, tuple[tuple[int, int], float, float]] = {}
+
+    def is_due(self, source: str, signature: tuple[int, int]) -> bool:
+        failure = self._failures.get(source)
+        return failure is None or failure[0] != signature or self._clock() >= failure[2]
+
+    def record_failure(self, source: str, signature: tuple[int, int]) -> float:
+        """Returns how many seconds this file now waits."""
+        previous = self._failures.get(source)
+        wait = previous[1] if previous and previous[0] == signature else RETRY_FIRST_SECONDS
+        self._failures[source] = (signature, min(wait * 2, RETRY_MAX_SECONDS), self._clock() + wait)
+        return wait
+
+    def record_success(self, source: str) -> None:
+        self._failures.pop(source, None)
+
+
+def ingest_pending(paths: list[Path], state: dict[str, str], seen: dict[str, tuple[int, int]],
+                   backoff: RetryBackoff) -> None:
+    """One pass. `seen` holds the signature of each file already handled, so an unchanged file costs
+    a stat. One failing file waits its turn without stopping the others."""
+    for path in paths:
+        signature = _file_signature(path)
+        if signature is None:
+            continue
+        source = _file_key(path)
+        if seen.get(source) == signature or not backoff.is_due(source, signature):
+            continue
+        try:
+            ingest_path(path, state)
+        except Exception as exc:
+            wait = backoff.record_failure(source, signature)
+            logger.exception("Failed to ingest %s: %s (next attempt in %.0f s)", path, exc, wait)
+        else:
+            backoff.record_success(source)
+            seen[source] = signature
 
 
 def _heartbeat(stop_event: threading.Event) -> None:
@@ -333,7 +416,11 @@ class _EventHandler(FileSystemEventHandler):
 
 def main() -> None:
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
-    state = {} if _drop_collection_if_other_model() else _load_state()
+    _drop_collection_if_other_model()
+    state = _indexed_digests()
+    logger.info("%d files already indexed in collection %s", len(state), QDRANT_COLLECTION)
+    seen: dict[str, tuple[int, int]] = {}
+    backoff = RetryBackoff()
     stop_event = threading.Event()
     heartbeat = threading.Thread(target=_heartbeat, args=(stop_event,), daemon=True)
     heartbeat.start()
@@ -354,14 +441,7 @@ def main() -> None:
                     queue.update(_iter_supported_files())
                 pending = list(queue)
                 queue.clear()
-            changed = False
-            for path in pending:
-                try:
-                    changed = ingest_path(path, state) or changed
-                except Exception as exc:
-                    logger.exception("Failed to ingest %s: %s", path, exc)
-            if changed:
-                _save_state(state)
+            ingest_pending(pending, state, seen, backoff)
             time.sleep(SCAN_INTERVAL_SEC)
     finally:
         stop_event.set()
