@@ -286,7 +286,10 @@ router_settings:
   # Its probe result goes to the health-state cache (stale after ~10 min by default), not the
   # failure counter. Chat is no longer probed (background_health_checks above): its
   # unhealthiness accumulates from request failures, whose counter TTL is cooldown_time itself
-  # (litellm router_utils/cooldown_handlers.py).
+  # (litellm router_utils/cooldown_handlers.py). A failed chat deployment re-enters the pool when
+  # its cooldown expires, so cooldown_time is also the interval between failure-discovery
+  # attempts on a down chat engine: a still-evicted GPU takes one real failed request per
+  # cooldown window while traffic exists.
   cooldown_time: 120
   num_retries: 1
   # Without this, model_info.max_input_tokens is documentation only.

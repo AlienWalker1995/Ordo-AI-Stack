@@ -99,15 +99,19 @@ missing, the callback is skipped with a warning rather than failing the gateway.
 Things worth knowing about what LiteLLM 1.100.1 sends (checked against its installed source and a
 live probe):
 
-- **LiteLLM's own health checks are NOT traced.** The background health checks that drive the CPU
-  failover (`local-chat` and `local-embed`, every 60 seconds) used to be 57 percent of all
-  observations (key alias `litellm-internal-health-check`, about 2,700 a day). Every local
-  deployment in `services/model-gateway/litellm_config.yaml` now carries
+- **LiteLLM's own health checks are NOT traced.** The background health checks used to be 57
+  percent of all observations (key alias `litellm-internal-health-check`, about 2,700 a day).
+  Only the embedding engine is probed today (`local-embed`, every 60 seconds); chat is not probed
+  because a chat probe is a real generation that would take the engine's one request slot and
+  land in its performance numbers. Every local deployment in
+  `services/model-gateway/litellm_config.yaml` now carries
   `model_info.health_check_params: {"no-log": true}`: LiteLLM merges that dict into the probe
   request only (`proxy/health_check.py::_update_litellm_params_for_health_check`, run on a deep copy
   of the model list), and `no-log` makes `Logging.should_run_callback` skip every callback except
-  the proxy's own spend tracking. The probes still run and still feed health-based routing; they
-  just never reach Langfuse.
+  the proxy's own spend tracking. The embed probe still runs and still feeds health-based routing
+  for the embedding engine; it just never reaches Langfuse. Chat unhealthiness accumulates from
+  request failures instead, and the CPU failover happens on the failing request itself
+  (`router_settings.fallbacks`).
 - **Embedding calls carry the vector.** The OTel attribute mapper writes each returned embedding
   into the observation metadata, so a RAG ingestion run produces large observations.
 - **`redact_user_api_key_info: true` is set but does not apply to this callback.** In 1.100.1 only
