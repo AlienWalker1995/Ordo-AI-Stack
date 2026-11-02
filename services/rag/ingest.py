@@ -45,7 +45,7 @@ QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "documents").strip()
 WATCH_DIR = Path(os.environ.get("WATCH_DIR", "/watch")).resolve()
 CHUNK_SIZE = max(1, int(os.environ.get("CHUNK_SIZE", "400")))
 CHUNK_OVERLAP = max(0, int(os.environ.get("CHUNK_OVERLAP", "50")))
-SCAN_INTERVAL_SEC = max(5, int(os.environ.get("SCAN_INTERVAL_SEC", "15")))
+SCAN_INTERVAL_SEC = max(5, int(os.environ.get("SCAN_INTERVAL_SEC", "120")))
 # Chunks per embedding request. The engine computes about 3.4 chunks a second and keeps computing a
 # request after its client gives up, so one request must stay far inside EMBED_TIMEOUT_SECONDS.
 EMBED_BATCH_SIZE = max(1, int(os.environ.get("EMBED_BATCH_SIZE", "16")))

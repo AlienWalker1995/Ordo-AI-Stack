@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
@@ -68,3 +69,15 @@ def test_supported_extensions_include_common_types():
     ingest = _load_ingest()
     assert ".pdf" in ingest.SUPPORTED_EXTENSIONS
     assert ".md" in ingest.SUPPORTED_EXTENSIONS
+
+
+def test_scan_interval_default_matches_the_plugin():
+    # The plugin sets RAG_SCAN_INTERVAL_SEC:-120 (services/rag/plugin.yaml); the code fallback must
+    # agree so a bare run with no env set scans at the deployed cadence, not the old 15 s loop.
+    saved = os.environ.pop("SCAN_INTERVAL_SEC", None)
+    try:
+        ingest = _load_ingest()
+        assert ingest.SCAN_INTERVAL_SEC == 120
+    finally:
+        if saved is not None:
+            os.environ["SCAN_INTERVAL_SEC"] = saved
