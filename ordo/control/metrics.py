@@ -22,7 +22,6 @@ import os
 import re
 import ssl
 import subprocess
-import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -278,7 +277,8 @@ class MetricsCollector:
     failed collector and the rest are still served."""
 
     def __init__(self, scheduler: Scheduler | None, broker: Broker | None, disk_paths: Mapping[str, str],
-                 tls_cert_files: Mapping[str, str], chat_health_url: str | None = None,
+                 tls_cert_files: Mapping[str, str],
+                 chat_up: Callable[[], bool | None] | None = None,
                  netns_repair_stats: Callable[[], Mapping[str, int]] | None = None,
                  engines: EngineCollector | None = None):
         self.scheduler = scheduler
@@ -287,17 +287,8 @@ class MetricsCollector:
         self.broker = broker
         self.disk_paths = dict(disk_paths)
         self.tls_cert_files = dict(tls_cert_files)
-        self.chat_health_url = chat_health_url
-
-    def _chat_up(self) -> bool | None:
-        """True when the GPU chat service answers /health with 200 within 3 s; None when unconfigured."""
-        if not self.chat_health_url:
-            return None
-        try:
-            with urllib.request.urlopen(self.chat_health_url, timeout=3) as response:
-                return response.status == 200
-        except Exception:  # noqa: BLE001 - down, refusing, loading (503) or unresolvable: all "not up"
-            return False
+        # The cached GPU chat liveness (chat_probe.py); never probed inline, so a scrape stays fast.
+        self.chat_up = chat_up
 
     def text(self) -> str:
         """The lease, container, disk and certificate state in the Prometheus text format."""
@@ -338,6 +329,6 @@ class MetricsCollector:
         return render(Inputs(
             scheduler=self.scheduler.status() if self.scheduler else None,
             containers=containers, restarts=restarts, disks=disks, tls_certs=certs,
-            gpu_chat_up=self._chat_up(),
+            gpu_chat_up=self.chat_up() if self.chat_up else None,
             netns_repair=self.netns_repair_stats() if self.netns_repair_stats else None,
             engines=engine_samples, engines_failed=engines_failed))

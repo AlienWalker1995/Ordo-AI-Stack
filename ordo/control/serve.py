@@ -120,6 +120,11 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
     if cp.netns_repair is not None:
         threading.Thread(target=_netns_loop, daemon=True, name="netns-repair").start()
 
+    # The GPU chat service's liveness, for GET /lease and /metrics. Its own thread: a probe of a
+    # loading or evicted engine waits out its timeout and must never delay the lease clock.
+    if cp.chat_probe.configured:
+        threading.Thread(target=cp.chat_probe.run_forever, daemon=True, name="chat-probe").start()
+
     # An idle ComfyUI holding a lot of RAM is restarted between leases (ordo/control/comfyui_reclaim.py).
     # Its own thread: docker stats and the restart must never delay the lease clock.
     def _comfyui_reclaim_loop() -> None:

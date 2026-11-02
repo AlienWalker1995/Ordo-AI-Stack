@@ -146,6 +146,7 @@ ROUTES: tuple[Route, ...] = (
     Route("GET", Template("/doctor"), lambda cp, r: cp.doctor(), always_ok=True),
     Route("GET", Template("/health"), lambda cp, r: cp.health(), always_ok=True),
     Route("GET", Template("/healthz"), lambda cp, r: cp.health(), always_ok=True),
+    Route("GET", Template("/lease"), lambda cp, r: cp.lease_state(), always_ok=True),
     # Service lifecycle.
     Route("POST", Span("/services/", "id", "/start"),
           lambda cp, r: cp.service_start(r.params["id"], r.body), exclusive=True),
