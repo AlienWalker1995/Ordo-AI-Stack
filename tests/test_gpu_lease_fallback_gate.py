@@ -5,8 +5,7 @@ the gate (services/model-gateway/gpu_lease_fallback_gate.py) allows that hop, so
 failure degrades to the CPU model instead of failing the caller, except when the GPU only
 refused the request because its one-at-a-time queue was busy: that request is not moved
 to the CPU (chat runs one request at a time, first come first served). It still reads
-ops-controller's /metrics (ordo_gpu_resident_evicted{resident="inference-engine-gpu"},
-ordo_gpu_chat_up) and logs the lease state for observability.
+ops-controller's GET /lease (evicted_residents, gpu_chat_up) and logs the lease state for observability.
 
 litellm is not a test dependency (huge tree); the gate only needs its CustomLogger
 base class, so the module chain is stubbed before the file loads, the same way
@@ -57,34 +56,31 @@ _spec.loader.exec_module(gate)
 
 CPU_MODEL = "qwen3.6-35b-a3b-ud-q4_k_m-cpu"
 
-# One ops-controller /metrics scrape (the exact line shapes ordo/control/metrics.py emits).
-METRICS_NORMAL = (
-    "# HELP ordo_gpu_chat_up 1 when the GPU chat service answers /health with 200.\n"
-    "# TYPE ordo_gpu_chat_up gauge\n"
-    "ordo_gpu_chat_up 1\n"
-    "# HELP ordo_gpu_resident_evicted 1 while a GPU resident is stopped for a lease.\n"
-    "# TYPE ordo_gpu_resident_evicted gauge\n"
-    'ordo_gpu_resident_evicted{resident="inference-engine-gpu"} 0\n'
-    'ordo_gpu_resident_evicted{resident="inference-engine-embed"} 0\n'
-)
-METRICS_LEASED = METRICS_NORMAL.replace(
-    'ordo_gpu_resident_evicted{resident="inference-engine-gpu"} 0',
-    'ordo_gpu_resident_evicted{resident="inference-engine-gpu"} 1',
-)
-METRICS_CHAT_DOWN = METRICS_NORMAL.replace("ordo_gpu_chat_up 1", "ordo_gpu_chat_up 0")
+# GET /lease answers (the shape ordo/control/api.py ControlPlane.lease_state returns).
+LEASE_NORMAL = {"evicted_residents": [], "gpu_chat_up": True}
+LEASE_EVICTED = {"evicted_residents": ["inference-engine-gpu"], "gpu_chat_up": True}
+LEASE_CHAT_DOWN = {"evicted_residents": [], "gpu_chat_up": False}
+LEASE_CHAT_UNKNOWN = {"evicted_residents": [], "gpu_chat_up": None}
 
 
 class _FakeResponse:
-    def __init__(self, text: str, status_code: int = 200):
-        self.text = text
+    def __init__(self, payload, status_code: int = 200):
+        self._payload = payload
         self.status_code = status_code
+
+    def json(self):
+        if isinstance(self._payload, str):
+            import json
+
+            return json.loads(self._payload)
+        return self._payload
 
     def raise_for_status(self):
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}")
 
 
-def _install_client(monkeypatch, *, text: str | None = None, exc: Exception | None = None):
+def _install_client(monkeypatch, *, payload=None, exc: Exception | None = None):
     """Point the gate's httpx.AsyncClient at a fake; returns the list of fetched URLs."""
     calls: list[str] = []
 
@@ -102,7 +98,7 @@ def _install_client(monkeypatch, *, text: str | None = None, exc: Exception | No
             calls.append(url)
             if exc is not None:
                 raise exc
-            return _FakeResponse(text or "")
+            return _FakeResponse(payload)
 
     monkeypatch.setattr(gate.httpx, "AsyncClient", _FakeClient)
     return calls
@@ -133,19 +129,19 @@ def _deployments() -> list:
     return [{"model_name": CPU_MODEL}]
 
 
-# --- fallback_allowed: the pure metrics parsing ---------------------------------
+# --- fallback_allowed: the pure decision over a /lease answer ---------------------------------
 
 
 def test_fallback_allowed_when_inference_engine_gpu_evicted():
-    assert gate.fallback_allowed(METRICS_LEASED) is True
+    assert gate.fallback_allowed(LEASE_EVICTED) is True
 
 
 def test_fallback_allowed_when_chat_service_down():
-    assert gate.fallback_allowed(METRICS_CHAT_DOWN) is True
+    assert gate.fallback_allowed(LEASE_CHAT_DOWN) is True
 
 
 def test_fallback_denied_when_gpu_up_and_resident():
-    assert gate.fallback_allowed(METRICS_NORMAL) is False
+    assert gate.fallback_allowed(LEASE_NORMAL) is False
 
 
 def test_fallback_allowed_when_neither_line_present():
@@ -161,16 +157,16 @@ def test_fallback_allowed_on_garbage_text():
 
 
 async def test_hook_passes_through_direct_local_chat(monkeypatch):
-    calls = _install_client(monkeypatch, text=METRICS_NORMAL)
+    calls = _install_client(monkeypatch, payload=LEASE_NORMAL)
     hook = gate.GpuLeaseFallbackGate()
     out = await hook.async_filter_deployments("local-chat", _deployments(), [], request_kwargs={})
     assert out == _deployments()
-    assert calls == []  # no metrics fetch for a non-fallback call
+    assert calls == []  # no lease fetch for a non-fallback call
 
 
 async def test_hook_passes_through_direct_cpu_call(monkeypatch):
     """A client that asks for the CPU model by name must still work, lease or no lease."""
-    calls = _install_client(monkeypatch, text=METRICS_NORMAL)
+    calls = _install_client(monkeypatch, payload=LEASE_NORMAL)
     hook = gate.GpuLeaseFallbackGate()
     out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs={})
     assert out == _deployments()
@@ -180,21 +176,21 @@ async def test_hook_passes_through_direct_cpu_call(monkeypatch):
 async def test_hook_allows_fallback_hop_when_gpu_up_and_not_leased(monkeypatch):
     """Operator policy: a GPU error (bad request, 5xx, mid-stream drop) must degrade to the
     CPU model, never fail the caller, even with the GPU up and no render holding the lease."""
-    _install_client(monkeypatch, text=METRICS_NORMAL)
+    _install_client(monkeypatch, payload=LEASE_NORMAL)
     hook = gate.GpuLeaseFallbackGate()
     out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs())
     assert out == _deployments()
 
 
 async def test_hook_allows_fallback_hop_when_lease_held(monkeypatch):
-    _install_client(monkeypatch, text=METRICS_LEASED)
+    _install_client(monkeypatch, payload=LEASE_EVICTED)
     hook = gate.GpuLeaseFallbackGate()
     out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs())
     assert out == _deployments()
 
 
 async def test_hook_allows_fallback_hop_when_chat_down(monkeypatch):
-    _install_client(monkeypatch, text=METRICS_CHAT_DOWN)
+    _install_client(monkeypatch, payload=LEASE_CHAT_DOWN)
     hook = gate.GpuLeaseFallbackGate()
     out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs())
     assert out == _deployments()
@@ -202,13 +198,13 @@ async def test_hook_allows_fallback_hop_when_chat_down(monkeypatch):
 
 async def test_hook_uses_litellm_metadata_key(monkeypatch):
     """The router may carry the hop marker under litellm_metadata instead of metadata."""
-    _install_client(monkeypatch, text=METRICS_NORMAL)
+    _install_client(monkeypatch, payload=LEASE_NORMAL)
     hook = gate.GpuLeaseFallbackGate()
     out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs("litellm_metadata"))
     assert out == _deployments()
 
 
-async def test_hook_fails_open_when_metrics_fetch_raises(monkeypatch):
+async def test_hook_fails_open_when_lease_fetch_raises(monkeypatch):
     _install_client(monkeypatch, exc=RuntimeError("ops-controller unreachable"))
     hook = gate.GpuLeaseFallbackGate()
     out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs())
@@ -216,14 +212,14 @@ async def test_hook_fails_open_when_metrics_fetch_raises(monkeypatch):
 
 
 async def test_hook_fails_open_on_http_error(monkeypatch):
-    _install_client(monkeypatch, text="", exc=RuntimeError("HTTP 503"))
+    _install_client(monkeypatch, exc=RuntimeError("HTTP 503"))
     hook = gate.GpuLeaseFallbackGate()
     out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs())
     assert out == _deployments()
 
 
-async def test_hook_caches_metrics_state_for_five_seconds(monkeypatch):
-    calls = _install_client(monkeypatch, text=METRICS_LEASED)
+async def test_hook_caches_lease_state_for_five_seconds(monkeypatch):
+    calls = _install_client(monkeypatch, payload=LEASE_EVICTED)
     hook = gate.GpuLeaseFallbackGate()
     for _ in range(3):
         out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs())
@@ -231,7 +227,7 @@ async def test_hook_caches_metrics_state_for_five_seconds(monkeypatch):
     assert len(calls) == 1  # the second and third hops read the 5 s cache, not the network
 
 
-async def test_hook_logs_unreadable_metrics_at_most_once_per_minute(monkeypatch, caplog):
+async def test_hook_logs_unreadable_lease_at_most_once_per_minute(monkeypatch, caplog):
     """A sustained ops-controller outage must not log a 'cannot read' warning per cached
     failure (one per CACHE_TTL window): the warning is rate-limited to once per
     UNREADABLE_WARN_INTERVAL."""
@@ -252,14 +248,14 @@ async def test_hook_logs_unreadable_metrics_at_most_once_per_minute(monkeypatch,
 async def test_hook_refuses_the_cpu_when_the_gpu_queue_is_full(monkeypatch):
     """Chat is one request at a time, first come first served: "queue is full" means the GPU is
     healthy and busy, so the request is not run beside it on the CPU."""
-    _install_client(monkeypatch, text=METRICS_NORMAL)
+    _install_client(monkeypatch, payload=LEASE_NORMAL)
     hook = gate.GpuLeaseFallbackGate()
     with pytest.raises(_ServiceUnavailableError, match="GPU chat queue is busy"):
         await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs(gpu_error=QUEUE_FULL))
 
 
 async def test_hook_refuses_the_cpu_when_the_request_expired_in_the_gpu_queue(monkeypatch):
-    _install_client(monkeypatch, text=METRICS_NORMAL)
+    _install_client(monkeypatch, payload=LEASE_NORMAL)
     hook = gate.GpuLeaseFallbackGate()
     with pytest.raises(_ServiceUnavailableError):
         await hook.async_filter_deployments(
@@ -268,7 +264,7 @@ async def test_hook_refuses_the_cpu_when_the_request_expired_in_the_gpu_queue(mo
 
 
 async def test_hook_still_allows_the_cpu_for_any_other_gpu_error(monkeypatch):
-    _install_client(monkeypatch, text=METRICS_NORMAL)
+    _install_client(monkeypatch, payload=LEASE_NORMAL)
     hook = gate.GpuLeaseFallbackGate()
     out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs(gpu_error=BAD_REQUEST))
     assert out == _deployments()

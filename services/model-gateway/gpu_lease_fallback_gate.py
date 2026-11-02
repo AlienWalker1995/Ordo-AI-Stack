@@ -17,20 +17,20 @@ to the CPU: the GPU is healthy, and a CPU run beside it reads a ~100k-token prom
 error (429 queue full, 503 expired; the router re-raises the original error when every fallback
 fails) and retries. The refusal names no deployment, so it never puts the CPU model in cooldown.
 
-This hook runs on the fallback hop and logs the lease state (read from ops-controller's
-unauthenticated /metrics) for observability.
+This hook runs on the fallback hop and logs the lease state for observability.
 
-The lease state is read from ops-controller's unauthenticated /metrics (Prometheus
-text): ordo_gpu_resident_evicted{resident="inference-engine-gpu"} is 1 while a render has evicted
-the GPU chat model, and ordo_gpu_chat_up is 0 while the chat engine is down. The parsed
-state is cached for 5 s; an unreadable or unparseable metrics response is logged (at most
-once per minute) and treated as "not evicted" (the fallback is allowed regardless).
+The lease state is read from ops-controller's unauthenticated GET /lease, a JSON answer served
+from memory in milliseconds: {"evicted_residents": [...], "gpu_chat_up": true|false|null}.
+"inference-engine-gpu" in evicted_residents means a render has evicted the GPU chat model, and
+gpu_chat_up false means the chat engine is down. (It does not read /metrics: that scrape runs docker
+and probes the engine, and took longer than the gate's timeout exactly during lease transitions.)
+The parsed state is cached for 5 s; an unreadable or unparseable response is logged (at most
+once per minute) and treated as "allowed" (the fallback is allowed regardless).
 """
 from __future__ import annotations
 
 import logging
 import os
-import re
 import time
 from typing import Any
 
@@ -40,10 +40,9 @@ from litellm.integrations.custom_logger import CustomLogger
 
 logger = logging.getLogger("gpu_lease_fallback_gate")
 
-# ops-controller serves the GPU lease/eviction state unauthenticated (Prometheus scrapes
-# it without a token), the same as /health.
-METRICS_URL = os.environ.get("GPU_LEASE_GATE_METRICS_URL", "http://ops-controller:9000/metrics")
-METRICS_TIMEOUT = float(os.environ.get("GPU_LEASE_GATE_TIMEOUT_SEC", "2"))
+# ops-controller serves the GPU lease/eviction state unauthenticated, the same as /health.
+LEASE_URL = os.environ.get("GPU_LEASE_GATE_URL", "http://ops-controller:9000/lease")
+LEASE_TIMEOUT = float(os.environ.get("GPU_LEASE_GATE_TIMEOUT_SEC", "2"))
 CACHE_TTL = float(os.environ.get("GPU_LEASE_GATE_CACHE_TTL_SEC", "5"))
 # An unreachable ops-controller is logged once per this many seconds, not once per scrape.
 UNREADABLE_WARN_INTERVAL = 60.0
@@ -54,41 +53,26 @@ UNREADABLE_WARN_INTERVAL = 60.0
 # admission / during preparation". LiteLLM keeps the message in the failed attempt's breadcrumb.
 GPU_QUEUE_ERROR_MARKERS = ("inference request queue is full", "inference request expired")
 
-# The two series ops-controller exports for the GPU chat service (ordo/control/metrics.py):
-# one per resident (1 while stopped for a lease) and the /health liveness of the chat engine.
-_EVICTED_RE = re.compile(r'^ordo_gpu_resident_evicted\{resident="inference-engine-gpu"\}\s+(\S+)', re.MULTILINE)
-_CHAT_UP_RE = re.compile(r"^ordo_gpu_chat_up\s+(\S+)", re.MULTILINE)
+GPU_CHAT_RESIDENT = "inference-engine-gpu"
 
 
-def _parse_value(raw: str) -> float | None:
-    try:
-        return float(raw)
-    except ValueError:
-        return None
+def fallback_allowed(lease: Any) -> bool:
+    """Whether the CPU fallback may serve, from one ops-controller GET /lease answer (decoded JSON).
 
-
-def _first_value(pattern: re.Pattern[str], text: str) -> float | None:
-    """The value of the first sample matching `pattern`, or None when absent or malformed."""
-    match = pattern.search(text)
-    if match is None:
-        return None
-    return _parse_value(match.group(1))
-
-
-def fallback_allowed(metrics_text: str) -> bool:
-    """Whether the CPU fallback may serve, from one ops-controller /metrics scrape.
-
-    Allowed while the GPU chat model is evicted for a lease
-    (ordo_gpu_resident_evicted{resident="inference-engine-gpu"} 1) or the GPU chat service is down
-    (ordo_gpu_chat_up 0). When neither series is present there is nothing to judge by,
-    so the gate fails open: a consumer must not be locked out because ops-controller
-    stopped exporting a line.
+    Allowed while the GPU chat model is evicted for a lease (it is in evicted_residents) or the GPU
+    chat service is down (gpu_chat_up is false). When neither fact is present there is nothing to
+    judge by, so the gate fails open: a consumer must not be locked out because ops-controller
+    stopped reporting a field. Only a known-healthy, resident GPU is refused.
     """
-    evicted = _first_value(_EVICTED_RE, metrics_text)
-    if evicted == 1.0:
+    if not isinstance(lease, dict):
         return True
-    chat_up = _first_value(_CHAT_UP_RE, metrics_text)
-    if chat_up == 0.0:
+    evicted_residents = lease.get("evicted_residents")
+    evicted = GPU_CHAT_RESIDENT in evicted_residents if isinstance(evicted_residents, list) else None
+    if evicted:
+        return True
+    chat_up = lease.get("gpu_chat_up")
+    chat_up = chat_up if isinstance(chat_up, bool) else None
+    if chat_up is False:
         return True
     if evicted is None and chat_up is None:
         return True
@@ -144,7 +128,7 @@ class GpuLeaseFallbackGate(CustomLogger):
     logs the GPU lease state for observability (see the module docstring)."""
 
     def __init__(self) -> None:
-        # (expiry as time.monotonic(), parsed allowed state) of the last metrics read.
+        # (expiry as time.monotonic(), parsed allowed state) of the last lease read.
         self._cache: tuple[float, bool] | None = None
         # time.monotonic() of the last "cannot read" warning, or None before the first.
         self._last_unreadable_warning: float | None = None
@@ -185,7 +169,7 @@ class GpuLeaseFallbackGate(CustomLogger):
     async def _fallback_allowed(self) -> bool:
         """The lease state from ops-controller, cached for CACHE_TTL seconds.
 
-        Fails open: when the metrics cannot be read or parsed, the fallback is allowed
+        Fails open: when the lease state cannot be read or parsed, the fallback is allowed
         (availability first) and the warning is logged at most once per
         UNREADABLE_WARN_INTERVAL.
         """
@@ -194,16 +178,16 @@ class GpuLeaseFallbackGate(CustomLogger):
         if cached is not None and now < cached[0]:
             return cached[1]
         try:
-            async with httpx.AsyncClient(timeout=METRICS_TIMEOUT) as client:
-                response = await client.get(METRICS_URL)
+            async with httpx.AsyncClient(timeout=LEASE_TIMEOUT) as client:
+                response = await client.get(LEASE_URL)
                 response.raise_for_status()
-                allowed = fallback_allowed(response.text)
+                allowed = fallback_allowed(response.json())
         except Exception as exc:
             last = self._last_unreadable_warning
             if last is None or now - last >= UNREADABLE_WARN_INTERVAL:
                 logger.warning(
                     "gpu_lease_fallback_gate: cannot read %s (%s); allowing the CPU fallback",
-                    METRICS_URL,
+                    LEASE_URL,
                     exc,
                 )
                 self._last_unreadable_warning = now

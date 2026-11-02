@@ -67,6 +67,7 @@ from . import principals as auth
 from .apply import RenderApply
 from .broker import Broker
 from .call_audit import ACTOR_HEADER, AUDITED_METHODS, CallAuditor, audit_actor, audited_read, lease_detail
+from .chat_probe import ChatHealthProbe
 from .comfyui import ModelDownloads, NodeRequirements
 from .comfyui_reclaim import ComfyUIReclaim
 from .doctor import DriftReport
@@ -85,9 +86,11 @@ from .source import StackSource
 logger = logging.getLogger(__name__)
 
 # The only paths reachable without the bearer token: container healthchecks carry no credentials,
-# and Prometheus scrapes /metrics without one (it holds no secret: ordo/control/metrics.py).
+# Prometheus scrapes /metrics without one (it holds no secret: ordo/control/metrics.py), and the
+# model gateway's fallback gate reads /lease (resident names and one boolean).
 METRICS_PATH = "/metrics"
-UNAUTHENTICATED_PATHS = frozenset({"/health", "/healthz", METRICS_PATH})
+LEASE_PATH = "/lease"
+UNAUTHENTICATED_PATHS = frozenset({"/health", "/healthz", METRICS_PATH, LEASE_PATH})
 
 COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
 AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
@@ -162,8 +165,10 @@ class ControlPlane:
         engines = (EngineCollector(self._served_models, _http_get,
                                    lambda service, since, tail: broker.backend.logs(service, tail=tail, since=since))
                    if broker else None)
+        # The GPU chat service's liveness, refreshed by its own thread (serve.py), read from memory.
+        self.chat_probe = ChatHealthProbe(chat_health_url)
         self.metrics = prom.MetricsCollector(scheduler, broker, disk_paths or {}, tls_cert_files or {},
-                                             chat_health_url=chat_health_url,
+                                             chat_up=self.chat_probe.up,
                                              netns_repair_stats=self.netns_repair.stats if self.netns_repair else None,
                                              engines=engines)
         # ComfyUI's files. Their locations are read from this module's settings when used, so a test
@@ -211,6 +216,12 @@ class ControlPlane:
         """The container healthcheck. The digest is not secret; `ordo doctor` reads it here to compare
         with the checkout."""
         return {"ok": True, "substrate_digest": self.substrate_digest}
+
+    def lease_state(self) -> dict[str, Any]:
+        """The two facts the model gateway's fallback gate needs, from memory (no docker, no network):
+        the residents stopped for a GPU lease, and the cached chat liveness (null when unknown)."""
+        evicted = sorted(self.scheduler.evicted_residents) if self.scheduler else []
+        return {"evicted_residents": evicted, "gpu_chat_up": self.chat_probe.up()}
 
     def get_model_config(self) -> dict[str, Any]:
         return self.model_config.get()

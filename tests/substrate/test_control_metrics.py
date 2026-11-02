@@ -222,36 +222,12 @@ def test_gpu_chat_up_is_exported_only_when_probed():
     assert value(None) is None                      # no probe configured: no series, never a fake 0
 
 
-def _serve(status: int):
-    import http.server
-    import threading
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802
-            self.send_response(status)
-            self.end_headers()
-            self.wfile.write(b'{"status":"ok"}')
-
-        def log_message(self, *args):
-            pass
-
-    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server
+def _collector_text(chat_up):
+    return metrics.MetricsCollector(None, None, {}, {}, chat_up=chat_up).text()
 
 
-@pytest.mark.parametrize(("status", "up"), [(200, True), (503, False)])
-def test_the_collector_probes_the_chat_health_endpoint(status, up):
-    server = _serve(status)
-    try:
-        url = f"http://127.0.0.1:{server.server_address[1]}/health"
-        collector = metrics.MetricsCollector(None, None, {}, {}, chat_health_url=url)
-        assert collector._chat_up() is up
-    finally:
-        server.shutdown()
-
-
-def test_an_unreachable_chat_service_is_down_not_an_error():
-    collector = metrics.MetricsCollector(None, None, {}, {}, chat_health_url="http://127.0.0.1:9/health")
-    assert collector._chat_up() is False
-    assert metrics.MetricsCollector(None, None, {}, {})._chat_up() is None
+def test_metrics_exports_the_cached_chat_up_without_probing():
+    assert _samples(_collector_text(lambda: True))[("ordo_gpu_chat_up", ())] == 1
+    assert _samples(_collector_text(lambda: False))[("ordo_gpu_chat_up", ())] == 0
+    assert ("ordo_gpu_chat_up", ()) not in _samples(_collector_text(lambda: None))
+    assert ("ordo_gpu_chat_up", ()) not in _samples(_collector_text(None))
