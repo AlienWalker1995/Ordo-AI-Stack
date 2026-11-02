@@ -300,7 +300,7 @@ PY
     # repositories/ultimate_sd_upscale); without it the pack imports nothing. Offline-safe: a
     # submodule already at its recorded commit fetches nothing.
     if [ -f "$work/.gitmodules" ]; then
-      git -C "$work" submodule update -q --init --recursive --depth 1 \
+      git -C "$work" submodule update -q --init --recursive \
         || die "submodule update failed for $name; refusing to run an incomplete node pack"
     fi
     if [ "$work" != "$dir" ]; then

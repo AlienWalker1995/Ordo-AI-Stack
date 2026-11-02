@@ -480,3 +480,44 @@ def test_boot_syncs_scripts_and_the_plugin_mounts_them():
     plugin = PLUGIN.read_text(encoding="utf-8")
     assert "${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/comfyui/scripts:/comfyui-app-scripts:ro" in plugin
     assert re.search(r"^\s*config_mounts: \[.*/comfyui-app-scripts.*\]$", plugin, re.M)
+
+
+# --- reel-render packs declare their TTS deps -------------------------------------------
+
+def test_render_reel_node_declares_kokoro_and_misaki():
+    req = NODES_DIR / "render_reel_node" / "requirements.txt"
+    assert req.is_file(), "render_reel_node needs a requirements.txt for its kokoro import"
+    text = req.read_text(encoding="utf-8")
+    assert re.search(r"^kokoro==\d", text, re.M), "pin kokoro to an exact version"
+    assert re.search(r"^misaki\[en\]==\d", text, re.M), "pin misaki[en] to an exact version"
+
+
+def test_dialogue_reel_endpoint_declares_kokoro():
+    req = NODES_DIR / "dialogue_reel_endpoint" / "requirements.txt"
+    assert req.is_file()
+    text = req.read_text(encoding="utf-8")
+    assert re.search(r"^kokoro==\d", text, re.M), "dialogue_reel_endpoint imports kokoro; pin it"
+    assert re.search(r"^resemblyzer==\d", text, re.M), "resemblyzer pin must survive the kokoro addition"
+
+
+def test_all_repo_pack_requirements_use_exact_pins():
+    # The PR title says "pin every pack"; a >= specifier lets a new release change the
+    # running env without a repo change.
+    for req in sorted(NODES_DIR.glob("*/requirements.txt")):
+        for line in req.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            assert "==" in line, f"{req.parent.name}/{req.name}: {line!r} is not an exact pin"
+            assert ">=" not in line and "<=" not in line, f"{req.parent.name}/{req.name}: {line!r} uses a range"
+
+
+# --- submodule update must not shallow-fetch ---------------------------------------------
+
+def test_submodule_update_does_not_shallow_fetch():
+    # --depth 1 fetches the submodule's default branch at depth 1; if the recorded commit
+    # is not on the default branch the shallow fetch fails and die blocks the whole boot.
+    text = BOOT.read_text(encoding="utf-8")
+    m = re.search(r"submodule update[^\\]*", text)
+    assert m, "submodule update command not found in boot.sh"
+    assert "--depth" not in m.group(0), f"submodule update still shallow-fetches: {m.group(0)!r}"
