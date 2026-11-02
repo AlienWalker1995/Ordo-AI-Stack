@@ -162,13 +162,17 @@ class NinferLogReader:
         except (KeyError, ValueError) as e:
             logger.warning("engine metrics: unreadable NInfer request line (%s): %s", e, text[:200])
             return
+        self.counters["queue_seconds"] += queue
+        # NInfer reports no prefill for a request cancelled before it computed its prompt. Its
+        # prompt size and durations then describe a wait, not work.
+        if "prefill" not in fields:
+            return
         self.counters["prompt_tokens_processed"] += max(prompt - cached, 0.0)
         self.counters["prompt_tokens_cached"] += cached
         self.counters["output_tokens"] += output
-        # TTFT includes the wait for the engine; a request cancelled while queued has TTFT < queue.
+        # TTFT includes the wait for the engine.
         self.counters["prompt_seconds"] += max(ttft - queue, 0.0)
         self.counters["output_seconds"] += max(total - ttft, 0.0)
-        self.counters["queue_seconds"] += queue
 
 
 class EngineCollector:

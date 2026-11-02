@@ -40,6 +40,8 @@ DONE_CACHED = ("2026-10-30 09:35:49.815  INFO  req#62 done | openai-chat | tool 
                "cache 90,185 (99.5%, shared prefix) | TTFT 1m 17.4s | total 1m 20.7s | queue 1m 17.1s | prefill 1.95k tok/s")
 CANCELLED = ("2026-10-30 09:35:46.271  INFO  req#66 done | openai-chat | cancelled | prompt 60 | output 0 | "
              "cache 0 (0.0%) | TTFT 665 us | total 1m 0.0s | queue 1m 0.0s | thinking 0/32,768")
+CANCELLED_BEFORE_PREFILL = ("2026-11-02 14:04:17.323  INFO  req#35 done | openai-chat | cancelled | prompt 149,440 | "
+                            "output 0 | cache 0 (0.0%) | TTFT 86.9 ms | total 437 ms | queue 24.1 ms | thinking 0/32,768")
 NO_QUEUE = ("2026-10-30 11:00:10.247  INFO  req#11 done | openai-chat | tool calls 2 | prompt 22,997 | output 299 | "
             "cache 16,921 (73.6%, private endpoint) | TTFT 897 ms | total 2.5s | prefill 7.04k tok/s")
 THROUGHPUT = ("2026-10-30 09:34:30.717  INFO  throughput | 5.0s | prefill 2.87k tok/s (14,336 tok) | "
@@ -71,13 +73,28 @@ def test_ninfer_requests_count_computed_work_not_cache_hits():
     reader = NinferLogReader(started_at=0)
     reader.consume([("t1", DONE), ("t2", DONE_CACHED), ("t3", CANCELLED)])
     c = reader.counters
-    assert c["prompt_tokens_processed"] == 1722 + (90664 - 90185) + 60
+    assert c["prompt_tokens_processed"] == 1722 + (90664 - 90185)
     assert c["prompt_tokens_cached"] == 90185
     assert c["output_tokens"] == 3541
-    # prefill = TTFT - queue; generation = total - TTFT; a request cancelled while queued adds no prefill.
+    # prefill = TTFT - queue; generation = total - TTFT.
     assert c["prompt_seconds"] == pytest.approx((39.5 - 39.1) + (77.4 - 77.1))
-    assert c["output_seconds"] == pytest.approx((59.7 - 39.5) + (80.7 - 77.4) + (60.0 - 665e-6))
+    assert c["output_seconds"] == pytest.approx((59.7 - 39.5) + (80.7 - 77.4))
     assert c["queue_seconds"] == pytest.approx(39.1 + 77.1 + 60.0)
+
+
+@pytest.mark.parametrize("line,queue_seconds", [(CANCELLED, 60.0), (CANCELLED_BEFORE_PREFILL, 0.0241)])
+def test_a_request_cancelled_before_prefill_counts_only_its_wait(line, queue_seconds):
+    """Its whole prompt in about 60 ms once read as 40,000 tok/s, and a 60 s wait in the queue as
+    60 s of generating no tokens, which dropped the generation speed panel to zero."""
+    reader = NinferLogReader(started_at=0)
+    reader.consume([("t1", line)])
+    c = reader.counters
+    assert c["prompt_tokens_processed"] == 0
+    assert c["prompt_tokens_cached"] == 0
+    assert c["prompt_seconds"] == 0
+    assert c["output_tokens"] == 0
+    assert c["output_seconds"] == 0
+    assert c["queue_seconds"] == pytest.approx(queue_seconds)
 
 
 def test_a_request_that_did_not_wait_has_no_queue_field():
