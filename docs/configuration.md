@@ -47,6 +47,8 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 | `EMBED_MODEL` | `embeddinggemma-2-Q8_0.gguf` | Embedding model used by `rag-ingestion` and Open WebUI |
 | `RAG_COLLECTION` | `documents` | Qdrant collection (must match Open WebUI / ingestion) |
 | `RAG_CHUNK_SIZE` | `400` | Chunk size in tokens |
+| `RAG_EMBED_BATCH_SIZE` | `16` | Chunks per embedding request |
+| `RAG_SCAN_INTERVAL_SEC` | `120` | Seconds between periodic rescan passes in `rag-ingestion` |
 | `RAG_CHUNK_OVERLAP` | `50` | Chunk overlap in tokens |
 | `QDRANT_PORT` | `6333` | Internal port Qdrant listens on (`ordo-net` only, no host publish) |
 
