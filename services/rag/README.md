@@ -29,10 +29,11 @@ with a leading dot, not by adding ingester config.
 `ingest.py` has no code path that removes a Qdrant point when its source file disappears from the
 watch tree: the watchdog handler (`_EventHandler`) only implements `on_created`/`on_modified`, not
 `on_deleted`, and the periodic rescan (`_iter_supported_files`) only ever adds currently-existing
-files to the work queue; it never diffs against previously-ingested `state.json` entries to notice
-one has gone missing. `_delete_existing` only runs inside `_upsert_points`, i.e. on a RE-ingest of
-the same source path, never on absence. A file removed from the watched tree (including the whole
-Obsidian vault, or the `stack-docs` mount) leaves its embedded chunks in Qdrant indefinitely, stale.
+files to the work queue; it never diffs against the per-source digests read from Qdrant at startup
+(`_indexed_digests`) to notice one has gone missing. `_delete_existing` only runs inside
+`_upsert_points`, i.e. on a RE-ingest of the same source path, never on absence. A file removed
+from the watched tree (including the whole Obsidian vault, or the `stack-docs` mount) leaves its
+embedded chunks in Qdrant indefinitely, stale.
 
 There is no ingester-side fix here yet; the eval harness (`services/evals`) works around the
 consequence for its own scratch writes with an out-of-band safety check

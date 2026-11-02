@@ -41,7 +41,8 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server-b11552@sha256:fc9b506e89c1a1cfdd7bc056480f54dc657c1c04d76839a08642dc280b8ed2f6
     # CPU only, deliberately: this image is the CPU build, so the weights (~0.3GB) and KV cache live
     # in RAM. It reserves no GPU and is no GPU resident, so a render never stops it and retrieval
-    # stays up while one runs. A full re-embed of the index takes ~6 minutes on CPU.
+    # stays up while one runs. A full re-embed of the current index (~15,600 chunks) takes roughly
+    # 76 minutes on CPU at the measured ~3.4 chunks/s.
     command:
       - --host
       - 0.0.0.0
