@@ -1319,6 +1319,12 @@ class Broker:
         # heartbeats, /status and /health never touch it. Reentrant because restore_state sweeps
         # while holding it.
         self.operation_lock = threading.RLock()
+        # Residents this broker is stopping right now because a lease evicted them. pump() marks a
+        # resident evicted before reconcile's docker stop returns, so for those seconds it is
+        # "evicted and still running" by design; enforce_evictions (which takes no lock) must not
+        # report that as a stray started from outside. Guarded by its own small lock.
+        self._evicting: set[str] = set()
+        self._evicting_lock = threading.Lock()
 
     @property
     def state_persisted(self) -> bool:
@@ -1393,11 +1399,20 @@ class Broker:
         Callers hold the operation lock."""
         rejected_before = set(self.scheduler.status()["rejected"])
         admitted, evicted = self.scheduler.pump()
+        if evicted:               # mark the WHOLE batch up front: pump() has already marked every
+            with self._evicting_lock:          # one of them evicted, so while the first docker stop
+                self._evicting.update(evicted) # is in flight the rest are "evicted and running" by
+                                               # design too, and enforce_evictions must not see them
         if self.history:
             for job_id in set(self.scheduler.status()["rejected"]) - rejected_before:
                 self.history.rejected(job_id)
-        for name in evicted:      # stop LRU-evicted idle residents first to free VRAM
-            self.backend.stop(name)
+        if evicted:               # stop LRU-evicted idle residents first to free VRAM
+            try:
+                for name in evicted:
+                    self.backend.stop(name)
+            finally:
+                with self._evicting_lock:
+                    self._evicting.difference_update(evicted)
         for job_id in admitted:   # then start the newly-admitted jobs
             self.backend.start(job_id)
             if self.history:
@@ -1468,13 +1483,19 @@ class Broker:
         It takes no operation lock, so it keeps guarding the card while a long verb runs. The
         evicted set is read again AFTER the container listing: a restore removes the resident from
         that set before starting it, so a resident that is running because it was just restored is
-        never mistaken for a stray and stopped (which would strand it down).
+        never mistaken for a stray and stopped (which would strand it down). A resident the broker
+        is stopping right now for a new lease is not a stray either: the `_evicting` snapshot is
+        taken BEFORE the container listing, so a stop that returns between the listing and the
+        exclusion cannot make the resident count as running-but-not-being-evicted and get stopped
+        a second time.
         """
         if not self.scheduler.evicted_residents:
             return []
+        with self._evicting_lock:
+            being_evicted = set(self._evicting)
         running = {r.get("id") for r in (self.backend.list_services() or {}).get("services", [])
                    if r.get("state") == "running"}
-        stray = sorted(set(self.scheduler.evicted_residents) & running)
+        stray = sorted((set(self.scheduler.evicted_residents) & running) - being_evicted)
         for name in stray:
             self.backend.stop(name)
         return stray
