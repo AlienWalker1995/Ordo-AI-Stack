@@ -172,9 +172,11 @@ class NinferLogReader:
         self.counters["queue_seconds"] += queue
         # NInfer omits the prefill rate whenever the request computed no prompt tokens: a request
         # cancelled before prefill (its prompt size and durations then describe a wait, not work),
-        # or one whose whole prompt came from the cache. Only the cancelled one is dropped; the
-        # completed one's cache hits and generation time are real work.
-        if "prefill" not in fields and _stop_reason(text) == "cancelled":
+        # or one whose whole prompt came from the cache. Drop only the line that did no work --
+        # cancelled with no output. A fully-cached request that generated output, whether it
+        # completed or was cancelled mid-decode by a client disconnect, still reused the cache
+        # and spent generation time, so it is counted.
+        if "prefill" not in fields and _stop_reason(text) == "cancelled" and output == 0:
             return
         self.counters["prompt_tokens_processed"] += max(prompt - cached, 0.0)
         self.counters["prompt_tokens_cached"] += cached

@@ -281,7 +281,12 @@ router_settings:
   # Only local-chat fails over: the stable pins (local-chat-gpu, local-chat-cpu) are deliberate
   # and must error when their own backend is down, not silently reroute.
   fallbacks: [{"local-chat": ["__CPU_MODEL_NAME__"]}]
-  # Must exceed health_check_interval (the failure counter's TTL) so failures accumulate.
+  # Must exceed health_check_interval (60 s) so the embed probe's cadence stays inside the
+  # cooldown window: a failing inference-engine-embed gets re-probed while still in cooldown.
+  # Its probe result goes to the health-state cache (stale after ~10 min by default), not the
+  # failure counter. Chat is no longer probed (background_health_checks above): its
+  # unhealthiness accumulates from request failures, whose counter TTL is cooldown_time itself
+  # (litellm router_utils/cooldown_handlers.py).
   cooldown_time: 120
   num_retries: 1
   # Without this, model_info.max_input_tokens is documentation only.

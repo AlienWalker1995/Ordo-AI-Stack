@@ -44,6 +44,8 @@ CANCELLED_BEFORE_PREFILL = ("2026-11-02 14:04:17.323  INFO  req#35 done | openai
                             "output 0 | cache 0 (0.0%) | TTFT 86.9 ms | total 437 ms | queue 24.1 ms | thinking 0/32,768")
 DONE_FULLY_CACHED = ("2026-11-02 14:05:02.118  INFO  req#36 done | openai-chat | output limit | prompt 90,000 | output 500 | "
                      "cache 90,000 (100.0%, shared prefix) | TTFT 120 ms | total 4.2s | decode 122.3 tok/s")
+CANCELLED_FULLY_CACHED = ("2026-11-02 14:05:09.412  INFO  req#37 done | openai-chat | cancelled | prompt 90,000 | output 400 | "
+                          "cache 90,000 (100.0%, shared prefix) | TTFT 120 ms | total 3.4s | decode 121.6 tok/s")
 NO_QUEUE = ("2026-10-30 11:00:10.247  INFO  req#11 done | openai-chat | tool calls 2 | prompt 22,997 | output 299 | "
             "cache 16,921 (73.6%, private endpoint) | TTFT 897 ms | total 2.5s | prefill 7.04k tok/s")
 THROUGHPUT = ("2026-10-30 09:34:30.717  INFO  throughput | 5.0s | prefill 2.87k tok/s (14,336 tok) | "
@@ -110,6 +112,21 @@ def test_a_completed_request_without_prefill_still_counts_its_work():
     assert c["output_tokens"] == 500
     assert c["prompt_seconds"] == pytest.approx(0.12)
     assert c["output_seconds"] == pytest.approx(4.08)
+    assert c["queue_seconds"] == 0
+
+
+def test_a_cancelled_fully_cached_request_counts_its_work():
+    """The same line shape as the completed one, but the client disconnected mid-decode: NInfer
+    still omits the prefill rate (the whole prompt came from the cache), so dropping every
+    cancelled line without one lost this request's cache hits and generation time."""
+    reader = NinferLogReader(started_at=0)
+    reader.consume([("t1", CANCELLED_FULLY_CACHED)])
+    c = reader.counters
+    assert c["prompt_tokens_processed"] == 0
+    assert c["prompt_tokens_cached"] == 90000
+    assert c["output_tokens"] == 400
+    assert c["prompt_seconds"] == pytest.approx(0.12)
+    assert c["output_seconds"] == pytest.approx(3.28)
     assert c["queue_seconds"] == 0
 
 
