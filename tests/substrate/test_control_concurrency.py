@@ -260,3 +260,29 @@ def test_two_concurrent_downloads_cannot_both_start(tmp_path, monkeypatch):
 
     assert first["status"] == "started"
     assert second["_status"] == 409
+
+
+def test_enforce_evictions_ignores_a_resident_the_broker_is_evicting_for_a_lease():
+    # The race seen live 2026-11-02 at every lease request: pump() marks the resident evicted,
+    # then reconcile's docker stop takes a few seconds; the enforcement timer listed containers in
+    # that window, saw "evicted and running", stopped it a second time and logged that it had been
+    # started outside the scheduler. Nothing had: the broker was mid-eviction.
+    scheduler = Scheduler(32)
+    scheduler.cache_idle("inference-engine-gpu", 20)
+    seen = {}
+
+    class EnforceDuringStop(MockBackend):
+        def list_services(self) -> dict:
+            return {"services": [{"id": "inference-engine-gpu", "state": "running"}]}
+
+        def stop(self, name: str) -> None:
+            seen["stray"] = broker.enforce_evictions()   # the timer fires while docker stops it
+            super().stop(name)
+
+    backend = EnforceDuringStop()
+    broker = Broker(scheduler, backend)
+    broker.request(Job("render", vram_gb=16.0))
+
+    assert "inference-engine-gpu" in scheduler.evicted_residents
+    assert seen["stray"] == []
+    assert backend.stopped == ["inference-engine-gpu"]   # stopped once, by the eviction itself
