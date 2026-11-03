@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Changed
+- **ComfyUI pinned to v0.44.0**, the first release that runs P-H3-Image natively.
+
 ### Removed
 - **The GPU pin's 503 hook in the model gateway.** It existed only so a client using `local-chat-gpu`
   as its primary could fail over to its own chain; clients now use `local-chat` and the gateway
