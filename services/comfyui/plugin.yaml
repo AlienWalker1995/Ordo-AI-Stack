@@ -106,6 +106,10 @@ services:
       # Bumping it here is the ONLY supported way to change ComfyUI versions; the ref's own
       # requirements.txt then carries the matching Comfy-Org runtime pins.
       #
+      # 2c75dc1b = tag v0.44.0 (2026-11-03), the first release carrying P-H3-Image support
+      # (upstream 576b642e, PR #17506): the PH3ImageConditioning node and the "minimax" CLIP
+      # type for its text encoder and prompt upsampler. Rollback: 45bf90d1 = v0.41.1.
+      #
       # 45bf90d1 = tag v0.41.1 (2026-10-15), the FIRST release carrying FLUX 3 Image
       # support (upstream 20b46065, PR #17064): native detection of the flux3_image_klein
       # transformer (content_mode_blocks/txt_mode_blocks/single_blocks) plus the flux3_te()
@@ -122,7 +126,7 @@ services:
       # import failure vs 0.37.0) carries over unless the node is updated. Pin a full commit
       # SHA, never a tag or branch — tags are movable refs, and "float" is how you get a
       # different app on the next recreate.
-      COMFYUI_APP_REF: ${COMFYUI_APP_REF:-45bf90d1c91eecd782643346dcfb73cb0017667f}
+      COMFYUI_APP_REF: ${COMFYUI_APP_REF:-2c75dc1b379a59e0880619d029607af5169a62ef}
       # V1's proven allocator config (overrides/compute.yml). An EMPTY string here is worse than
       # omitting it: torch's allocator parser rejects "" with `ValueError: Unrecognized key ','` at
       # `torch._C._cuda_init()`, crash-looping ComfyUI on boot. Default to V1's value; operator-
