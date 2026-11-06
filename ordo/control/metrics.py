@@ -22,6 +22,7 @@ import os
 import re
 import ssl
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +37,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+
+# How long one reading of the immutable-path changes is served before it is taken again. A reading
+# runs `docker diff` of each declaring container, about 2.4 s for the agent (measured 2026-11-06),
+# where the rest of a scrape takes 0.6 s; a hand-edit does not need minute resolution to be paged.
+IMMUTABLE_CHANGES_MAX_AGE_SECONDS = 300.0
 
 # The filesystems ops-controller reports, by the `mount` label the alert rules use.
 #   docker: the container's own root, which lives on the Docker data disk (on Docker Desktop, the
@@ -67,6 +73,9 @@ class Inputs:
     scheduler: Mapping[str, Any] | None = None
     containers: Sequence[Mapping[str, Any]] | None = None     # list_services() rows
     restarts: Mapping[str, int] | None = None                 # service -> docker RestartCount
+    # service -> files changed under the paths its image declares immutable (broker.py
+    # IMMUTABLE_PATHS_LABEL); only services whose image declares any
+    immutable_changes: Mapping[str, int] | None = None
     disks: Mapping[str, DiskUsage | None] = dataclasses.field(default_factory=dict)
     # cert name -> its notAfter as a Unix time; None when a configured cert could not be read.
     tls_certs: Mapping[str, float | None] = dataclasses.field(default_factory=dict)
@@ -167,6 +176,14 @@ def _restarts(w: _Writer, restarts: Mapping[str, int]) -> None:
         w.add("ordo_container_restarts_total", "counter", "", {"service": service}, int(restarts[service]))
 
 
+def _immutable_changes(w: _Writer, changes: Mapping[str, int]) -> None:
+    w.declare("ordo_container_immutable_files_changed", "gauge",
+              "Files under the paths the service's image declares immutable (its ordo.immutable-paths "
+              "label) that differ from the image in the running container: a live hotfix.")
+    for service in sorted(changes):
+        w.add("ordo_container_immutable_files_changed", "gauge", "", {"service": service}, int(changes[service]))
+
+
 def _disks(w: _Writer, disks: Mapping[str, DiskUsage]) -> None:
     for mount in sorted(disks):
         usage = disks[mount]
@@ -224,6 +241,9 @@ def render(inputs: Inputs) -> str:
     collectors["restarts"] = inputs.restarts is not None
     if inputs.restarts is not None:
         _restarts(w, inputs.restarts)
+    collectors["immutable_paths"] = inputs.immutable_changes is not None
+    if inputs.immutable_changes is not None:
+        _immutable_changes(w, inputs.immutable_changes)
     readable_disks = {mount: usage for mount, usage in inputs.disks.items() if usage is not None}
     for mount in inputs.disks:
         collectors[f"disk_{mount}"] = mount in readable_disks
@@ -289,10 +309,45 @@ class MetricsCollector:
         self.tls_cert_files = dict(tls_cert_files)
         # The cached GPU chat liveness (chat_probe.py); never probed inline, so a scrape stays fast.
         self.chat_up = chat_up
+        self._immutable_changes: Mapping[str, int] | None = None
+        self._immutable_changes_read_at = float("-inf")
+        # The containers the cached reading describes ({service: id}): a recreate changes them and
+        # invalidates the reading before the age does.
+        self._immutable_changes_containers: Mapping[str, str] | None = None
+
+    def _read_immutable_changes(self) -> Mapping[str, int] | None:
+        """The last reading while it is younger than IMMUTABLE_CHANGES_MAX_AGE_SECONDS AND still
+        describes the same containers, else a new one. The container IDs matter: after
+        `ordo recreate hermes` — the step the alert's own description tells the operator to run —
+        the old nonzero count must not keep paging a clean new container until the age expires.
+        A failed reading is not kept, so the next scrape tries again."""
+        broker = self.broker
+        if broker is None:
+            # text() only calls this while self.broker is set; a None broker has nothing to read.
+            return None
+        now = time.monotonic()
+        try:
+            containers = broker.backend.running_container_ids()
+        except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a 500
+            logger.warning("metrics: cannot read the container ids: %s", e)
+            containers = None
+        stale = now - self._immutable_changes_read_at >= IMMUTABLE_CHANGES_MAX_AGE_SECONDS
+        if containers is not None and self._immutable_changes_containers is not None:
+            stale = stale or containers != self._immutable_changes_containers
+        if not stale:
+            return self._immutable_changes
+        try:
+            changes = broker.backend.immutable_path_changes()
+        except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a 500
+            logger.warning("metrics: cannot read the immutable-path changes: %s", e)
+            return None
+        self._immutable_changes, self._immutable_changes_read_at = changes, now
+        self._immutable_changes_containers = containers
+        return changes
 
     def text(self) -> str:
         """The lease, container, disk and certificate state in the Prometheus text format."""
-        containers = restarts = None
+        containers = restarts = immutable_changes = None
         if self.broker:
             try:
                 containers = self.broker.backend.list_services().get("services", [])
@@ -302,6 +357,7 @@ class MetricsCollector:
                 restarts = self.broker.backend.service_restarts()
             except Exception as e:  # noqa: BLE001 - same
                 logger.warning("metrics: cannot read the restart counts: %s", e)
+            immutable_changes = self._read_immutable_changes()
         disks: dict[str, DiskUsage | None] = {}
         for mount, path in self.disk_paths.items():
             try:
@@ -328,7 +384,8 @@ class MetricsCollector:
                 engines_failed = True
         return render(Inputs(
             scheduler=self.scheduler.status() if self.scheduler else None,
-            containers=containers, restarts=restarts, disks=disks, tls_certs=certs,
+            containers=containers, restarts=restarts, immutable_changes=immutable_changes,
+            disks=disks, tls_certs=certs,
             gpu_chat_up=self.chat_up() if self.chat_up else None,
             netns_repair=self.netns_repair_stats() if self.netns_repair_stats else None,
             engines=engine_samples, engines_failed=engines_failed))

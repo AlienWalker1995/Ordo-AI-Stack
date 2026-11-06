@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo.control.broker import ContainerLifecycleError, DockerBackend, MockBackend, NoContainer
+from ordo.control.broker import IMMUTABLE_PATHS_LABEL, ContainerLifecycleError, DockerBackend, MockBackend, NoContainer
 from ordo.control.netns_repair import NetnsRepair
 from ordo.render.changed_set import diff_services
 
@@ -406,6 +406,70 @@ def test_service_stats_covers_every_project_service(unchanged):
 def test_service_restarts_counts_every_project_container_from_zero(unchanged):
     """GET /metrics's restart-loop input: docker's RestartCount, one per service of the project."""
     assert unchanged.backend.service_restarts() == {service: 0 for service in SERVICES}
+
+
+def test_a_project_whose_images_declare_no_immutable_paths_reports_none(unchanged):
+    """GET /metrics's hotfix-alert input covers only images that carry the ordo.immutable-paths
+    label; these test images carry none, so there is nothing to report (and nothing reads as 0)."""
+    assert unchanged.backend.immutable_path_changes() == {}
+
+
+@pytest.mark.docker
+def test_a_labeled_container_reports_the_files_edited_under_its_immutable_paths(tmp_path,
+                                                                                 contract_projects):
+    """The labelled inspect/diff loop, exercised against real docker (the no-label case above runs
+    on both backends): an image that declares immutable paths reports the files hand-edited under
+    them in the running container — the shape the ImmutableFilesModified alert pages on."""
+    if not _docker_available():
+        pytest.skip("docker is not reachable")
+    project = f"{PROJECT_PREFIX}{uuid.uuid4().hex[:8]}"
+    compose_dir = tmp_path / "stack"
+    compose_dir.mkdir(parents=True)
+    doc = {"services": {"agent": {**SLEEPER, "labels": {IMMUTABLE_PATHS_LABEL: "/opt/app"}}}}
+    (compose_dir / "docker-compose.yml").write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    for name in ENV_FILES:
+        (compose_dir / name).write_text("", encoding="utf-8")
+    backend = DockerBackend(project=project)
+    backend.COMPOSE_DIR = compose_dir.as_posix()
+    contract_projects.append(project)
+    try:
+        up = subprocess.run(["docker", "compose", "-p", project, "-f",
+                             (compose_dir / "docker-compose.yml").as_posix(), "up", "-d"],
+                            capture_output=True, text=True, timeout=180)
+        assert up.returncode == 0, up.stderr
+        # The hotfix shape: a file created under the declared root in the running container.
+        subprocess.run(["docker", "exec", f"{project}-agent-1", "sh", "-c",
+                        "mkdir -p /opt/app && echo hotfix > /opt/app/hotfix.py"],
+                       check=True, capture_output=True, timeout=30)
+        assert backend.immutable_path_changes() == {"agent": 1}
+    finally:
+        subprocess.run(["docker", "compose", "-p", project, "down", "--volumes", "--remove-orphans",
+                        "--timeout", "1"], capture_output=True, text=True, timeout=180)
+
+
+def test_a_container_that_vanishes_before_its_diff_is_skipped_not_a_failed_reading(monkeypatch):
+    """A container removed between the label-scoped ps and its `docker diff` must not fail the
+    whole reading (a failed reading drops the metric out and the alert resolves early): it is
+    skipped, and the rest of the project is still served."""
+    backend = DockerBackend(project="vanish-test")
+    ps_rows = ("agent\tvanish-test-agent-1\trunning\tUp 5 minutes\tbusybox\tabc123\n"
+               "web\tvanish-test-web-1\trunning\tUp 5 minutes\tbusybox\tdef456\n")
+    inspect_out = "abc123\tagent\t/opt/app\ndef456\tweb\t/opt/app\n"
+
+    def fake_run(cmd, **kwargs):
+        if cmd[1] == "ps":
+            return subprocess.CompletedProcess(cmd, 0, stdout=ps_rows, stderr="")
+        if cmd[1] == "inspect":
+            return subprocess.CompletedProcess(cmd, 0, stdout=inspect_out, stderr="")
+        if cmd[1] == "diff":
+            if cmd[2] == "abc123":
+                return subprocess.CompletedProcess(cmd, 0, stdout="A /opt/app\nA /opt/app/hotfix.py\n",
+                                                   stderr="")
+            raise subprocess.CalledProcessError(1, cmd, output="", stderr="No such object: def456")
+        raise AssertionError(f"unexpected docker call: {cmd}")
+
+    monkeypatch.setattr("ordo.control.broker.subprocess.run", fake_run)
+    assert backend.immutable_path_changes() == {"agent": 1}
 
 
 def test_a_manual_restart_is_not_a_restart_policy_restart(harness):
