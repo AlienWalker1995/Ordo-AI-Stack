@@ -8,7 +8,7 @@
 # helper scripts. A Hermes behavior that configuration cannot express is an
 # upstream issue, not a local patch.
 #
-# Upstream pin: nousresearch/hermes-agent:stable at v0.21.7 (2026-10-11), by digest. Docker Hub
+# Upstream pin: nousresearch/hermes-agent:stable at v0.23.0 (2026-11-05), by digest. Docker Hub
 # carries no per-release tag, so the digest IS the pin. HERMES_PINNED_SHA names the upstream commit
 # that digest was built from, and the build asserts it against the image's own provenance
 # (/etc/hermes/image-provenance.json), so the two cannot disagree. scripts/stack_monitor.py reads
@@ -16,9 +16,9 @@
 # To bump: resolve the new :stable digest (`docker buildx imagetools inspect
 # nousresearch/hermes-agent:stable`), read `revision` from that file in the pulled image, and
 # replace both values together.
-ARG HERMES_PINNED_SHA=71d34bad1045610252eda02ee79549436896e784
+ARG HERMES_PINNED_SHA=2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19
 ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git
-FROM nousresearch/hermes-agent:stable@sha256:444b42594e7f467425872fc35e077a227d377f0fe0726bc818706d62175fad8b
+FROM nousresearch/hermes-agent:stable@sha256:adb7890916de63245523492be8f68f9d2095fecbec4e2a6dab7960381f0fc002
 ARG HERMES_PINNED_SHA
 
 USER root

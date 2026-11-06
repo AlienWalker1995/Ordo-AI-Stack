@@ -173,13 +173,6 @@ environment:
   # Declared by the hermes-dashboard plugin's `secrets:` (it names the operator's Google project);
   # the client secret is the HERMES_DASHBOARD_OIDC_CLIENT_SECRET file secret below.
   HERMES_DASHBOARD_OIDC_CLIENT_ID: ${HERMES_DASHBOARD_OIDC_CLIENT_ID:-}
-  # TEMPORARY, until upstream recognises its own launcher: Hermes 0.21.7-0.22.0 does not identify
-  # the gateway's `python -P -c "import os, site, sys; ..."` command line (scripts/build/launchers.py)
-  # as a gateway (gateway/status_inline_source.py _BOOTSTRAPS), so without this the dashboard reports
-  # the running gateway as stopped. Its HTTP health rung reads the gateway's API server instead,
-  # which always runs (on loopback without HERMES_API_SERVER_KEY, see ordo-init.sh); /health needs
-  # no key. Remove when the upstream fix ships.
-  GATEWAY_HEALTH_URL: http://127.0.0.1:8642
 
 # Mounts. THE BRAIN is a NAMED VOLUME, deliberately not a host bind — see below. /workspace/data
 # holds the mutable data the skills reference by absolute path (/workspace/data/drafts,
