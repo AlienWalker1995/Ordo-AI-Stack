@@ -189,10 +189,6 @@ in the `agent` container (upstream's s6 `dashboard` service, `HERMES_DASHBOARD=1
 - Sign-in: Google, through Hermes's bundled OIDC provider (setup: [runbooks/auth.md](runbooks/auth.md)).
   Only `/api/status` answers without signing in. The stack dashboard's Hermes card probes it through Caddy (`edge_check`), so the card goes red when the site does.
 
-Hermes 0.21.7 to 0.22.0 do not recognise the gateway's own launcher command line, so a dashboard
-reports a running gateway as stopped. `GATEWAY_HEALTH_URL` (in `agent.yaml`) points its health rung at
-the gateway's API server until the upstream fix ships.
-
 ## Profiles (more than one bot)
 
 `hermes profile create <name>` adds a profile under `/opt/data/profiles/<name>/`: its own `SOUL.md`, memory, skills and sessions. One gateway serves every profile (upstream's multiplexer); do not run a second gateway per profile. A profile created while the gateway runs is served after the next restart (`ordo recreate agent`, or restart `gateway-default` inside the container); `/opt/data/gateway_state.json` lists `served_profiles`.

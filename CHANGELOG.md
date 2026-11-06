@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format is loosely b
 
 ### Changed
 - **ComfyUI pinned to v0.44.0**, the first release that runs P-H3-Image natively.
+- **Hermes Agent pinned to v0.23.0** (upstream `nousresearch/hermes-agent:stable`, by digest). Also drops the temporary `GATEWAY_HEALTH_URL` dashboard workaround, which only compensated for the 0.21.7-0.22.0 bug where the gateway's own launcher was not recognised as a running gateway; that recognition now ships upstream, so the dashboard reports gateway status directly.
 
 ### Removed
 - **The GPU pin's 503 hook in the model gateway.** It existed only so a client using `local-chat-gpu`
