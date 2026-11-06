@@ -87,6 +87,15 @@ def test_a_rewritten_cache_of_a_source_that_also_changed_counts_once():
     assert changed_immutable_files(lines, ["/opt/hermes"]) == ["/opt/hermes/agent/status_output.py"]
 
 
+def test_an_optimized_bytecode_tag_maps_to_the_same_source():
+    # -O builds name their caches <module>.cpython-314.opt-1.pyc; the optimization suffix must not
+    # leak into the mapped source name or the pair would count as two files.
+    lines = ["C /opt/hermes", "C /opt/hermes/agent/status_output.py",
+             "C /opt/hermes/agent/__pycache__",
+             "C /opt/hermes/agent/__pycache__/status_output.cpython-314.opt-1.pyc"]
+    assert changed_immutable_files(lines, ["/opt/hermes"]) == ["/opt/hermes/agent/status_output.py"]
+
+
 def test_the_label_value_is_comma_separated_absolute_paths():
     assert immutable_roots("/opt/hermes, /opt/ordo/ ,relative,") == ["/opt/hermes", "/opt/ordo"]
     assert immutable_roots("") == []

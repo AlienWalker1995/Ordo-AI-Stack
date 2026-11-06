@@ -437,6 +437,9 @@ def test_a_labeled_container_reports_the_files_edited_under_its_immutable_paths(
                              (compose_dir / "docker-compose.yml").as_posix(), "up", "-d"],
                             capture_output=True, text=True, timeout=180)
         assert up.returncode == 0, up.stderr
+        cid = subprocess.run(["docker", "compose", "-p", project, "ps", "-q"],
+                             check=True, capture_output=True, text=True, timeout=30).stdout.strip()
+        assert backend.running_container_ids() == {"agent": cid}
         # The hotfix shape: a file created under the declared root in the running container.
         subprocess.run(["docker", "exec", f"{project}-agent-1", "sh", "-c",
                         "mkdir -p /opt/app && echo hotfix > /opt/app/hotfix.py"],
@@ -447,20 +450,21 @@ def test_a_labeled_container_reports_the_files_edited_under_its_immutable_paths(
                         "--timeout", "1"], capture_output=True, text=True, timeout=180)
 
 
-def test_a_container_that_vanishes_before_its_diff_is_skipped_not_a_failed_reading(monkeypatch):
-    """A container removed between the label-scoped ps and its `docker diff` must not fail the
-    whole reading (a failed reading drops the metric out and the alert resolves early): it is
+def test_a_container_that_vanishes_after_the_ps_is_skipped_not_a_failed_reading(monkeypatch):
+    """A container removed after the label-scoped ps but before its inspect (or diff) must not fail
+    the whole reading (a failed reading drops the metric out and the alert resolves early): it is
     skipped, and the rest of the project is still served."""
     backend = DockerBackend(project="vanish-test")
     ps_rows = ("agent\tvanish-test-agent-1\trunning\tUp 5 minutes\tbusybox\tabc123\n"
                "web\tvanish-test-web-1\trunning\tUp 5 minutes\tbusybox\tdef456\n")
-    inspect_out = "abc123\tagent\t/opt/app\ndef456\tweb\t/opt/app\n"
 
     def fake_run(cmd, **kwargs):
         if cmd[1] == "ps":
             return subprocess.CompletedProcess(cmd, 0, stdout=ps_rows, stderr="")
         if cmd[1] == "inspect":
-            return subprocess.CompletedProcess(cmd, 0, stdout=inspect_out, stderr="")
+            if cmd[-1] == "abc123":
+                return subprocess.CompletedProcess(cmd, 0, stdout="abc123\tagent\t/opt/app\n", stderr="")
+            raise subprocess.CalledProcessError(1, cmd, output="", stderr="No such object: def456")
         if cmd[1] == "diff":
             if cmd[2] == "abc123":
                 return subprocess.CompletedProcess(cmd, 0, stdout="A /opt/app\nA /opt/app/hotfix.py\n",

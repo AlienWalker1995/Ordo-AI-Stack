@@ -230,15 +230,16 @@ def _bytecode_source(path: str) -> str | None:
     """The .py source a bytecode-cache entry belongs to, or None when *path* is not one.
 
     The standard layout is <dir>/__pycache__/<module>.<tag>.pyc beside <dir>/<module>.py; the
-    legacy layout is <dir>/<module>.pyc beside <dir>/<module>.py."""
+    legacy layout is <dir>/<module>.pyc beside <dir>/<module>.py. The tag is the interpreter
+    version, optionally with an optimization suffix: cpython-314, cpython-314.opt-1."""
     if path.endswith("/__pycache__"):
         return None
     if "/__pycache__/" in path:
         cache_dir, _, base = path.rpartition("/")
         parent = cache_dir[: -len("/__pycache__")]          # the source sits BESIDE the cache dir
         stem = base[: -len(".pyc")] if base.endswith(".pyc") else ""
-        module = stem.rsplit(".", 1)[0] if "." in stem else stem
-        return f"{parent}/{module}.py" if module else None
+        module = re.sub(r"\.[A-Za-z]+python-\d+(?:\.opt-\d+)?$", "", stem)
+        return f"{parent}/{module}.py" if module and module != stem else None
     if path.endswith(".pyc"):
         return path[: -len(".pyc")] + ".py"
     return None
@@ -1334,25 +1335,31 @@ class DockerBackend:
                 if row.get("id") and row.get("state") == "running"}
 
     def immutable_path_changes(self) -> dict[str, int]:  # pragma: no cover - needs real docker
-        """Files changed under each running container's declared immutable paths: one `docker
-        inspect` of this project's running containers for the label, then `docker diff` of each one
-        that carries it (today only the agent). A container that vanishes between the ps and its
-        diff is skipped, not a failed reading: a failed reading drops the metric out and the alert
-        resolves early, and the next scrape sees whatever is left anyway."""
+        """Files changed under each running container's declared immutable paths: one label-scoped
+        `docker ps`, then per running container a `docker inspect` for the label and, when it
+        carries one (today only the agent), a `docker diff`. A container that vanishes between the
+        ps and its inspect or diff is skipped, not a failed reading: a failed reading drops the
+        metric out and the alert resolves early, and the next scrape sees whatever is left anyway."""
         ids = [row["id"] for row in self._project_ps() if row.get("id") and row.get("state") == "running"]
         if not ids:
             return {}
         label_format = ("{{.Id}}\t{{index .Config.Labels \"com.docker.compose.service\"}}\t"
                         "{{index .Config.Labels \"" + IMMUTABLE_PATHS_LABEL + "\"}}")
-        proc = subprocess.run(
-            ["docker", "inspect", "--type", "container", "--format", label_format, *ids],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=True,
-        )
         counts: dict[str, int] = {}
-        for line in proc.stdout.splitlines():
-            container_id, service, label = (line.split("\t") + ["", ""])[:3]
+        for container_id in ids:
+            try:
+                proc = subprocess.run(
+                    ["docker", "inspect", "--type", "container", "--format", label_format, container_id],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+                    check=True)
+            except subprocess.CalledProcessError as e:
+                logger.warning("metrics: %s vanished before its inspect (%s); skipping it this scrape",
+                               container_id[:12], (e.stderr or "").strip()[:120])
+                continue
+            line = proc.stdout.splitlines()[0] if proc.stdout.strip() else ""
+            _, service, label = (line.split("\t") + ["", "", ""])[:3]
             roots = immutable_roots(label)
-            if not (container_id and service and roots):
+            if not (service and roots):
                 continue
             try:
                 diff = subprocess.run(["docker", "diff", container_id], capture_output=True, text=True,
