@@ -23,6 +23,7 @@ import dataclasses
 import hashlib
 import itertools
 import json
+import logging
 import re
 import subprocess
 import sys
@@ -38,6 +39,8 @@ from ..render.stack import compose_argv, lifecycle_group, load_compose, plan_nam
 from .logs import TAIL_DEFAULT, LogLine, instant, merge_streams
 from .scheduler import Job, Scheduler
 from .scheduler_state import RECOVERY_JOB_ID, SchedulerStateStore, StateUnreadable
+
+logger = logging.getLogger(__name__)
 
 # Services the control plane must never cycle, because they are the ones serving the request.
 #
@@ -185,6 +188,11 @@ class ContainerBackend(Protocol):
     # IMMUTABLE_PATHS_LABEL image label) differ from the image} for every running container that
     # declares any. Read by GET /metrics for the ImmutableFilesModified alert.
     def immutable_path_changes(self) -> dict[str, int]: ...
+    # {service: the full container ID} for every RUNNING container of this project. GET /metrics
+    # keys its cached immutable-path reading on these, so a recreate (a new container, counting
+    # from 0) invalidates the cache at once instead of serving the old container's count until it
+    # ages out.
+    def running_container_ids(self) -> dict[str, str]: ...
 
     # The rendered compose this backend acts on. The control plane derives a service's netns
     # members from it (`stack.lifecycle_group`), so it reads the same file the compose verbs run.
@@ -218,22 +226,57 @@ def immutable_roots(label_value: str) -> list[str]:
     return [root.strip().rstrip("/") for root in label_value.split(",") if root.strip().startswith("/")]
 
 
+def _bytecode_source(path: str) -> str | None:
+    """The .py source a bytecode-cache entry belongs to, or None when *path* is not one.
+
+    The standard layout is <dir>/__pycache__/<module>.<tag>.pyc beside <dir>/<module>.py; the
+    legacy layout is <dir>/<module>.pyc beside <dir>/<module>.py."""
+    if path.endswith("/__pycache__"):
+        return None
+    if "/__pycache__/" in path:
+        cache_dir, _, base = path.rpartition("/")
+        parent = cache_dir[: -len("/__pycache__")]          # the source sits BESIDE the cache dir
+        stem = base[: -len(".pyc")] if base.endswith(".pyc") else ""
+        module = stem.rsplit(".", 1)[0] if "." in stem else stem
+        return f"{parent}/{module}.py" if module else None
+    if path.endswith(".pyc"):
+        return path[: -len(".pyc")] + ".py"
+    return None
+
+
 def changed_immutable_files(diff_lines: list[str], roots: list[str]) -> list[str]:
     """The files `docker diff` reports changed, added or deleted under *roots*.
 
-    Python's bytecode caches are left out: the interpreter writes them next to the source on first
-    import, which is not a change to the code. A directory `docker diff` lists only because something
-    under it changed is left out too (it is the prefix of another listed path), so the count is files."""
+    Python's bytecode caches are left out where the interpreter merely wrote them: an entry the
+    image did not carry (added) or one dropped (deleted) is the cache doing its job on first
+    import, not a change to the code — a healthy recreated container compiles modules whose
+    bytecode the image did not bake in, and must read zero. A REWRITTEN entry (.pyc changed)
+    whose source .py is itself in the changed set is the derived artifact of that source change.
+    But a rewritten .pyc whose source is NOT in the changed set is counted: it is bytecode alone,
+    the shape of a hotfix that rewrote the cache to match the untouched source's mtime so the
+    interpreter runs the new bytes while `docker diff` shows no source change. A directory
+    `docker diff` lists only because something under it changed is left out too (it is the prefix
+    of another listed path), so the count is files."""
     under_roots = set()
+    kinds: dict[str, str] = {}
     for line in diff_lines:
         kind, _, path = line.strip().partition(" ")
         if kind not in ("A", "C", "D") or not path:
             continue
         if any(path == root or path.startswith(root + "/") for root in roots):
             under_roots.add(path)
+            kinds[path] = kind
     files = [path for path in under_roots
              if not any(other.startswith(path + "/") for other in under_roots)]
-    return sorted(path for path in files if "/__pycache__" not in path and not path.endswith(".pyc"))
+    counted = []
+    for path in files:
+        source = _bytecode_source(path)
+        if source is not None and kinds.get(path) != "C":
+            continue  # the interpreter wrote or dropped the cache: not a hand edit
+        if source is not None and source in under_roots:
+            continue  # the source itself changed: the bytecode is its derived artifact
+        counted.append(path)
+    return sorted(counted)
 
 
 def compose_service_name(project: str, service: str) -> str:
@@ -661,6 +704,10 @@ class MockBackend:
     def immutable_path_changes(self) -> dict[str, int]:
         return {c.service: len(c.immutable_changes) for c in self.project_containers.values()
                 if c.state == "running" and c.immutable_roots}
+
+    def running_container_ids(self) -> dict[str, str]:
+        return {c.service: c.container_id for c in self.project_containers.values()
+                if c.state == "running"}
 
     def service_stats(self) -> dict:
         self.service_stats_calls.append(None)
@@ -1279,10 +1326,19 @@ class DockerBackend:
                 counts[service] = int(count)
         return counts
 
+    def running_container_ids(self) -> dict[str, str]:  # pragma: no cover - needs real docker
+        """{service: full container ID} for every RUNNING container of this project: one
+        label-scoped `docker ps`, like every read here. GET /metrics keys its cached
+        immutable-path reading on these, so a recreate invalidates the cache at once."""
+        return {row["service"]: row["id"] for row in self._project_ps()
+                if row.get("id") and row.get("state") == "running"}
+
     def immutable_path_changes(self) -> dict[str, int]:  # pragma: no cover - needs real docker
         """Files changed under each running container's declared immutable paths: one `docker
         inspect` of this project's running containers for the label, then `docker diff` of each one
-        that carries it (today only the agent)."""
+        that carries it (today only the agent). A container that vanishes between the ps and its
+        diff is skipped, not a failed reading: a failed reading drops the metric out and the alert
+        resolves early, and the next scrape sees whatever is left anyway."""
         ids = [row["id"] for row in self._project_ps() if row.get("id") and row.get("state") == "running"]
         if not ids:
             return {}
@@ -1298,8 +1354,13 @@ class DockerBackend:
             roots = immutable_roots(label)
             if not (container_id and service and roots):
                 continue
-            diff = subprocess.run(["docker", "diff", container_id], capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace", timeout=30, check=True)
+            try:
+                diff = subprocess.run(["docker", "diff", container_id], capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace", timeout=30, check=True)
+            except subprocess.CalledProcessError as e:
+                logger.warning("metrics: %s vanished before its diff (%s); skipping it this scrape",
+                               container_id[:12], (e.stderr or "").strip()[:120])
+                continue
             counts[service] = len(changed_immutable_files(diff.stdout.splitlines(), roots))
         return counts
 

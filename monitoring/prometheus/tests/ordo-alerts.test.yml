@@ -380,3 +380,34 @@ tests:
               description: >-
                 couchdb's container stopped with a non-zero exit code 5 minutes ago and is not
                 running. Read `docker logs ordo-couchdb-1`, then `ordo apply --only couchdb`.
+
+  # Hand-edited image files: the 2026-11-06 incident (the agent patched three upstream Hermes
+  # modules under /opt/hermes as root). Three changed files held past the 2-minute grace page;
+  # a clean container (0) never does.
+  - interval: 1m
+    input_series:
+      - series: 'ordo_container_immutable_files_changed{service="agent"}'
+        values: '0 3x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ImmutableFilesModified
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: ImmutableFilesModified
+        exp_alerts:
+          - exp_labels: {severity: critical, service: agent}
+            exp_annotations:
+              summary: agent is running hand-edited image files
+              description: >-
+                3 file(s) that agent's image declares immutable were changed in the running
+                container. Read `docker diff ordo-agent-1`, land any fix as a reviewed image
+                change, then `ordo recreate agent` to restore the image's files.
+
+  - interval: 1m
+    input_series:
+      - series: 'ordo_container_immutable_files_changed{service="agent"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ImmutableFilesModified
+        exp_alerts: []

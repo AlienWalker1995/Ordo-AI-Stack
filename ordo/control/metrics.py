@@ -311,19 +311,38 @@ class MetricsCollector:
         self.chat_up = chat_up
         self._immutable_changes: Mapping[str, int] | None = None
         self._immutable_changes_read_at = float("-inf")
+        # The containers the cached reading describes ({service: id}): a recreate changes them and
+        # invalidates the reading before the age does.
+        self._immutable_changes_containers: Mapping[str, str] | None = None
 
     def _read_immutable_changes(self) -> Mapping[str, int] | None:
-        """The last reading while it is younger than IMMUTABLE_CHANGES_MAX_AGE_SECONDS, else a new
-        one. A failed reading is not kept, so the next scrape tries again."""
+        """The last reading while it is younger than IMMUTABLE_CHANGES_MAX_AGE_SECONDS AND still
+        describes the same containers, else a new one. The container IDs matter: after
+        `ordo recreate hermes` — the step the alert's own description tells the operator to run —
+        the old nonzero count must not keep paging a clean new container until the age expires.
+        A failed reading is not kept, so the next scrape tries again."""
+        broker = self.broker
+        if broker is None:
+            # text() only calls this while self.broker is set; a None broker has nothing to read.
+            return None
         now = time.monotonic()
-        if now - self._immutable_changes_read_at < IMMUTABLE_CHANGES_MAX_AGE_SECONDS:
+        try:
+            containers = broker.backend.running_container_ids()
+        except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a 500
+            logger.warning("metrics: cannot read the container ids: %s", e)
+            containers = None
+        stale = now - self._immutable_changes_read_at >= IMMUTABLE_CHANGES_MAX_AGE_SECONDS
+        if containers is not None and self._immutable_changes_containers is not None:
+            stale = stale or containers != self._immutable_changes_containers
+        if not stale:
             return self._immutable_changes
         try:
-            changes = self.broker.backend.immutable_path_changes()
+            changes = broker.backend.immutable_path_changes()
         except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a 500
             logger.warning("metrics: cannot read the immutable-path changes: %s", e)
             return None
         self._immutable_changes, self._immutable_changes_read_at = changes, now
+        self._immutable_changes_containers = containers
         return changes
 
     def text(self) -> str:

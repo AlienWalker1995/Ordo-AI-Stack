@@ -237,6 +237,35 @@ def test_the_immutable_changes_reading_is_reused_until_it_is_stale(plane, monkey
     assert len(calls) == 3
 
 
+def test_a_recreated_container_invalidates_the_cached_immutable_reading(plane, monkeypatch):
+    """The cache is keyed on the containers it describes, not wall-clock age alone: after
+    `ordo recreate hermes` — the step the alert's own description tells the operator to run —
+    the old nonzero count must not keep paging a clean new container until the age expires."""
+    calls = []
+    readings = iter([{"agent": 3}, {"agent": 0}])
+
+    def read():
+        calls.append(None)
+        return next(readings)
+
+    ids = [{"agent": "old-container-id"}]
+
+    def container_ids():
+        return dict(ids[0])
+
+    clock = [1000.0]
+    monkeypatch.setattr(metrics.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", read)
+    monkeypatch.setattr(plane.broker.backend, "running_container_ids", container_ids)
+    key = ("ordo_container_immutable_files_changed", (("service", "agent"),))
+    assert _samples(plane.metrics_text())[key] == 3
+    clock[0] += 10
+    assert _samples(plane.metrics_text())[key] == 3, "same container inside the window: reused"
+    ids[0] = {"agent": "new-container-id"}                        # `ordo recreate hermes`
+    assert _samples(plane.metrics_text())[key] == 0, "recreate: read at once, no stale page"
+    assert len(calls) == 2
+
+
 def test_a_failing_docker_still_serves_the_rest(plane, monkeypatch):
     def broken():
         raise TimeoutError("docker ps timed out after 30 seconds")
