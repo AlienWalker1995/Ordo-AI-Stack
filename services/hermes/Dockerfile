@@ -133,6 +133,10 @@ COPY scripts/vault_federate.py /opt/ordo/vault_federate.py
 # S6_BEHAVIOUR_IF_STAGE2_FAILS=2: a failing boot hook stops the container (s6-overlay's default is
 # to log and start the CMD anyway, which would run a gateway with no model or secrets configured).
 ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
+# Upstream's installed tree is never edited at run time: configuration, plugins and dependencies
+# live in the home volume. ops-controller reports any change under it and Alertmanager pages
+# (ImmutableFilesModified), because a hand-patched /opt/hermes is a hotfix the next recreate undoes.
+LABEL ordo.immutable-paths="/opt/hermes"
 COPY secret-env.sh /opt/ordo/secret-env.sh
 COPY ordo-init.sh /etc/cont-init.d/50-ordo
 RUN chmod -R a+rX,go-w /opt/ordo /opt/ordo-skills /opt/ordo-seed /opt/hermes/plugins/ops-router /opt/claude-code /opt/codex \

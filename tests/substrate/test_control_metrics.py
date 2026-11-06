@@ -130,7 +130,7 @@ def test_label_values_are_escaped():
 def test_every_ordo_series_the_rules_read_is_exported():
     """A renamed metric would leave its rule silently evaluating to nothing."""
     exported = set(re.findall(r"^# TYPE (ordo_\w+)", metrics.render(metrics.Inputs(
-        scheduler=_leased_scheduler().status(), containers=[], restarts={},
+        scheduler=_leased_scheduler().status(), containers=[], restarts={}, immutable_changes={},
         disks={"docker": metrics.DiskUsage(1, 1, 1)}, tls_certs={"edge": 1.0}, gpu_chat_up=True,
         netns_repair={"repaired": 0, "failed": 0, "orphans": 0})),
         re.MULTILINE))
@@ -190,11 +190,59 @@ def test_metrics_text_gathers_every_source(plane):
     assert got[("ordo_tls_cert_not_after_timestamp_seconds", (("cert", "edge"),))] == 1_797_981_483
 
 
+def test_immutable_file_changes_are_exported_per_declaring_service():
+    got = _samples(metrics.render(metrics.Inputs(immutable_changes={"agent": 3})))
+    assert got[("ordo_container_immutable_files_changed", (("service", "agent"),))] == 3
+    assert got[("ordo_metrics_collector_ok", (("collector", "immutable_paths"),))] == 1
+
+
+def test_unreadable_immutable_changes_are_a_failed_collector_never_a_zero():
+    text = metrics.render(metrics.Inputs(immutable_changes=None, containers=[]))
+    assert "ordo_container_immutable_files_changed{" not in text
+    assert _samples(text)[("ordo_metrics_collector_ok", (("collector", "immutable_paths"),))] == 0
+
+
+def test_metrics_reads_the_hand_edited_files_of_a_declaring_container(plane):
+    container = plane.broker.backend.project_containers["mcp-comfyui"]
+    container.immutable_roots = ("/opt/app",)
+    container.immutable_changes = ["/opt/app/a.py", "/opt/app/b.py"]
+    got = _samples(plane.metrics_text())
+    assert got[("ordo_container_immutable_files_changed", (("service", "mcp-comfyui"),))] == 2
+    assert ("ordo_container_immutable_files_changed", (("service", "inference-engine-gpu"),)) not in got
+
+
+def test_the_immutable_changes_reading_is_reused_until_it_is_stale(plane, monkeypatch):
+    """`docker diff` costs seconds, so one reading serves scrapes for IMMUTABLE_CHANGES_MAX_AGE_SECONDS;
+    a failed reading is never kept."""
+    calls = []
+    readings = iter([RuntimeError("docker diff timed out"), {"agent": 1}, {"agent": 5}])
+
+    def read():
+        calls.append(None)
+        reading = next(readings)
+        if isinstance(reading, Exception):
+            raise reading
+        return reading
+
+    clock = [1000.0]
+    monkeypatch.setattr(metrics.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", read)
+    key = ("ordo_container_immutable_files_changed", (("service", "agent"),))
+    assert key not in _samples(plane.metrics_text())             # failed: not kept
+    assert _samples(plane.metrics_text())[key] == 1               # read again at once
+    clock[0] += metrics.IMMUTABLE_CHANGES_MAX_AGE_SECONDS - 1
+    assert _samples(plane.metrics_text())[key] == 1               # still fresh: reused
+    clock[0] += 2
+    assert _samples(plane.metrics_text())[key] == 5               # stale: read again
+    assert len(calls) == 3
+
+
 def test_a_failing_docker_still_serves_the_rest(plane, monkeypatch):
     def broken():
         raise TimeoutError("docker ps timed out after 30 seconds")
 
     monkeypatch.setattr(plane.broker.backend, "service_restarts", broken)
+    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", broken)
     monkeypatch.setattr(plane.broker.backend, "list_services", broken)
     got = _samples(plane.metrics_text())
     assert got[("ordo_metrics_collector_ok", (("collector", "restarts"),))] == 0

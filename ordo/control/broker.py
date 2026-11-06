@@ -181,6 +181,10 @@ class ContainerBackend(Protocol):
     # restart policy has restarted it (a recreate makes a new container, counting from 0). Read by
     # GET /metrics for the restart-loop alert.
     def service_restarts(self) -> dict[str, int]: ...
+    # {service: how many files under the paths its image declares immutable (the
+    # IMMUTABLE_PATHS_LABEL image label) differ from the image} for every running container that
+    # declares any. Read by GET /metrics for the ImmutableFilesModified alert.
+    def immutable_path_changes(self) -> dict[str, int]: ...
 
     # The rendered compose this backend acts on. The control plane derives a service's netns
     # members from it (`stack.lifecycle_group`), so it reads the same file the compose verbs run.
@@ -200,6 +204,36 @@ class ContainerBackend(Protocol):
     def compose_up(self, service: str | None = None) -> None: ...
     def compose_down(self, service: str | None = None) -> None: ...
     def compose_restart(self, service: str | None = None) -> None: ...
+
+
+# An image label naming the paths (comma-separated) the image bakes in and nothing may change at run
+# time: its own code, read-only by intent. A change there is a live hotfix that no image, review or
+# test carries and the next recreate silently undoes (2026-11-06: the agent patched three upstream
+# Hermes modules under /opt/hermes as root).
+IMMUTABLE_PATHS_LABEL = "ordo.immutable-paths"
+
+
+def immutable_roots(label_value: str) -> list[str]:
+    """The absolute paths an IMMUTABLE_PATHS_LABEL value names, without trailing slashes."""
+    return [root.strip().rstrip("/") for root in label_value.split(",") if root.strip().startswith("/")]
+
+
+def changed_immutable_files(diff_lines: list[str], roots: list[str]) -> list[str]:
+    """The files `docker diff` reports changed, added or deleted under *roots*.
+
+    Python's bytecode caches are left out: the interpreter writes them next to the source on first
+    import, which is not a change to the code. A directory `docker diff` lists only because something
+    under it changed is left out too (it is the prefix of another listed path), so the count is files."""
+    under_roots = set()
+    for line in diff_lines:
+        kind, _, path = line.strip().partition(" ")
+        if kind not in ("A", "C", "D") or not path:
+            continue
+        if any(path == root or path.startswith(root + "/") for root in roots):
+            under_roots.add(path)
+    files = [path for path in under_roots
+             if not any(other.startswith(path + "/") for other in under_roots)]
+    return sorted(path for path in files if "/__pycache__" not in path and not path.endswith(".pyc"))
 
 
 def compose_service_name(project: str, service: str) -> str:
@@ -263,6 +297,10 @@ class _FakeContainer:
     state: str = "created"        # created, running, exited
     exit_code: int = 0
     restart_count: int = 0        # restart-policy restarts (`docker restart` does not count)
+    # IMMUTABLE_PATHS_LABEL's roots (none: the image declares none) and the files under them changed
+    # since the container was created
+    immutable_roots: tuple[str, ...] = ()
+    immutable_changes: list[str] = dataclasses.field(default_factory=list)
     netns: int = 0                # an owner's network namespace: a new one on every start
     joined_netns: int = 0         # a member's: the owner namespace it joined when it last started
     error: str = ""               # State.Error: why the last start failed ("" once one succeeds)
@@ -619,6 +657,10 @@ class MockBackend:
 
     def service_restarts(self) -> dict[str, int]:
         return {c.service: c.restart_count for c in self.project_containers.values()}
+
+    def immutable_path_changes(self) -> dict[str, int]:
+        return {c.service: len(c.immutable_changes) for c in self.project_containers.values()
+                if c.state == "running" and c.immutable_roots}
 
     def service_stats(self) -> dict:
         self.service_stats_calls.append(None)
@@ -1235,6 +1277,30 @@ class DockerBackend:
             service, _, count = line.partition("\t")
             if service and count.strip().isdigit():
                 counts[service] = int(count)
+        return counts
+
+    def immutable_path_changes(self) -> dict[str, int]:  # pragma: no cover - needs real docker
+        """Files changed under each running container's declared immutable paths: one `docker
+        inspect` of this project's running containers for the label, then `docker diff` of each one
+        that carries it (today only the agent)."""
+        ids = [row["id"] for row in self._project_ps() if row.get("id") and row.get("state") == "running"]
+        if not ids:
+            return {}
+        label_format = ("{{.Id}}\t{{index .Config.Labels \"com.docker.compose.service\"}}\t"
+                        "{{index .Config.Labels \"" + IMMUTABLE_PATHS_LABEL + "\"}}")
+        proc = subprocess.run(
+            ["docker", "inspect", "--type", "container", "--format", label_format, *ids],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=True,
+        )
+        counts: dict[str, int] = {}
+        for line in proc.stdout.splitlines():
+            container_id, service, label = (line.split("\t") + ["", ""])[:3]
+            roots = immutable_roots(label)
+            if not (container_id and service and roots):
+                continue
+            diff = subprocess.run(["docker", "diff", container_id], capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=30, check=True)
+            counts[service] = len(changed_immutable_files(diff.stdout.splitlines(), roots))
         return counts
 
     def service_stats(self) -> dict:  # pragma: no cover - needs real docker

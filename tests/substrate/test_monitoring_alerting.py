@@ -155,7 +155,7 @@ def test_the_incidents_this_was_built_for_each_have_an_alert():
     names = {rule["alert"] for rule in _alerts()}
     assert {"Watchdog", "DiskUsageHigh", "ContainerRestartLoop", "ContainerUnhealthy", "GpuLeasePastTtl",
             "GpuResidentEvictedWithoutLease", "InferenceEngineGpuDown", "TlsCertExpiring", "TargetDown",
-            "GpuTemperatureHigh", "GpuPowerAboveLimit"} <= names
+            "GpuTemperatureHigh", "GpuPowerAboveLimit", "ImmutableFilesModified"} <= names
 
 
 def test_watchdog_goes_only_to_the_heartbeat_and_everything_else_to_discord():

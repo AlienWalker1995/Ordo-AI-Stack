@@ -408,6 +408,12 @@ def test_service_restarts_counts_every_project_container_from_zero(unchanged):
     assert unchanged.backend.service_restarts() == {service: 0 for service in SERVICES}
 
 
+def test_a_project_whose_images_declare_no_immutable_paths_reports_none(unchanged):
+    """GET /metrics's hotfix-alert input covers only images that carry the ordo.immutable-paths
+    label; these test images carry none, so there is nothing to report (and nothing reads as 0)."""
+    assert unchanged.backend.immutable_path_changes() == {}
+
+
 def test_a_manual_restart_is_not_a_restart_policy_restart(harness):
     """Only the restart POLICY counts (a crash loop); an operator's `docker restart` does not."""
     harness.backend.restart("web")

@@ -75,6 +75,22 @@ groups:
         annotations:
           summary: "{{ $labels.service }} healthcheck is failing"
           description: "{{ $labels.service }} has reported unhealthy for 10 minutes."
+      # Files the service's image bakes in (its `ordo.immutable-paths` label) changed inside the
+      # running container: a live hotfix no image, review or test carries, and the next recreate
+      # silently undoes. Observed 2026-11-06: the agent patched three upstream Hermes modules under
+      # /opt/hermes as root through the Docker socket. A recreate restores the image's files.
+      - alert: ImmutableFilesModified
+        expr: ordo_container_immutable_files_changed > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} is running hand-edited image files"
+          description: >-
+            {{ $value | printf "%.0f" }} file(s) that {{ $labels.service }}'s image declares
+            immutable were changed in the running container. Read `docker diff
+            ordo-{{ $labels.service }}-1`, land any fix as a reviewed image change, then
+            `ordo recreate {{ $labels.service }}` to restore the image's files.
       # A service whose container stopped with a non-zero exit code: neither restart-loop nor
       # unhealthy covers a container that is simply down. A one-shot job that finished exits 0.
       # A GPU resident the scheduler stopped for a lease exits 137 by design and is not paged
