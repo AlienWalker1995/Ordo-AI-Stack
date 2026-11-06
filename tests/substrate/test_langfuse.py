@@ -345,20 +345,27 @@ def test_hermes_boot_hook_enables_the_plugin_only_with_a_key():
     """Enabling the bundled plugin without credentials leaves hooks permanently inert while the
     CLI reports "enabled" - tracing that looks configured and records nothing."""
     entrypoint = (ROOT / "services" / "hermes" / "ordo-init.sh").read_text(encoding="utf-8")
-    assert 'plugins enable observability/langfuse' in entrypoint
+    assert 'plugins enable langfuse' in entrypoint
     assert '[ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ]' in entrypoint
     # its OWN sentinel: sharing push-through's would never fire on a stack that adds langfuse later
     assert ".ordo-langfuse-seeded" in entrypoint
     assert ".ordo-push-through-seeded" in entrypoint
 
 
-def test_hermes_boot_hook_installs_the_langfuse_sdk_through_upstreams_package_manager():
-    """The bundled plugin fails open when the SDK is missing, so an absent install is silent. The
-    SDK is upstream's `langfuse` extra (pinned by upstream's lockfile), installed into the home's
-    dependency environment whenever keys are present, as upstream's own Langfuse setup does."""
+def test_hermes_boot_hook_installs_upstreams_langfuse_catalog_plugin():
+    """Hermes 0.23 moved Langfuse out of core into the official catalog plugin `langfuse`; the old
+    `pm install --extra langfuse` no longer exists and failed the boot hook (crash loop, observed
+    2026-11-05). The hook installs the catalog plugin non-interactively, before enabling it, and an
+    install failure must not stop the agent from starting (tracing is fail-open)."""
     hook = (ROOT / "services" / "hermes" / "ordo-init.sh").read_text(encoding="utf-8")
-    assert "pm install --extra langfuse" in hook
-    assert hook.index("pm install --extra langfuse") < hook.index("plugins enable observability/langfuse")
+    assert "--extra langfuse" not in hook
+    assert "observability/langfuse >/dev/null" not in hook
+    # stdin closed: the installer prompts for missing keys, which would hang the boot hook
+    install = "plugins install langfuse --yes-deps --no-enable </dev/null >/dev/null"
+    assert install in hook
+    assert hook.index(install) < hook.index("plugins enable langfuse")
+    after_install = hook[hook.index(install):].splitlines()[1]
+    assert after_install.strip().startswith("|| echo"), "install failure must not abort the hook"
 
 
 def test_app_healthchecks_probe_the_bound_address_not_localhost():

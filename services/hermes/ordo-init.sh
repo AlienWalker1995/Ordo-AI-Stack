@@ -133,16 +133,23 @@ if [ ! -f "$SEED_MARK" ]; then
 fi
 
 # Langfuse tracing, only when the langfuse stack issued keys (fail-open: without keys the hooks
-# would be inert, which reads as working tracing). The SDK is an upstream extra that Hermes's
-# package manager keeps in this home's dependency environment ($HERMES_HOME/installs), the same
-# step upstream's own Langfuse setup runs; it is a no-op once current and survives image bumps.
+# would be inert, which reads as working tracing). Since Hermes 0.23 Langfuse is upstream's
+# official catalog plugin `langfuse` (formerly the bundled observability/langfuse), installed into
+# this home at the commit the image's catalog pins, with its Python SDK in the home's dependency
+# environment. Installed once, with stdin closed so its key prompts cannot block boot; an install
+# that cannot run (no network) is reported and retried on the next start, because tracing must
+# never keep the agent from booting.
 # The plugin is enabled once, behind its own sentinel, so a stack that adds langfuse later still
-# gets it and a later `hermes plugins disable observability/langfuse` is never undone.
+# gets it and a later `hermes plugins disable langfuse` is never undone. Homes seeded before 0.23
+# keep their observability/langfuse entry, which upstream treats as an alias of `langfuse`.
 LANGFUSE_MARK="$HERMES_HOME/.ordo-langfuse-seeded"
 if [ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ]; then
-    as_hermes "$HERMES_BIN" pm install --extra langfuse >/dev/null
-    if [ ! -f "$LANGFUSE_MARK" ]; then
-        as_hermes "$HERMES_BIN" plugins enable observability/langfuse >/dev/null
+    if [ ! -d "$HERMES_HOME/plugins/langfuse" ]; then
+        as_hermes "$HERMES_BIN" plugins install langfuse --yes-deps --no-enable </dev/null >/dev/null \
+            || echo "[ordo] langfuse plugin install failed; tracing is off until the next start" >&2
+    fi
+    if [ ! -f "$LANGFUSE_MARK" ] && [ -d "$HERMES_HOME/plugins/langfuse" ]; then
+        as_hermes "$HERMES_BIN" plugins enable langfuse >/dev/null
         as_hermes touch "$LANGFUSE_MARK"
     fi
 fi
