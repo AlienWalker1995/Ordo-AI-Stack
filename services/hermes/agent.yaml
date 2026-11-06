@@ -102,7 +102,7 @@ environment:
   HERMES_API_MAX_RETRIES: ${HERMES_API_MAX_RETRIES:-10}
   # 24h — keeps the streaming stale-detector from killing slow local-model turns mid-flight.
   HERMES_STREAM_STALE_TIMEOUT: ${HERMES_STREAM_STALE_TIMEOUT:-86400}
-  # ── Langfuse tracing (the bundled `observability/langfuse` plugin) ──
+  # ── Langfuse tracing (upstream's official `langfuse` catalog plugin) ──
   # FAIL-OPEN BY DESIGN, and that is why there is no `depends_on: langfuse-web` below: with the
   # langfuse plugin disabled both keys interpolate to "", the plugin's _get_langfuse() returns
   # None once, and every hook short-circuits. Hermes must never depend on its own telemetry

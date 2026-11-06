@@ -56,23 +56,23 @@ gate in front of it is the real boundary.
 
 ## What Hermes sends
 
-Hermes ships an `observability/langfuse` plugin from upstream. This stack supplies the two things it
-needs (the SDK, installed through Hermes's package manager, and the project keys in its environment,
-`services/hermes/agent.yaml`) and enables it once on first start with a key present
-(`services/hermes/ordo-init.sh`). Traces go straight to `http://langfuse-web:3000` over the project
+Upstream publishes an official `langfuse` Hermes plugin (built into core as `observability/langfuse`
+before Hermes 0.23). This stack installs it from Hermes's curated catalog, at the commit the image
+pins, supplies the project keys in its environment (`services/hermes/agent.yaml`), and enables it
+once on first start with a key present (`services/hermes/ordo-init.sh`). Traces go straight to `http://langfuse-web:3000` over the project
 network, never through the edge.
 
 Per turn you get a root span (`Hermes turn`) with a generation span per LLM call and a span per tool
 call, carrying model, latency, token counts, and the inputs/outputs of each step.
 
-**Capture and redaction.** The plugin truncates every captured field at `HERMES_LANGFUSE_MAX_CHARS`
-(default 12000) and replaces `data:` URIs (pasted images and audio) with a redaction marker rather
-than shipping the payload. Everything else is sent as-is: **prompts and tool arguments reach the
-trace store verbatim**, which is the point of tracing but is also worth knowing before you paste a
-credential into a chat. That store is on your own box, behind your own SSO gate, and Langfuse's
+**Capture and redaction.** The plugin's default `HERMES_LANGFUSE_CAPTURE=sanitized` mode exports
+prompts, responses and tool arguments after pattern-based secret redaction (API keys, tokens, JWTs,
+private keys, `password=` assignments) and truncation at `HERMES_LANGFUSE_MAX_CHARS`. That is
+defense in depth, not a guarantee: **assume prompts reach the trace store**, and set
+`HERMES_LANGFUSE_CAPTURE=metadata` to export no content at all. That store is on your own box, behind your own SSO gate, and Langfuse's
 telemetry callhome is disabled (`TELEMETRY_ENABLED: "false"`). If you want less, turn
 `HERMES_LANGFUSE_SAMPLE_RATE` or `HERMES_LANGFUSE_MAX_CHARS` down, or disable the plugin with
-`hermes plugins disable observability/langfuse`: the sentinel means that choice survives restarts.
+`hermes plugins disable langfuse`: the sentinel means that choice survives restarts.
 
 Tracing is **fail-open** and has no `depends_on`. With this plugin disabled the keys interpolate to
 empty, the Hermes plugin short-circuits on its first hook, and the agent is unaffected. Langfuse
