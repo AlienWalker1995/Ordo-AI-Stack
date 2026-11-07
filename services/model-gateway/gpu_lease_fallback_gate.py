@@ -47,7 +47,7 @@ CACHE_TTL = float(os.environ.get("GPU_LEASE_GATE_CACHE_TTL_SEC", "5"))
 # An unreachable ops-controller is logged once per this many seconds, not once per scrape.
 UNREADABLE_WARN_INTERVAL = 60.0
 
-# The messages NInfer puts on its queue errors (pinned engine commit d44ab584,
+# The messages NInfer puts on its queue errors (pinned engine commit 77c2e5e2,
 # src/serve/generation_service.cpp and src/runtime/engine/engine_core.h): 429 "inference request
 # queue is full", and 503 "inference request expired before submission / while waiting for
 # admission / during preparation". LiteLLM keeps the message in the failed attempt's breadcrumb.

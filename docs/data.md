@@ -122,7 +122,7 @@ services:
       model_env: MODEL_REPO   # optional: env key naming a model that is not a file
 ```
 
-The device (`gpu` or `cpu`) is not declared: it is read from the service's rendered GPU wiring. Nothing keeps a list of engine service names, so a plugin that declares `serves:` is listed with no code change. `metrics` names how the engine's throughput is read. `ninfer-log` is temporary: NInfer has no metrics endpoint yet, so its throughput is read from its request log.
+The device (`gpu` or `cpu`) is not declared: it is read from the service's rendered GPU wiring. Nothing keeps a list of engine service names, so a plugin that declares `serves:` is listed with no code change. `metrics` names how the engine's throughput is read. `ninfer-log` reads NInfer's request log: its /metrics has no per-phase time, so the per-request timings come from the log (engines.METRICS_FORMATS).
 
 ### RAG Chunk (Qdrant Point)
 
