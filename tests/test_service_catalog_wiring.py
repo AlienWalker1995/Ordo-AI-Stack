@@ -132,12 +132,12 @@ def test_non_user_facing_services_carry_background_flag():
     section (no 'Open' link). That is the backend infra (inference-engine-gpu, qdrant, stt, tts)
     plus the two portless headless workers (rag-ingestion, livesync-bridge) and the html-video
     renderer (an HTTP API with no UI). The user-facing UIs —
-    webui/comfyui/n8n/hermes/codebase-memory-ui — and model-gateway (its Open link is the
+    webui/comfyui/n8n/hermes/langfuse — and model-gateway (its Open link is the
     LiteLLM admin UI) must NOT carry it, so an openable service can't be quietly demoted."""
     bg = {s["id"] for s in SERVICES if s.get("background")}
     assert bg == {"rag-ingestion", "inference-engine-gpu", "inference-engine-cpu", "qdrant", "stt", "tts",
                   "couchdb", "livesync-bridge", "html-video"}
-    user_facing = {"webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"}
+    user_facing = {"webui", "comfyui", "n8n", "hermes", "langfuse", "model-gateway"}
     for s in SERVICES:
         if s["id"] in user_facing:
             assert not s.get("background"), f"{s['id']} is user-facing and must not be background"
@@ -179,7 +179,7 @@ def test_visible_services_hides_disabled_plugins():
 def test_visible_services_shows_all_for_live_enabled_set():
     """Against the real rendered manifest's enabled set, nothing is hidden."""
     enabled = {
-        "automation", "codebase-memory-ui", "comfyui", "edge", "hermes-dashboard", "html-video",
+        "automation", "comfyui", "edge", "hermes-dashboard", "html-video",
         "langfuse", "inference-engine-cpu", "ltx-trainer", "monitoring", "open-webui", "rag",
         "searxng-web", "song-gen", "tailnet-names", "voice", "obsidian-livesync",
         "obsidian-livesync-funnel",
