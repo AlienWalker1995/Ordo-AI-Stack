@@ -39,7 +39,7 @@ GRAFANA_EMBED_PATH = "/grafana/d/ordo-llm-gpu/ordo-performance?orgId=1&kiosk&the
 # and a sparkline of stale samples draws a flat line that never happened.
 # GPU: the gateway's output-token counter for the deployment at inference-engine-gpu:8080, the same expression
 # as the Grafana GPU panels. It holds for either engine there; llama.cpp's own counter does not,
-# because NInfer's /metrics has no per-phase time. Relabelled job="inference-engine-gpu" so both series parse alike.
+# because NInfer serves none of llama.cpp's token counters. Relabelled job="inference-engine-gpu" so both series parse alike.
 # CPU: the llama.cpp CPU fallback's own counter.
 _GPU_TOKEN_RATE_QUERY = (
     'label_replace(sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() '

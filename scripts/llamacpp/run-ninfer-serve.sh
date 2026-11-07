@@ -17,7 +17,7 @@ set -eu
 #
 # The llama.cpp-only keys the service also receives (GPU layers, flash-attn, RoPE, KV cache types,
 # parallel slots, mmproj, MoE placement) have no NInfer meaning and are ignored here. NInfer always
-# serves Prometheus metrics at /metrics on the same port (ops-controller reads them), so there is
+# serves Prometheus metrics at /metrics on the same port (nothing scrapes them yet), so there is
 # no --metrics flag to pass.
 
 MODEL="${LLAMACPP_MODEL:?LLAMACPP_MODEL is missing: it is rendered into out/.env by ordo render}"
