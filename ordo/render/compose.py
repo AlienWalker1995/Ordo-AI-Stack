@@ -960,7 +960,6 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                          "can be published on one service only")
     if listeners:
         _mount_edge_cert(svcs["ops-controller"])
-    from .plugins import STACK_NETWORK  # deferred: plugins -> buildspec -> compose is a cycle at import time
     private_nets: list[str] = []
     for plugin, ps in (plugin_services or []):
         svcs[ps.name] = _plugin_service(ps, plugin, net=net,
@@ -968,9 +967,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                                         secondary_uuid=secondary_gpu_uuid,
                                         project=project, publish_local_ports=publish_local_ports,
                                         available_env=available_env, edge_ports=edge_ports)
-        if ps.networks != (STACK_NETWORK,):
-            joined = [net if n == STACK_NETWORK else plugin_private_net(project, plugin.id, n)
-                      for n in ps.networks]
+        joined = ps.compose_networks(net, lambda name, p=plugin: plugin_private_net(project, p.id, name))
+        if joined is not None:
             svcs[ps.name]["networks"] = joined
             private_nets.extend(n for n in joined if n != net and n not in private_nets)
         # A service whose GPU use is gate-enforced gets its gate rendered WITH it, from the same
@@ -978,7 +976,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         # an enabled gated service can never come up without the thing that arbitrates it.
         arb = ps.gpu_arbitration
         if arb is not None and arb.enforcement == "gate" and ps.name in claims:
-            if ps.networks != (STACK_NETWORK,):
+            if joined is not None:
                 raise ValueError(
                     f"{plugin.id}/{ps.name} is gpu_arbitration.enforcement: gate, which decides its "
                     f"networks itself; it cannot also declare `networks: {list(ps.networks)}`")

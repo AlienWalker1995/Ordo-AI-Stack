@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -203,6 +203,13 @@ class PluginService:
     # The model this service serves, if any (ordo/render/engines.py). The render stamps it on the
     # service as `ordo.serves.*` labels; the registry, metrics and dashboard read those labels.
     serves: Serves | None = None
+
+    def compose_networks(self, stack_net: str, private_net: Callable[[str], str]) -> list[str] | None:
+        """The compose networks this service joins, or None for the default (the stack network
+        alone). `private_net(name)` names a plugin-private network."""
+        if self.networks == (STACK_NETWORK,):
+            return None
+        return [stack_net if n == STACK_NETWORK else private_net(n) for n in self.networks]
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PluginService:
