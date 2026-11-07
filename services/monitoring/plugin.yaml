@@ -1,6 +1,6 @@
 id: monitoring
-name: Monitoring (Grafana + Prometheus + GPU exporter + Alertmanager)
-description: Real-time llama.cpp + GPU perf and alerting. Grafana at /grafana/ (SSO), embedded in the dashboard; alerts to Discord.
+name: Monitoring (Grafana + Prometheus + GPU exporter + Alertmanager + Loki)
+description: Real-time model engine + GPU perf, alerting, and every container's logs. Grafana at /grafana/ (SSO), embedded in the dashboard; alerts to Discord.
 requires:
   nvidia: false          # grafana + prometheus are CPU-ok; only gpu-exporter wants a GPU
   ram_gb: 2
@@ -19,7 +19,7 @@ secrets:
 optional_secrets:
   - ALERTMANAGER_DISCORD_WEBHOOK_URL
   - ALERTMANAGER_HEARTBEAT_URL
-# Four compose services, all sha-pinned (the first three digests carried verbatim from V1 PR #71,
+# Seven compose services, all sha-pinned (the first three digests carried verbatim from V1 PR #71,
 # live-verified at commit 6fe4586: do NOT bump/relax). Prometheus scrapes gpu-exporter:9835 and
 # ops-controller:9000/metrics (which carries every model engine's ordo_engine_* series), and
 # evaluates the alert rules Alertmanager delivers. Config assets under monitoring/.
@@ -130,9 +130,70 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+  # ---- Central logs: every container on the host, 7 days, searchable in Grafana and the dashboard ----
+  - name: loki
+    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    command:
+      - -config.file=/etc/loki/loki.yaml
+    # Read at start: an edit recreates the service on the next `ordo apply` (ordo/render/bind_configs.py).
+    config_mounts: [/etc/loki/loki.yaml]
+    volumes:
+      # ${BASE_PATH} for the same reason as prometheus.yml above: a tracked repo file.
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/monitoring/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      # A named volume, never a 9p bind: Loki fsyncs its chunks and mmaps its index. The image
+      # creates /loki as its own user (10001), so a fresh volume is writable.
+      - loki-data:/loki
+    # No healthcheck: the image is distroless (no shell, no wget), so nothing in it can run one.
+    # ops-controller's container metrics still alert when it exits or restarts.
+  - name: docker-socket-proxy
+    # Read-only Docker API for Alloy: container list, container logs and network names (Alloy's
+    # discovery reads them), GETs only (POST stays 0). It is the only service besides ops-controller
+    # and the agent that touches the Docker socket, and it sits on the plugin's private `docker-api`
+    # network alone with Alloy: no other container can reach it, since a container listing carries
+    # every container's environment.
+    image: tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    networks: [docker-api]
+    env:
+      CONTAINERS: "1"
+      NETWORKS: "1"
+      POST: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2375/_ping || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  - name: alloy
+    # Ships every container's stdout/stderr to Loki (monitoring/alloy/config.alloy). Its own UI and
+    # API stay on loopback: nothing outside the container needs them.
+    image: grafana/alloy:v1.21.2@sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18
+    networks: [stack, docker-api]
+    depends_on: [loki, docker-socket-proxy]
+    command:
+      - run
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    # Read at start: an edit recreates the service on the next `ordo apply` (ordo/render/bind_configs.py).
+    config_mounts: [/etc/alloy/config.alloy]
+    volumes:
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Where each container's log was read up to, so a restart neither re-sends nor skips lines.
+      - alloy-data:/var/lib/alloy/data
+    healthcheck:
+      # The image has bash but no wget or curl.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/12345 && printf 'GET /-/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q ' 200 ' <&3"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 # How `ordo backup` saves this manifest's named volumes (ordo/render/backup_policy.py).
 backup:
   prometheus-data: skip        # metrics history; the scrape targets regenerate it
   alertmanager-data: skip      # silences and notification log; a restart re-sends what still fires
   grafana-data: stopped        # SQLite (users, preferences); dashboards are provisioned from the repo
+  loki-data: skip              # seven days of container logs; Docker keeps each container's own log
+  alloy-data: skip             # read positions; losing them re-sends what Loki already has (it drops the duplicates)

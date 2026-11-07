@@ -1,0 +1,14 @@
+# Auto-provisioned Loki datasource: every container's logs on the host (monitoring/loki/loki.yaml),
+# for Explore and log panels. A fixed uid so dashboards can name it.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: false
+    editable: false
+    jsonData:
+      maxLines: 1000

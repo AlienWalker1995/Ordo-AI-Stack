@@ -1,0 +1,53 @@
+# Loki: every container's logs on this host, kept 7 days, searchable from Grafana and the dashboard's
+# Logs page. One process, filesystem storage on the loki-data named volume (never a 9p bind: Loki
+# fsyncs and mmaps its index). Alloy (monitoring/alloy/config.alloy) pushes to it; nothing else writes.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: "2026-11-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Seven days answers "what happened this week" while staying small on a disk that is 88% full
+  # (2026-11-07); the compactor below deletes older chunks.
+  retention_period: 168h
+  max_query_lookback: 168h
+  # Every line gets a `detected_level` (error, warn, info, ...) read from the line itself, so the
+  # dashboard can show errors across services without a per-service parser.
+  discover_log_levels: true
+  allow_structured_metadata: true
+  volume_enabled: true
+  # A restart burst from ~70 containers stays under these.
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+  per_stream_rate_limit: 8MB
+  per_stream_rate_limit_burst: 16MB
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+analytics:
+  reporting_enabled: false

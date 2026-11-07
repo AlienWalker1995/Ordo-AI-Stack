@@ -355,11 +355,35 @@ def test_mcp_healthcheck_defaults_to_the_renderer_probe_unless_overridden():
     assert searxng != expected and searxng["test"][1] == "node"
 
 
-def test_only_ops_controller_and_agent_mount_the_docker_socket():
+def test_only_ops_controller_the_agent_and_the_log_proxy_mount_the_docker_socket():
     c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
     with_sock = sorted(n for n, s in c["services"].items()
                        if any("/var/run/docker.sock" in v for v in s.get("volumes", []) or []))
-    assert with_sock == ["agent", "ops-controller"]
+    assert with_sock == ["agent", "docker-socket-proxy", "ops-controller"]
+
+
+def test_the_log_proxy_is_read_only_and_reachable_by_alloy_alone():
+    """A container listing carries every container's environment, so the Docker API proxy Alloy reads
+    logs through must allow no writes and must not sit on the stack network every service shares."""
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    proxy = c["services"]["docker-socket-proxy"]
+    assert proxy["environment"]["POST"] == "0"
+    assert "/var/run/docker.sock:/var/run/docker.sock:ro" in proxy["volumes"]
+    (private,) = proxy["networks"]
+    assert c["networks"][private]["internal"] is True
+    peers = sorted(n for n, s in c["services"].items() if private in (s.get("networks") or []))
+    assert peers == ["alloy", "docker-socket-proxy"]
+    assert "ordo-net" in c["services"]["alloy"]["networks"]  # it pushes to loki on the stack network
+
+
+def test_a_service_cannot_declare_networks_and_network_mode():
+    import pytest
+
+    from ordo.render.plugins import PluginService
+    with pytest.raises(ValueError, match="network_mode"):
+        PluginService.from_dict({"name": "x", "image": "i", "networks": ["stack"], "network_mode": "service:caddy"})
+    with pytest.raises(ValueError, match="lowercase"):
+        PluginService.from_dict({"name": "x", "image": "i", "networks": ["Bad_Name"]})
 
 
 def test_model_without_backend_image_runs_the_hosts_cuda_build(tmp_path):
