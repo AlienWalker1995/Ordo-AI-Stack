@@ -40,7 +40,7 @@ class _FakeQdrant:
     def __exit__(self, *exc):
         return False
 
-    def post(self, url, json=None, headers=None):
+    def post(self, url, json=None, headers=None, params=None):
         self.calls.append(("POST", url, json))
         if url.endswith("/points/scroll"):
             return self.scroll
@@ -56,7 +56,7 @@ class _FakeQdrant:
         self.calls.append(("GET", url, None))
         return _Response(200)
 
-    def put(self, url, json=None):
+    def put(self, url, json=None, params=None):
         self.calls.append(("PUT", url, json))
         return _Response()
 

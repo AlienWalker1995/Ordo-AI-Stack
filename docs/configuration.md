@@ -48,6 +48,8 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 | `RAG_COLLECTION` | `documents` | Qdrant collection (must match Open WebUI / ingestion) |
 | `RAG_CHUNK_SIZE` | `400` | Chunk size in tokens |
 | `RAG_EMBED_BATCH_SIZE` | `16` | Chunks per embedding request |
+| `RAG_MAX_CHUNKS_PER_FILE` | `200` | Files that chunk into more are skipped as data dumps (and removed from the index) |
+| `RAG_EMBED_THREADS` | `8` | CPU threads, and compose `cpus` limit, of `inference-engine-embed` |
 | `RAG_SCAN_INTERVAL_SEC` | `120` | Seconds between periodic rescan passes in `rag-ingestion` |
 | `RAG_CHUNK_OVERLAP` | `50` | Chunk overlap in tokens |
 | `QDRANT_PORT` | `6333` | Internal port Qdrant listens on (`ordo-net` only, no host publish) |

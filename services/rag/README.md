@@ -30,8 +30,9 @@ with a leading dot, not by adding ingester config.
 watch tree: the watchdog handler (`_EventHandler`) only implements `on_created`/`on_modified`, not
 `on_deleted`, and the periodic rescan (`_iter_supported_files`) only ever adds currently-existing
 files to the work queue; it never diffs against the per-source digests read from Qdrant at startup
-(`_indexed_digests`) to notice one has gone missing. `_delete_existing` only runs inside
-`_upsert_points`, i.e. on a RE-ingest of the same source path, never on absence. A file removed
+(`_indexed_digests`) to notice one has gone missing. Points are only deleted for a file that still
+exists: on a RE-ingest of the same source path (`_upsert_points`), or when it grows past
+`MAX_CHUNKS_PER_FILE` (`_delete_source`), never on absence. A file removed
 from the watched tree (including the whole Obsidian vault, or the `stack-docs` mount) leaves its
 embedded chunks in Qdrant indefinitely, stale.
 

@@ -60,7 +60,17 @@ services:
       - "2048"
       - --ubatch-size
       - "2048"
+      # A CPU budget (RAG_EMBED_THREADS). Unbounded, llama.cpp took all 24 cores (~270 W package
+      # power) for every embed job, on top of a GPU render, enough to trip the host UPS's overload
+      # alarm. Embedding is prompt processing, so --threads-batch is the one that bounds it; both are
+      # set so neither falls back to every core. The same value is the compose `cpus` ceiling below.
+      - --threads
+      - "${RAG_EMBED_THREADS:-8}"
+      - --threads-batch
+      - "${RAG_EMBED_THREADS:-8}"
       - --embeddings
+    resources:
+      cpus: "${RAG_EMBED_THREADS:-8}"
     volumes:
       # models-gguf named volume — the 9p bind wedged GGUF reads (2026-08-07); see ordo/render/compose.py.
       - models-gguf:/models:ro
@@ -88,6 +98,7 @@ services:
       CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-50}
       SCAN_INTERVAL_SEC: ${RAG_SCAN_INTERVAL_SEC:-120}
       EMBED_BATCH_SIZE: ${RAG_EMBED_BATCH_SIZE:-16}
+      MAX_CHUNKS_PER_FILE: ${RAG_MAX_CHUNKS_PER_FILE:-200}
     volumes:
       - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/rag-input:/watch
       # Obsidian memory vault as a second (read-only) input root, nested inside the watch tree so

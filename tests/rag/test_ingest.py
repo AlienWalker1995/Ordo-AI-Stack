@@ -43,7 +43,7 @@ def test_ingest_path_refuses_a_hidden_file_even_called_directly(tmp_path, monkey
 
 def test_no_on_deleted_handler_exists_yet_deletions_are_not_propagated_to_qdrant():
     """Documents the current limitation (services/rag/README.md): there is no code path that removes
-    a Qdrant point when its source file disappears from the watch tree. `_delete_existing` only runs
-    inside `_upsert_points`, i.e. on a RE-ingest of the SAME source, never on absence. If this class
+    a Qdrant point when its source file disappears from the watch tree. Points are only deleted for a
+    file that still exists (a RE-ingest of the SAME source, or one over the chunk cap). If this class
     ever grows an `on_deleted` handler, update the README's limitation note and this test together."""
     assert "on_deleted" not in vars(ingest._EventHandler)

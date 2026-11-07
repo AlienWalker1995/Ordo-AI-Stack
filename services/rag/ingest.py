@@ -50,6 +50,13 @@ SCAN_INTERVAL_SEC = max(5, int(os.environ.get("SCAN_INTERVAL_SEC", "120")))
 # request after its client gives up, so one request must stay far inside EMBED_TIMEOUT_SECONDS.
 EMBED_BATCH_SIZE = max(1, int(os.environ.get("EMBED_BATCH_SIZE", "16")))
 EMBED_TIMEOUT_SECONDS = 120.0
+# A file that chunks into more than this is a data dump (a JSON catalog, a generated report), not a
+# document: skipped before it is embedded. Measured 2026-11-07: every document in the watch tree is
+# under 40 chunks, the dumps 225 to 3,350, and embedding 3,350 chunks held every core for ~17 minutes.
+MAX_CHUNKS_PER_FILE = max(1, int(os.environ.get("MAX_CHUNKS_PER_FILE", "200")))
+# Points per Qdrant upsert request. Qdrant refuses a request body over 32 MB, and one point (768
+# floats as JSON plus its chunk text) is about 15 KB, so 256 points keep a request near 4 MB.
+UPSERT_BATCH_POINTS = 256
 # How long a file that failed waits before its next attempt: doubles from the first to the cap.
 RETRY_FIRST_SECONDS = 60.0
 RETRY_MAX_SECONDS = 3600.0
@@ -258,21 +265,28 @@ def _embed(chunks: list[str]) -> list[list[float]]:
     return vectors
 
 
-def _delete_existing(client: httpx.Client, source: str) -> None:
+def _source_condition(source: str) -> dict:
+    return {"key": "source", "match": {"value": source}}
+
+
+def _delete_points(client: httpx.Client, point_filter: dict) -> None:
     r = client.post(
         f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points/delete",
-        json={
-            "filter": {
-                "must": [
-                    {"key": "source", "match": {"value": source}},
-                ]
-            }
-        },
+        params={"wait": "true"},
+        json={"filter": point_filter},
     )
     r.raise_for_status()
 
 
+def _delete_source(source: str) -> None:
+    with httpx.Client(timeout=60.0) as client:
+        _delete_points(client, {"must": [_source_condition(source)]})
+
+
 def _upsert_points(source: str, digest: str, chunks: list[str], vectors: list[list[float]]) -> None:
+    """Writes the new version of `source` in requests small enough for Qdrant, then removes every
+    other point of that source. A failed write removes what it wrote: its points carry the new digest,
+    so a half-written version would read as fully indexed after a restart."""
     if not vectors:
         return
     _ensure_collection(len(vectors[0]))
@@ -294,12 +308,25 @@ def _upsert_points(source: str, digest: str, chunks: list[str], vectors: list[li
             }
         )
     with httpx.Client(timeout=60.0) as client:
-        _delete_existing(client, source)
-        r = client.put(
-            f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points",
-            json={"points": points},
-        )
-        r.raise_for_status()
+        try:
+            for start in range(0, len(points), UPSERT_BATCH_POINTS):
+                r = client.put(
+                    f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points",
+                    params={"wait": "true"},
+                    json={"points": points[start : start + UPSERT_BATCH_POINTS]},
+                )
+                r.raise_for_status()
+        except Exception:
+            _delete_points(client, {"must": [
+                _source_condition(source),
+                {"key": "digest", "match": {"value": digest}},
+            ]})
+            raise
+        # Only now drop the previous version, so a failed write leaves the old one searchable.
+        _delete_points(client, {
+            "must": [_source_condition(source)],
+            "must_not": [{"has_id": [point["id"] for point in points]}],
+        })
 
 
 def _iter_supported_files() -> list[Path]:
@@ -326,6 +353,13 @@ def ingest_path(path: Path, state: dict[str, str]) -> bool:
     chunks = _chunk(text, CHUNK_SIZE, CHUNK_OVERLAP)
     if not chunks:
         logger.info("Skipping %s: no extractable text", source)
+        state[source] = digest
+        return False
+    if len(chunks) > MAX_CHUNKS_PER_FILE:
+        logger.info("Skipping %s: %d chunks is over MAX_CHUNKS_PER_FILE=%d (a data dump, not a document)",
+                    source, len(chunks), MAX_CHUNKS_PER_FILE)
+        if source in state:
+            _delete_source(source)
         state[source] = digest
         return False
     vectors = _embed([EMBED_DOCUMENT_PREFIX + chunk for chunk in chunks])
