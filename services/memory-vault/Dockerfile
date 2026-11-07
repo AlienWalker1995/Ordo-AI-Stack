@@ -26,7 +26,7 @@ LABEL org.opencontainers.image.title="mcpvault-mcp" \
 RUN npm install -g "@bitbonsai/mcpvault@${MCPVAULT_VERSION}" \
  && npm cache clean --force
 
-# ── stdio -> streamable HTTP bridge (same recipe as services/codebase-memory/Dockerfile) ────
+# ── stdio -> streamable HTTP bridge ────────────────────────────────────────────────────────
 # mcpvault speaks stdio only. mcp-proxy holds ONE persistent child and serves stateless
 # streamable HTTP on /mcp (LiteLLM re-initialises per operation: BerriAI/litellm #25128). Pinned.
 ARG MCP_PROXY_VERSION=0.12.0

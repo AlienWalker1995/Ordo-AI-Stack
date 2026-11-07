@@ -4,9 +4,6 @@
 *.sh text eol=lf
 services/dashboard/dashboard/entrypoint.sh text eol=lf
 scripts/llamacpp/run-llama-server.sh text eol=lf
-# nginx config is COPYed into the codebase-memory-ui image; keep LF so nginx
-# doesn't choke on CRLF after a Windows checkout.
-services/codebase-memory-ui/nginx.conf text eol=lf
 # The agent image's whole build context is LF: `docker build` copies the working tree as checked
 # out, so a CRLF wrapper ships a CR-terminated shebang that is "not found" (github-app-token,
 # 2026-10-15), patches stop applying, and spliced skill markdown mixes endings. One rule for the

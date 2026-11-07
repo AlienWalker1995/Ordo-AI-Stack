@@ -350,7 +350,7 @@ entrypoint) and `out/mcp/servers.json` (the enabled-server list plus the registe
 map).
 
 The registered servers are `comfyui`, `orchestration`, `qdrant-rag`, `searxng`,
-`codebase-memory`, and `memory-vault`: there are no `duckduckgo` or `playwright` defaults.
+and `memory-vault`: there are no `duckduckgo` or `playwright` defaults.
 
 Enable or disable a server by editing `ordo.yaml`'s `plugins:` list (or through ops-controller's
 `POST /plugins/{id}/...`, which edits the same file). A toggle there is applied by ops-controller:
@@ -490,17 +490,16 @@ One Google sign-in covers every port except Hermes's `:8447` (its own sign-in) *
 
 | Port | Service | Notes |
 |---|---|---|
-| `443` | Front door | Landing page; `/oauth2/*` (the one Google callback); `/llm/*` → LiteLLM API (Bearer, SSO-bypassed); `/mcp` → model-gateway's MCP endpoint (Bearer LiteLLM key, SSO-bypassed); 302s from every legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) to its new port |
+| `443` | Front door | Landing page; `/oauth2/*` (the one Google callback); `/llm/*` → LiteLLM API (Bearer, SSO-bypassed); `/mcp` → model-gateway's MCP endpoint (Bearer LiteLLM key, SSO-bypassed); 302s from every legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/grafana`) to its new port |
 | `8443` | Open WebUI (chat) | Served at root |
 | `8444` | Dashboard | Served at root; Grafana rides along at `/grafana/` on this port |
 | `8446` | ComfyUI | Served at root |
 | `8447` | Hermes | Served at root; Hermes's own Google OIDC sign-in, not oauth2-proxy ([runbooks/auth.md](runbooks/auth.md)) |
-| `8448` | codebase-memory | Served at root (the container's nginx now proxies straight through, no `sub_filter`) |
 | `8449` | LiteLLM admin UI | Served at root; the admin UI lives at `/ui/` and swagger at `/`. Distinct from the `/llm/*` API route on `:443`, which stays the SSO-bypassing programmatic base |
 | `8450` | Langfuse | Served at root; the only route into `langfuse-web` (agent traces, datasets, evals). Hermes ingests directly over `ordo-net`, not through this port |
 | (none) | Everything else | Reachable service-to-service by container DNS name (e.g. `http://ops-controller:9000`), never from the host or LAN directly |
 
-Old subpath URLs (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — Caddy 302s them from `:443` to the matching port — so existing bookmarks don't break.
+Old subpath URLs (`/chat`, `/dash`, `/comfy`, `/hermes`, `/grafana`) still work — Caddy 302s them from `:443` to the matching port — so existing bookmarks don't break.
 
 ## Audit Log Schema
 

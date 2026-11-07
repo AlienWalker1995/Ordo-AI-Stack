@@ -34,7 +34,7 @@ HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
                {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-bbbb"}], "ram_gb": 128, "cpu_cores": 32}
 # The same plugin set the operator's stack runs, so every secret-bearing service renders.
 PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "inference-engine-cpu", "open-webui",
-           "searxng-web", "searxng", "codebase-memory-ui", "codebase-memory", "comfyui-mcp",
+           "searxng-web", "searxng", "comfyui-mcp",
            "orchestration", "hermes-dashboard", "monitoring", "memory-vault", "edge", "tailnet-names",
            "obsidian-livesync", "langfuse", "evals"]
 
@@ -70,7 +70,7 @@ FILE_SPEC: dict[str, set[str]] = {
     "langfuse-minio": {"LANGFUSE_MINIO_SECRET"},
     "langfuse-minio-lifecycle": {"LANGFUSE_MINIO_SECRET"},
     "langfuse-retention": LANGFUSE_PAIR,
-    **{f"tailnet-{n}": TAILNET for n in ("chat", "comfy", "dash", "graph", "hermes", "langfuse", "llm")},
+    **{f"tailnet-{n}": TAILNET for n in ("chat", "comfy", "dash", "hermes", "langfuse", "llm")},
 }
 # Secrets still delivered in the environment (`KEY: ${KEY}`), each for a stated reason: the
 # software has no file variant (langfuse, couchdb, searxng, open-webui, the oauth2-proxy and

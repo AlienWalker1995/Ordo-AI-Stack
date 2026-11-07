@@ -315,7 +315,7 @@ def test_agent_depends_on_health_conditions():
 def test_mcp_services_rendered_with_isolation_limits_and_labels():
     c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
     names = {n for n in c["services"] if n.startswith("mcp-")}
-    assert names == {"mcp-codebase-memory", "mcp-comfyui", "mcp-memory-vault",
+    assert names == {"mcp-comfyui", "mcp-memory-vault",
                      "mcp-orchestration", "mcp-qdrant-rag", "mcp-searxng"}
     for n in names:
         s = c["services"][n]
@@ -327,7 +327,6 @@ def test_mcp_services_rendered_with_isolation_limits_and_labels():
         assert "healthcheck" in s
     assert c["services"]["mcp-memory-vault"]["networks"] == ["ordo-mcp-net"]          # internal
     assert c["services"]["mcp-searxng"]["networks"] == ["ordo-mcp-net", "ordo-net"]    # stack
-    assert "codebase-memory-cache" in c["volumes"]
     assert "mcp-gateway" not in c["services"]
 
 
@@ -348,7 +347,7 @@ def test_mcp_healthcheck_defaults_to_the_renderer_probe_unless_overridden():
     assert "urllib.request.urlopen('http://localhost:9000/mcp', timeout=5)" in probe[3]
     assert "except urllib.error.HTTPError: pass" in probe[3]
 
-    for name in ("mcp-codebase-memory", "mcp-comfyui", "mcp-memory-vault",
+    for name in ("mcp-comfyui", "mcp-memory-vault",
                  "mcp-orchestration", "mcp-qdrant-rag"):
         assert c["services"][name]["healthcheck"] == expected, name
     # searxng-mcp overrides it: that image ships node, not python3.
@@ -543,7 +542,7 @@ def test_tailscale_sidecars_have_their_own_netns(tmp_path):
     c = _render_with_plugins(["edge", "tailnet-names", "obsidian-livesync", "obsidian-livesync-funnel"],
                              tmp_path)
     sidecars = {n: s for n, s in c["services"].items() if n.startswith("tailnet-") or n == "notes-funnel"}
-    assert len(sidecars) == 8, sorted(sidecars)
+    assert len(sidecars) == 7, sorted(sidecars)
     for name, svc in sidecars.items():
         assert "network_mode" not in svc, f"{name} shares a netns: it is lost on any daemon restart"
         assert svc["networks"], f"{name} has no network to reach its upstream on"

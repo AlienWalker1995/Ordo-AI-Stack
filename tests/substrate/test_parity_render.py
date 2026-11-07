@@ -26,17 +26,16 @@ P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_5090, "compu
 EXPECTED_SERVICE_PLUGINS = {
     "comfyui", "song-gen", "voice", "monitoring",          # GPU / media / voice
     "rag", "open-webui",                                   # ported CPU-ok services
-    "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
+    "searxng-web", "hermes-dashboard", "edge",
     "ltx-trainer",                                        # LoRA trainer (sole trainer since 2026-07-24)
     "obsidian-livesync",                                 # cross-device Obsidian notes sync (CouchDB LiveSync + bridge)
     "inference-engine-cpu",                                      # CPU LLM fallback (needs 24GB RAM, no GPU); dormant behind the cpu-fallback profile
 }
-# memory-vault is a post-parity add (file-based markdown-memory MCP). codebase-memory / comfyui /
-# orchestration are the RESTORED V1 roster (the V1→V2 migration had silently dropped them);
+# memory-vault is a post-parity add (file-based markdown-memory MCP). comfyui / orchestration are
+# the RESTORED V1 roster (codebase-memory was restored too, then removed 2026-11-07) (the V1→V2 migration had silently dropped them);
 # these are SERVER ids — the comfyui MCP plugin is id `comfyui-mcp` but renders under server_id
 # `comfyui` to preserve Hermes' V1 `comfyui__*` tool namespace.
-EXPECTED_MCP = {"qdrant-rag", "searxng", "memory-vault",
-                "codebase-memory", "comfyui", "orchestration"}
+EXPECTED_MCP = {"qdrant-rag", "searxng", "memory-vault", "comfyui", "orchestration"}
 
 
 def _dual():
@@ -52,10 +51,10 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 18 kind=service plugins are REGISTERED (10 parity set + ltx-trainer + tailnet-names +
-    # obsidian-livesync + obsidian-livesync-funnel + inference-engine-cpu + langfuse + evals + html-video) and 6 kind=mcp
-    # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp /
-    # orchestration). 13 of the service plugins ENABLE on the full host: langfuse, evals, html-video, the public
+    # 17 kind=service plugins are REGISTERED (9 parity set + ltx-trainer + tailnet-names +
+    # obsidian-livesync + obsidian-livesync-funnel + inference-engine-cpu + langfuse + evals + html-video) and 5 kind=mcp
+    # (qdrant-rag, searxng, memory-vault + the restored comfyui-mcp /
+    # orchestration). 12 of the service plugins ENABLE on the full host: langfuse, evals, html-video, the public
     # Funnel and the tailnet-name sidecars are opt-in (`default: false`), so `plugins: auto`
     # deliberately leaves them out. (The media "worker"
     # plugin was retired, dropping the parity set from 12 to 11; inference-engine-cpu - the CPU LLM
@@ -63,11 +62,11 @@ def test_parity_matrix_counts():
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
     opt_in = [p.id for p in svc if not p.default]
-    assert len(svc) == 18 and len(mcp) == 6
+    assert len(svc) == 17 and len(mcp) == 5
     assert opt_in == ["evals", "html-video", "langfuse", "obsidian-livesync-funnel", "tailnet-names"]
     rc = _dual()
-    assert len(rc.plugins_enabled) == 13
-    assert len(rc.mcp_servers) == 6
+    assert len(rc.plugins_enabled) == 12
+    assert len(rc.mcp_servers) == 5
 
 
 def test_ported_services_carry_pins_and_healthchecks():
@@ -82,8 +81,6 @@ def test_ported_services_carry_pins_and_healthchecks():
 
 def test_named_volumes_from_ported_plugins_declared():
     c = _dual().compose_dict()
-    # codebase-memory-ui declares a named cache volume → must be at the compose top level
-    assert "codebase-memory-cache" in c["volumes"]
     # edge declares caddy_data / caddy_config named volumes
     assert "caddy_data" in c["volumes"] and "caddy_config" in c["volumes"]
 
@@ -100,8 +97,7 @@ def test_core_gateway_and_mcp_services_are_project_or_pinned_images():
     c = _dual().compose_dict()
     assert c["services"]["model-gateway"]["image"] == "ordo/model-gateway:current"
     assert "mcp-gateway" not in c["services"]
-    for n in ("mcp-orchestration", "mcp-qdrant-rag", "mcp-comfyui", "mcp-codebase-memory",
-              "mcp-memory-vault"):
+    for n in ("mcp-orchestration", "mcp-qdrant-rag", "mcp-comfyui", "mcp-memory-vault"):
         assert c["services"][n]["image"].startswith("ordo/")
     for n in ("mcp-searxng",):
         assert "@sha256:" in c["services"][n]["image"]

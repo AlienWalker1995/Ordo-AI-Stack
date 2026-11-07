@@ -34,7 +34,7 @@ rewrites).
 │  Caddy — the ONLY host-published ports (`${CADDY_BIND}:<port>` for each)      │
 │  :443 front door (landing page, /oauth2, /llm, /mcp, legacy-path 302s)        │
 │  :8443 Open WebUI   :8444 Dashboard (+ /grafana/)                             │
-│  :8446 ComfyUI      :8447 Hermes (at root)          :8448 codebase-memory     │
+│  :8446 ComfyUI      :8447 Hermes (at root)                                    │
 │  :8449 LiteLLM admin UI                             :8450 Langfuse            │
 │  oauth2-proxy (Google SSO, one domain-scoped session across all ports)       │
 │  behind it; reverse-proxies every route below                                │
@@ -95,7 +95,7 @@ rewrites).
 │  │                                                                        │    │
 │  │  mcp-comfyui   mcp-orchestration   mcp-qdrant-rag                     │    │
 │  │  mcp-searxng                     → these also join ordo-net          │    │
-│  │  mcp-codebase-memory   mcp-memory-vault  (internal only)             │    │
+│  │  mcp-memory-vault  (internal only)                                   │    │
 │  │                                                                        │    │
 │  │  each: long-lived service, transport http on <port>/mcp, no env_file, │    │
 │  │  no-new-privileges, 1 CPU / 2 GB, label ordo.mcp=true                 │    │
@@ -165,7 +165,7 @@ port-per-service model, Caddy itself listens on **eight** host ports
 exclusively through Caddy; nothing else binds a host port at all. Each
 prebuilt SPA is served at the root it was compiled for — `:8443` Open WebUI,
 `:8444` Dashboard (+ `/grafana/` embed), `:8446` ComfyUI, `:8447`
-Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse,
+Hermes, `:8449` LiteLLM admin UI, `:8450` Langfuse,
 all at their origin root behind a plain
 `import sso_service <upstream>` — retiring the subpath-rewrite bandaids
 (Open WebUI root-catchall, Hermes header-injected base, codebase-memory
@@ -178,7 +178,7 @@ embed — see below).
 `:443` remains the front door: the landing page, the one Google OAuth
 callback (`/oauth2/*`), the two bearer-gated programmatic APIs
 (`/llm/*`, `/mcp`), and 302 redirects from every
-legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`,
+legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`,
 `/grafana`) to the new port, so old bookmarks keep working.
 
 All user-facing UIs sit behind oauth2-proxy / Google SSO, one Google
@@ -222,7 +222,6 @@ dashboard iframe expects that prefix).
 | comfyui | — | Reached at `https://<tailnet>:8446/` (its own port, served at its compiled root) |
 | rag-ingestion | — | Internal only; no ingress needed |
 | grafana | — | Internal only; embedded in the dashboard at `https://<tailnet>:8444/grafana/` (same-origin iframe, `handle` not `handle_path` so the prefix Grafana expects is preserved) |
-| codebase-memory-ui | — | Reached at `https://<tailnet>:8448/` (served at its origin root; the container's nginx proxies straight through, no `sub_filter`) |
 
 ## Compose Hardening
 
@@ -252,8 +251,6 @@ ordo-ai-stack/
 │   ├── orchestration/   # Orchestration MCP server
 │   ├── comfyui-mcp/     # ComfyUI MCP server
 │   ├── qdrant-rag/      # Qdrant RAG MCP server
-│   ├── codebase-memory/ # Headless codebase-memory MCP
-│   ├── codebase-memory-ui/  # Codebase-memory 3D graph UI service
 │   ├── hermes/          # Hermes agent build context (Dockerfile, ordo-init.sh, plugins/, seed/) + its agent.yaml manifest
 │   └── …                # edge, model-gateway, memory-vault, searxng, monitoring, voice, …
 ├── ordo/                # Render substrate (Python package): `ordo render`, `ordo detect`, etc.

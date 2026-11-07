@@ -30,7 +30,7 @@
 #          from every legacy subpath so old bookmarks keep working.
 #   :8443  Open WebUI (chat)        :8444  Dashboard (+ /grafana/ embed)
 #   :8446  ComfyUI
-#   :8447  Hermes                   :8448  codebase-memory
+#   :8447  Hermes
 #
 # SSO works across all ports (and the per-service Tailscale sidecar names —
 # chat/dash/… .<tailnet>.ts.net) with ONE session: the oauth2-proxy cookie is
@@ -166,13 +166,6 @@
     import self_authenticating_service agent:9119
 }
 
-# ---- :8448 — codebase-memory 3D graph ----
-# Served at its origin root behind a plain SSO proxy — the container's nginx
-# proxies straight through with no path rewriting (see services/codebase-memory-ui/nginx.conf).
-:8448 {
-    import sso_service codebase-memory-ui:9750
-}
-
 # ---- :8449 - LiteLLM admin UI (model-gateway) ----
 # The BROWSABLE face of model-gateway, behind SSO like every other UI here: the admin
 # UI lives at /ui/ (keys, teams, spend, MCP servers, models); swagger stays at /.
@@ -274,7 +267,6 @@
     redir /dash* https://dash.{$CADDY_TAILNET_DOMAIN}/ 302
     redir /comfy* https://comfy.{$CADDY_TAILNET_DOMAIN}/ 302
     redir /hermes* https://hermes.{$CADDY_TAILNET_DOMAIN}/ 302
-    redir /codebase-memory* https://graph.{$CADDY_TAILNET_DOMAIN}/ 302
     redir /grafana* https://dash.{$CADDY_TAILNET_DOMAIN}/grafana/ 302
     # ---- landing page + everything else (SSO-gated) ----
     route {
@@ -305,7 +297,6 @@
                 <li><a href="https://dash.{$CADDY_TAILNET_DOMAIN}/">Dashboard<small>control hub · dash</small></a></li>
                 <li><a href="https://hermes.{$CADDY_TAILNET_DOMAIN}/">Hermes<small>agent · hermes</small></a></li>
                 <li><a href="https://comfy.{$CADDY_TAILNET_DOMAIN}/">ComfyUI<small>media · comfy</small></a></li>
-                <li><a href="https://graph.{$CADDY_TAILNET_DOMAIN}/">Code graph<small>memory · graph</small></a></li>
                 </ul></main></body></html>
                 HTML
         }

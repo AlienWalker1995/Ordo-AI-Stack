@@ -47,8 +47,7 @@ EDGE_SITE = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
 BIND = "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}"
 
 # Every plugin that owns an edge site, plus what it needs to be enabled.
-UI_PLUGINS = ["edge", "open-webui", "rag", "comfyui", "hermes-dashboard",
-              "codebase-memory-ui", "langfuse"]
+UI_PLUGINS = ["edge", "open-webui", "rag", "comfyui", "hermes-dashboard", "langfuse"]
 
 
 def _render(plugins, registry=REGISTRY, site=EDGE_SITE):
@@ -78,7 +77,7 @@ def test_the_declared_edge_sites_are_the_shipped_ui_ports():
     sites = declared_edge_sites(REGISTRY, DASHBOARDS)
     assert {owner: site.port for owner, site in sites.items()} == {
         "open-webui": 8443, "dashboard": 8444, "comfyui": 8446,
-        "hermes-dashboard": 8447, "codebase-memory-ui": 8448, "model-gateway": 8449,
+        "hermes-dashboard": 8447, "model-gateway": 8449,
         "langfuse": 8450,
     }
 
@@ -142,7 +141,7 @@ def test_the_edge_publishes_its_front_door_plus_every_enabled_ui():
     rc = _render(UI_PLUGINS)
     ports = sorted(site.port for site in rc.edge_sites.values())
     assert _caddy_ports(rc) == [f"{BIND}:443:443"] + [f"{BIND}:{p}:{p}" for p in ports]
-    assert ports == [8443, 8444, 8446, 8447, 8448, 8449, 8450]
+    assert ports == [8443, 8444, 8446, 8447, 8449, 8450]
 
 
 def test_a_disabled_ui_publishes_no_edge_port():
@@ -205,7 +204,6 @@ def test_the_aggregated_catalog_carries_each_owners_port():
     assert cards["webui"]["sso_port"] == sites["open-webui"].port
     assert cards["comfyui"]["sso_port"] == sites["comfyui"].port
     assert cards["hermes"]["sso_port"] == sites["hermes-dashboard"].port
-    assert cards["codebase-memory-ui"]["sso_port"] == sites["codebase-memory-ui"].port
     # a backend with no edge site gets none
     assert "sso_port" not in cards["qdrant"]
 

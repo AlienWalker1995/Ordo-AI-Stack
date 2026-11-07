@@ -257,7 +257,7 @@ One Google sign-in covers every oauth2-proxy-gated port (all but Hermes, which s
 oauth2-proxy cookie is domain-scoped and the SSO gate's `rd=` carries `{host}` (portless), so a
 single wildcard `--whitelist-domain=.<domain>` covers every port and sidecar name at once; the Google
 OAuth client needs no new redirect URIs. Old subpath URLs (`/chat`, `/dash`, `/comfy`,
-`/hermes`, `/codebase-memory`, `/grafana`) 302 from `:443` to their new ports, so bookmarks keep
+`/hermes`, `/grafana`) 302 from `:443` to their new ports, so bookmarks keep
 working. This
 retires the subpath-rewrite class of workaround (Open WebUI root-catchall, Hermes header-based
 base injection, codebase-memory nginx rewrites) in favor of giving every

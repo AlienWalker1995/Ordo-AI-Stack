@@ -166,7 +166,6 @@ def test_legacy_paths_redirect_to_subdomains(caddyfile_text: str) -> None:
         ("/dash*", "https://dash.{$CADDY_TAILNET_DOMAIN}/"),
         ("/comfy*", "https://comfy.{$CADDY_TAILNET_DOMAIN}/"),
         ("/hermes*", "https://hermes.{$CADDY_TAILNET_DOMAIN}/"),
-        ("/codebase-memory*", "https://graph.{$CADDY_TAILNET_DOMAIN}/"),
         ("/grafana*", "https://dash.{$CADDY_TAILNET_DOMAIN}/grafana/"),
     ):
         assert f"redir {legacy} {target} 302" in caddyfile_text, (
@@ -174,13 +173,10 @@ def test_legacy_paths_redirect_to_subdomains(caddyfile_text: str) -> None:
 
 
 # ── converged uniform-serving model (feat/clean-tailnet-urls) ───────────────────
-# The formerly-divergent UIs (Hermes X-Forwarded-Prefix, codebase-memory nginx
-# sub_filter) now serve at their origin root behind a plain
+# The formerly-divergent UIs (Hermes X-Forwarded-Prefix; codebase-memory, removed 2026-11-07,
+# used nginx sub_filter) now serve at their origin root behind a plain
 # `import sso_service <upstream>` — identical to :8443/:8446. These invariants FAIL
 # if any adapter (handle_path, redir-to-subpath bounce, X-Forwarded-Prefix) returns.
-
-NGINX_CONF = REPO_ROOT / "services" / "codebase-memory-ui" / "nginx.conf"
-
 
 def _site_block(text: str, port: str) -> str:
     """Return the body of the `:<port> { … }` site block (brace-matched)."""
@@ -198,7 +194,7 @@ def _site_block(text: str, port: str) -> str:
 
 
 def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
-    """8447/8448/8449/8450 each proxy at root via their site snippet with no adapter — no
+    """8447/8449/8450 each proxy at root via their site snippet with no adapter — no
     handle_path, no `redir /` bounce to a subpath.
 
     :8447 (Hermes) uses (self_authenticating_service): the dashboard runs its own Google
@@ -215,7 +211,6 @@ def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
     """
     port_of = {upstream: port for port, upstream in SERVICE_PORTS.items()}
     for snippet, upstream in (("self_authenticating_service", "agent:9119"),
-                              ("sso_service", "codebase-memory-ui:9750"),
                               ("sso_service", "model-gateway:11435"),
                               ("sso_service", "langfuse-web:3000")):
         port = port_of[upstream]
@@ -232,15 +227,6 @@ def test_no_forwarded_prefix_injection(caddyfile_text: str) -> None:
     """No site may inject X-Forwarded-Prefix — that was the Hermes subpath adapter."""
     assert "X-Forwarded-Prefix" not in caddyfile_text, (
         "X-Forwarded-Prefix reintroduced — the Hermes subpath adapter is back")
-
-
-def test_codebase_memory_ui_serves_at_root() -> None:
-    """services/codebase-memory-ui/nginx.conf must be a plain root proxy: no sub_filter
-    rewrites, no /codebase-memory/ subpath, a `location /` at the root."""
-    nginx = NGINX_CONF.read_text(encoding="utf-8")
-    assert "sub_filter" not in nginx, "sub_filter reintroduced — the nginx subpath adapter is back"
-    assert "/codebase-memory/" not in nginx, "/codebase-memory/ subpath reintroduced in nginx.conf"
-    assert "location /" in nginx, "nginx.conf lost its root `location /` proxy"
 
 
 def test_couchdb_livesync_bypasses_sso_and_blocks_fauxton(caddyfile_text: str) -> None:

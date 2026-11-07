@@ -74,7 +74,6 @@ def test_folder_id_differs_from_image_name_resolves_to_folder():
     expected = {
         "ordo/mcpvault-mcp": "services/memory-vault",
         "ordo/rag-ingestion": "services/rag",
-        "ordo/codebase-memory-mcp": "services/codebase-memory",
         "ordo/orchestration-mcp": "services/orchestration",
         "ordo/qdrant-rag-mcp": "services/qdrant-rag",
     }

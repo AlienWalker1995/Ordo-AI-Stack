@@ -37,7 +37,7 @@ def _src(**kw):
 # handled separately. The tailnet-name sidecars are opt-in (they need a tagged Tailscale key), so
 # `plugins: auto` leaves them out.
 CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "open-webui",
-                          "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
+                          "searxng-web", "hermes-dashboard", "edge",
                           "obsidian-livesync"}
 
 
@@ -45,8 +45,7 @@ def test_registry_loaded_manifests():
     ids = {p.id for p in REGISTRY.plugins}
     assert {"comfyui", "song-gen", "voice", "monitoring"} <= ids
     # the ported V1-parity plugins are registered too
-    assert {"rag", "open-webui", "searxng-web",
-            "codebase-memory-ui", "hermes-dashboard", "edge"} <= ids
+    assert {"rag", "open-webui", "searxng-web", "hermes-dashboard", "edge"} <= ids
 
 
 def test_big_gpu_enables_all_and_merges_env():
