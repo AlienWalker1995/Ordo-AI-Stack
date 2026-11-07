@@ -28,8 +28,8 @@ from collections.abc import Mapping
 from typing import Any
 
 KINDS = ("chat", "embedding", "image", "stt", "tts")
-# `ninfer-log` is a temporary reader: NInfer has no metrics endpoint yet, so its throughput is read
-# from its request log until it serves one upstream.
+# `ninfer-log` reads NInfer's request log: its own /metrics has no per-phase time
+# (ordo/control/engine_metrics.py).
 METRICS_FORMATS = ("llamacpp", "ninfer-log", "none")
 # The formats read over HTTP from the service, so they need its port.
 HTTP_METRICS_FORMATS = frozenset({"llamacpp"})

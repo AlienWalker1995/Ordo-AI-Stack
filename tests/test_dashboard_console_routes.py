@@ -790,7 +790,7 @@ def test_perf_series_returns_gpu_and_cpu_rates(live):
 
 
 def test_perf_series_reads_the_gpu_rate_from_the_gateway_not_llama_cpp(live):
-    """NInfer serves no /metrics, so llama.cpp's counter left the GPU sparkline empty. The GPU
+    """NInfer serves none of llama.cpp's token counters, so llama.cpp's counter left the GPU sparkline empty. The GPU
     series is the gateway's output-token rate for the inference-engine-gpu:8080 deployment (either engine)."""
     from urllib.parse import parse_qs, urlsplit
 

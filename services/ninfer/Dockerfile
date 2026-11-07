@@ -22,16 +22,20 @@ RUN apt-get update \
         libavformat-dev \
         libavutil-dev \
         libcurl4-openssl-dev \
+        libhwloc-dev \
+        libjpeg-dev \
         libswscale-dev \
+        liburing-dev \
         ninja-build \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Pinned to an exact upstream commit (2026-09-29, "perf(attention): extend grouped small prefill"),
-# the one the model eval built and served. Never float on a branch: bump the sha deliberately and
+# Pinned to an exact upstream commit (2026-11-07, "fix(runtime): recover preempted requests without
+# stalling"). Since the previous pin (d44ab584, 2026-09-29) upstream added native Prometheus /metrics,
+# DFlash2 and unified startup configuration. Never float on a branch: bump the sha deliberately and
 # re-run the eval. Third-party code is vendored in the repo (third_party/), so the build fetches
 # nothing else.
-ARG NINFER_COMMIT=d44ab58408aa389728cd8b1ee50179527e1f3e0d
+ARG NINFER_COMMIT=77c2e5e273b53843f0564fb53b7bad249e7c85c0
 WORKDIR /src
 RUN git init -q \
     && git remote add origin https://github.com/Neroued/ninfer \
@@ -39,11 +43,16 @@ RUN git init -q \
     && git checkout -q FETCH_HEAD \
     && test "$(git rev-parse HEAD)" = "${NINFER_COMMIT}"
 
-# The architecture is upstream's only supported one (sm_120a, the RTX 50 series); its CMakeLists
-# refuses any other value, so it is spelled out here only to make the image's GPU requirement visible.
+# Link against the toolkit's driver stub, as upstream does: the build stage has no host GPU driver.
+RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/libcuda.so.1
+
+# The RTX 5090 target; upstream's other target is DGX Spark, which this host is not. The target
+# implies sm_120a and cmake refuses any other architecture for it, so the explicit value only makes
+# the image's GPU requirement visible here.
 ARG NINFER_BUILD_JOBS=8
 RUN cmake -S . -B /build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
+        -DNINFER_TARGET=rtx5090 \
         -DCMAKE_CUDA_ARCHITECTURES=120a \
         -DNINFER_BUILD_APPS=ON \
         -DBUILD_TESTING=OFF \
@@ -61,11 +70,17 @@ RUN apt-get update \
         libavformat60 \
         libavutil58 \
         libcurl4t64 \
+        libhwloc15 \
+        libjpeg-turbo8 \
         libswscale7 \
+        liburing2 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /build/apps/ninfer /usr/local/bin/ninfer
 COPY --from=build /build/apps/ninfer-serve /usr/local/bin/ninfer-serve
+# The engine's own shared libraries: upstream split ops and core into libraries (35aede69).
+COPY --from=build /build/lib/ /usr/local/lib/
+RUN ldconfig
 
 WORKDIR /workspace
 EXPOSE 8080

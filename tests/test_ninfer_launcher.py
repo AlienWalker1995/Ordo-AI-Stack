@@ -13,7 +13,7 @@ import pytest
 LAUNCHER = Path(__file__).resolve().parents[1] / "scripts" / "llamacpp" / "run-ninfer-serve.sh"
 ENV = {"LLAMACPP_MODEL": "qwen3_8_27b_nvfp4.ninfer", "LLAMACPP_CTX_SIZE": "262144", "LLAMACPP_N_PREDICT": "65536",
        "LLAMACPP_REASONING_BUDGET": "32768",
-       "LLAMACPP_EXTRA_ARGS": "--max-concurrency 1 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft",
+       "LLAMACPP_EXTRA_ARGS": "--max-concurrency 1 --kv-dtype fp8 --spec mtp --draft-tokens 3 --proposal-head optimized",
        # llama.cpp-only keys the service also receives: they must not leak into the argv
        "LLAMACPP_GPU_LAYERS": "-1", "LLAMACPP_FLASH_ATTN": "auto", "LLAMACPP_MMPROJ": "",
        "LLAMACPP_KV_CACHE_TYPE_K": "q8_0"}
@@ -53,11 +53,11 @@ def test_the_artifact_window_and_model_id_come_from_the_render() -> None:
     joined = " ".join(args)
     # the public model id is the artifact file: the gateway sends it as `model`, the dashboard reads it
     assert "--model-id qwen3_8_27b_nvfp4.ninfer" in joined
-    # one request gets the whole window: the KV pool equals the per-request ceiling
-    assert "--max-context 262144 --kv-capacity 262144" in joined
-    assert "--default-max-tokens 65536" in joined and "--default-thinking-budget 32768" in joined
+    # the per-request window; the context pool behind it is NInfer's `auto` capacity
+    assert "--max-context 262144" in joined and "--kv-capacity" not in joined
+    assert "--max-tokens 65536" in joined and "--thinking-budget 32768" in joined
     assert "--host 0.0.0.0" in joined and "--port 8080" in joined
-    assert "--spec mtp --draft-tokens 3 --lm-head-draft" in joined
+    assert "--spec mtp --draft-tokens 3 --proposal-head optimized" in joined
 
 
 def test_legacy_server_settings_and_metrics_never_reach_ninfer() -> None:
