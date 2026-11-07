@@ -2,7 +2,7 @@
   "cards": [
     {
       "id": "inference-engine-cpu",
-      "name": "llama.cpp (CPU fallback)",
+      "name": "llama.cpp (CPU)",
       "order": 15,
       "port": null,
       "check": "http://inference-engine-cpu:8080/health",

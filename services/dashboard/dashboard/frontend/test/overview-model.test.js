@@ -1,7 +1,7 @@
-// The KPI band's pure model: container counts across projects, the token estimate from the rate
-// series, medians passed through untouched, and the omit-don't-zero rule for missing sources.
+// The KPI band's pure model: container counts across projects, the token estimate from every
+// engine's rate series, who answers chat, and the omit-don't-zero rule for missing sources.
 import { describe, expect, it } from 'vitest'
-import { activityCategory, activityDaySummary, countContainers, diskFacts, filterActivity, formatTokens, groupActivity, kpiTiles, speedByRole, tokensFromSeries, vramFacts } from '../src/pages/overviewModel.js'
+import { activityCategory, activityDaySummary, countContainers, deviceLabel, diskFacts, filterActivity, formatTokens, groupActivity, kpiTiles, primaryChatModel, tokensFromSeries, vramFacts } from '../src/pages/overviewModel.js'
 
 describe('countContainers', () => {
   it('sums every project, ordo and non-ordo alike', () => {
@@ -45,20 +45,20 @@ describe('countContainers', () => {
 })
 
 describe('tokensFromSeries', () => {
-  it('integrates each rate over the gap to the next sample, gpu and cpu together', () => {
-    // Samples at the request's own 300 s step: every gap counts in full, gpu and cpu summed.
-    const series = { gpu: [[0, 40], [300, 50]], cpu: [[0, 1], [300, 2]] }
-    expect(tokensFromSeries(series)).toBe(40 * 300 + 1 * 300)
+  it('integrates each rate over the gap to the next sample, every engine together', () => {
+    // Samples at the request's own 300 s step: every gap counts in full, all engines summed.
+    const perf = { series: { 'engine-a': [[0, 40], [300, 50]], 'engine-b': [[0, 1], [300, 2]] } }
+    expect(tokensFromSeries(perf)).toBe(40 * 300 + 1 * 300)
   })
 
-  it('is missing when neither role has two samples', () => {
-    expect(tokensFromSeries({ gpu: [[0, 40]], cpu: [] })).toBeNull()
+  it('is missing when no engine has two samples', () => {
+    expect(tokensFromSeries({ series: { 'engine-a': [[0, 40]], 'engine-b': [] } })).toBeNull()
     expect(tokensFromSeries(undefined)).toBeNull()
-    expect(tokensFromSeries({ available: false })).toBeNull()
+    expect(tokensFromSeries({ available: false, series: {} })).toBeNull()
   })
 
   it('ignores gaps that run backwards in time', () => {
-    expect(tokensFromSeries({ gpu: [[0, 10], [300, 20], [150, 30]] })).toBe(10 * 300)
+    expect(tokensFromSeries({ series: { a: [[0, 10], [300, 20], [150, 30]] } })).toBe(10 * 300)
   })
 
   it('caps each interval at the request step, so a multi-step gap cannot extrapolate', () => {
@@ -68,14 +68,14 @@ describe('tokensFromSeries', () => {
     const gpu = []
     for (let t = 0; t <= 3600; t += 300) gpu.push([t, 200])
     gpu.push([14400, 200])
-    expect(tokensFromSeries({ gpu })).toBe(13 * 200 * 300)
+    expect(tokensFromSeries({ series: { a: gpu } })).toBe(13 * 200 * 300)
   })
 
   it('caps an all-sparse series at the request step, not the data\'s own gaps', () => {
     // Two isolated bursts 3 h apart and nothing else: a step derived from the data would be
     // 3 h and extrapolate 40 tok/s across the whole silent span (~432 k); the request's
     // 300 s step counts one interval per burst instead.
-    expect(tokensFromSeries({ gpu: [[0, 40], [10800, 40]] })).toBe(40 * 300)
+    expect(tokensFromSeries({ series: { a: [[0, 40], [10800, 40]] } })).toBe(40 * 300)
   })
 })
 
@@ -88,21 +88,17 @@ describe('formatTokens', () => {
   })
 })
 
-describe('speedByRole', () => {
-  it('passes provisional medians through untouched', () => {
-    const chat = {
-      gpu: { p50: 198.7, n: 500, provisional: false, model: 'a.ninfer' },
-      cpu: { p50: 10.1, n: 35, provisional: true, model: 'b.gguf' },
-    }
-    const speeds = speedByRole(chat)
-    expect(speeds.gpu).toBe(chat.gpu)
-    expect(speeds.cpu.provisional).toBe(true)
-    expect(speeds.cpu.n).toBe(35)
+describe('engines', () => {
+  it('labels known devices and passes an unknown one through', () => {
+    expect(deviceLabel('gpu')).toBe('GPU')
+    expect(deviceLabel('cpu')).toBe('CPU')
+    expect(deviceLabel('npu')).toBe('npu')
+    expect(deviceLabel(undefined)).toBe('Unknown')
   })
 
-  it('drops a role without a median', () => {
-    expect(speedByRole({ gpu: { n: 0 }, cpu: { p50: 9.2, n: 3 } })).toEqual({ cpu: { p50: 9.2, n: 3 } })
-    expect(speedByRole(undefined)).toEqual({})
+  it('finds the chat model every consumer calls: the chat engine that stands in for nothing', () => {
+    expect(primaryChatModel(ENGINES)).toBe('local-chat')
+    expect(primaryChatModel([])).toBeUndefined()
   })
 })
 
@@ -124,39 +120,47 @@ describe('vramFacts and diskFacts', () => {
   })
 })
 
+const GPU_ENGINE = { model: 'local-chat', engine: 'inference-engine-gpu', kind: 'chat', device: 'gpu',
+  fallback_for: null, state: 'serving', standing_in: false, speeds: { generation_tps: 153.2 } }
+const CPU_ENGINE = { model: 'local-chat-cpu', engine: 'inference-engine-cpu', kind: 'chat', device: 'cpu',
+  fallback_for: 'local-chat', state: 'serving', standing_in: true, speeds: { generation_tps: 13.5 } }
+const ENGINES = [GPU_ENGINE, CPU_ENGINE]
 const FULL_OVERVIEW = {
   services: { up: 4, total: 5, by_project: {
     ordo: { total: 3, up: 3, failed: 0, unhealthy: 0 },
     'min-max': { total: 2, up: 1, failed: 1, unhealthy: 0 },
   } },
-  chat: { engine: 'gpu', reason: '', gpu: { p50: 153.2, n: 500, provisional: false, first_ts: 1792303930, last_ts: 1792326263, model: 'm.ninfer' } },
-  gpus: [{ uuid: 'g1', name: 'RTX 5090', vram_used_gb: 30.8, vram_total_gb: 34.2, util_pct: 99, temp_c: 60, tenants: ['GPU chat', 'ComfyUI'], borrowed_by: [] }],
+  engines: ENGINES,
+  chat: { state: 'primary', model: GPU_ENGINE, reason: '' },
+  gpus: [{ uuid: 'g1', name: 'RTX 5090', vram_used_gb: 30.8, vram_total_gb: 34.2, util_pct: 99, temp_c: 60, tenants: ['comfyui', 'local-chat'], borrowed_by: [] }],
   host: { disk_pct: 76.0, disk_used_gb: 1520.0, disk_total_gb: 1999.8 },
 }
-const SERIES = { gpu: [[0, 40], [3600, 50]], cpu: [[0, 1], [3600, 2]] }
+const SERIES = { available: true, series: { 'inference-engine-gpu': [[0, 40], [3600, 50]], 'inference-engine-cpu': [[0, 1], [3600, 2]] } }
 
 describe('kpiTiles', () => {
   it('draws the six tiles in the spec order from a full payload', () => {
     const tiles = kpiTiles(FULL_OVERVIEW, SERIES)
-    expect(tiles.map((t) => t.key)).toEqual(['containers', 'engine', 'speed', 'tokens', 'vram', 'disk'])
-    const [containers, engine, speed, tokens, vram, disk] = tiles
+    expect(tiles.map((t) => t.key)).toEqual(['containers', 'chat', 'speed', 'tokens', 'vram', 'disk'])
+    const [containers, chat, speed, tokens, vram, disk] = tiles
     expect(containers.value).toBe('4 / 5')
     expect(containers.sub).toBe('1 failed in min-max')
     expect(containers.tone).toBe('danger')
-    expect(engine.value).toBe('GPU')
-    expect(speed.median).toMatchObject({ value: 153.2, n: 500, provisional: false })
-    expect(speed.sparkline).toBe(SERIES.gpu)
+    expect(chat.value).toBe('GPU')
+    expect(chat.sub).toBe('local-chat')
+    expect(speed.value).toBe('153')
+    expect(speed.unit).toBe('tok/s')
+    expect(speed.sparkline).toBe(SERIES.series['inference-engine-gpu'])
     expect(tokens.value).toBe('~12 k')
     expect(vram.value).toBe('90%')
     expect(vram.sub).toContain('99% compute')
-    expect(vram.sub).toContain('resident: GPU chat, ComfyUI')
+    expect(vram.sub).toContain('resident: comfyui, local-chat')
     expect(disk.value).toBe('76%')
     expect(disk.sub).toBe('1.52 / 2.00 TB')
   })
 
   it('leads the VRAM context line with the GB figure so it survives truncation', () => {
     const vram = kpiTiles(FULL_OVERVIEW, SERIES).find((t) => t.key === 'vram')
-    expect(vram.sub).toBe('30.8 / 34.2 GB · 99% compute · resident: GPU chat, ComfyUI')
+    expect(vram.sub).toBe('30.8 / 34.2 GB · 99% compute · resident: comfyui, local-chat')
   })
 
   it('omits the holders part when the GPU has neither tenants nor borrowers', () => {
@@ -166,22 +170,24 @@ describe('kpiTiles', () => {
   })
 
   it('omits a tile whose source is missing', () => {
-    const bare = { services: {}, chat: { engine: 'gpu', reason: '' }, gpus: [], host: {} }
-    expect(kpiTiles(bare, undefined).map((t) => t.key)).toEqual(['engine'])
+    const bare = { services: {}, chat: { state: 'primary', model: { ...GPU_ENGINE, speeds: null }, reason: '' }, gpus: [], host: {} }
+    expect(kpiTiles(bare, undefined).map((t) => t.key)).toEqual(['chat'])
+    expect(kpiTiles({ ...bare, chat: { state: 'unknown', model: null, reason: '' } }, undefined)).toEqual([])
     expect(kpiTiles(undefined, undefined)).toEqual([])
   })
 
   it('tones the values at their thresholds', () => {
-    const cpu = kpiTiles({ ...FULL_OVERVIEW, chat: { engine: 'cpu', reason: 'GPU busy', cpu: { p50: 9.2, n: 3, provisional: true } } }, SERIES)
-    const engine = cpu.find((t) => t.key === 'engine')
-    expect(engine.value).toBe('CPU fallback')
-    expect(engine.tone).toBe('warning')
-    expect(engine.sub).toBe('GPU busy')
-    // A provisional median passes through to the Median primitive, which carries the mark.
+    const cpu = kpiTiles({ ...FULL_OVERVIEW, chat: { state: 'fallback', model: CPU_ENGINE, reason: 'GPU lent to ComfyUI' } }, SERIES)
+    const chat = cpu.find((t) => t.key === 'chat')
+    expect(chat.value).toBe('CPU')
+    expect(chat.tone).toBe('warning')
+    expect(chat.sub).toBe('local-chat-cpu standing in · GPU lent to ComfyUI')
+    // The speed follows whoever answers, with that engine's own history.
     const speed = cpu.find((t) => t.key === 'speed')
-    expect(speed).toBeUndefined()
-    const none = kpiTiles({ ...FULL_OVERVIEW, chat: { engine: 'none', reason: 'no server' } }, SERIES)
-    expect(none.find((t) => t.key === 'engine').tone).toBe('danger')
+    expect(speed.value).toBe('13.5')
+    expect(speed.sparkline).toBe(SERIES.series['inference-engine-cpu'])
+    const none = kpiTiles({ ...FULL_OVERVIEW, chat: { state: 'none', model: null, reason: 'no server' } }, SERIES)
+    expect(none.find((t) => t.key === 'chat')).toMatchObject({ value: 'Nobody', tone: 'danger', sub: 'no server' })
     const hot = kpiTiles({ ...FULL_OVERVIEW, gpus: [{ ...FULL_OVERVIEW.gpus[0], vram_used_gb: 33.5 }] }, SERIES)
     expect(hot.find((t) => t.key === 'vram').tone).toBe('warning')
     const full = kpiTiles({ ...FULL_OVERVIEW, host: { ...FULL_OVERVIEW.host, disk_pct: 91 } }, SERIES)
@@ -209,17 +215,17 @@ describe('groupActivity', () => {
 
   it('passes the lease fields through on a GPU row', () => {
     const [group] = groupActivity([{ ts: 400, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok',
-      holder: 'ComfyUI', started: 220, ended: 400, duration_s: 180, evicted_chat: true }])
-    expect(group).toMatchObject({ holder: 'ComfyUI', duration_s: 180, evicted_chat: true })
+      holder: 'ComfyUI', started: 220, ended: 400, duration_s: 180, evicted: ['llama.cpp (GPU)'] }])
+    expect(group).toMatchObject({ holder: 'ComfyUI', duration_s: 180, evicted: ['llama.cpp (GPU)'] })
   })
 
   it('adds up a run of leases: GPU time in all, evicted when any member was', () => {
     const [group] = groupActivity([
-      { ts: 900, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok', duration_s: 120, evicted_chat: false },
-      { ts: 600, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok', duration_s: 180, evicted_chat: true },
-      { ts: 300, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok', duration_s: null, evicted_chat: false },
+      { ts: 900, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok', duration_s: 120, evicted: [] },
+      { ts: 600, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok', duration_s: 180, evicted: ['llama.cpp (GPU)'] },
+      { ts: 300, kind: 'gpu', title: 'GPU lent to ComfyUI', severity: 'ok', duration_s: null, evicted: ['whisper'] },
     ])
-    expect(group).toMatchObject({ count: 3, duration_s: 300, evicted_chat: true, ts: 900, oldestTs: 300 })
+    expect(group).toMatchObject({ count: 3, duration_s: 300, evicted: ['llama.cpp (GPU)', 'whisper'], ts: 900, oldestTs: 300 })
   })
 
   it('splits a run when the gap between members exceeds the six hour window', () => {

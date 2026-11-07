@@ -17,7 +17,7 @@ describe('the KPI band', () => {
     const overview = fixture('/api/overview')
     const series = fixture('/api/perf/series')
     const tiles = kpiTiles(overview, series)
-    expect(tiles.map((t) => t.key)).toEqual(['containers', 'engine', 'speed', 'tokens', 'vram', 'disk'])
+    expect(tiles.map((t) => t.key)).toEqual(['containers', 'chat', 'speed', 'tokens', 'vram', 'disk'])
     // Wait for the last tile, which needs the perf series as well as the overview.
     await screen.findByText('Tokens generated, 24 h')
     for (const t of tiles) {
@@ -28,8 +28,10 @@ describe('the KPI band', () => {
     }
     // The context lines carry the evidence, not just a colour.
     expect(tile('services.by_project from /api/overview').textContent).toContain('1 failed in media-stack')
-    expect(tile('chat.gpu.p50 from /api/overview').textContent).toContain('512 samples')
-    expect(tile('gpus[0] from /api/overview').textContent).toContain('resident: GPU chat, ComfyUI')
+    expect(tile('chat from /api/overview').textContent).toContain('local-chat')
+    expect(tile('inference-engine-gpu: tokens over time spent generating (ordo_engine_*)').textContent)
+      .toContain('while generating, last hour')
+    expect(tile('the chat model\'s GPU from /api/overview').textContent).toContain('resident: comfyui, local-chat')
     expect(tile('host.disk from /api/overview').textContent).toContain('1.64 / 2.00 TB')
   })
 
@@ -60,17 +62,17 @@ describe('the KPI band', () => {
     const overview = {
       ...fixture('/api/overview'),
       services: { up: 3, total: 5 },
-      chat: { engine: 'gpu', reason: '' },
+      chat: { state: 'primary', model: { ...fixture('/api/overview').engines[0], speeds: null }, reason: '' },
       gpus: [],
       host: {},
     }
-    mockApi({ 'GET /api/overview': overview, 'GET /api/perf/series': { available: false } })
+    mockApi({ 'GET /api/overview': overview, 'GET /api/perf/series': { available: false, series: {} } })
     renderInShell(<OverviewPage />)
-    await screen.findByText('Chat engine')
+    await screen.findByText('Chat answered by')
     expect(tile('services.by_project from /api/overview')).toBeNull()
-    expect(tile('chat.gpu.p50 from /api/overview')).toBeNull()
-    expect(tile('integrated /api/perf/series gpu and cpu samples')).toBeNull()
-    expect(tile('gpus[0] from /api/overview')).toBeNull()
+    expect(screen.queryByText('Chat speed')).toBeNull()
+    expect(tile('integrated /api/perf/series samples, every engine')).toBeNull()
+    expect(tile('the chat model\'s GPU from /api/overview')).toBeNull()
     expect(tile('host.disk from /api/overview')).toBeNull()
   })
 

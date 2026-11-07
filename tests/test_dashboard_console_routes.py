@@ -8,6 +8,7 @@ dependency reads as unavailable, never as zeros.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from unittest.mock import AsyncMock, patch
@@ -39,10 +40,16 @@ OPS = {
          "status": "Exited (0) 3 hours ago"},
     ]},
     "/registry/models": {"models": {
-        "local-chat": {"service": "inference-engine-gpu", "gpu_uuid": BIG, "source": {"file": GPU_FILE},
-                       "config": {"mmproj": "/models/vision.gguf"}},
-        "comfyui": {"service": "comfyui", "gpu_uuid": BIG},
-        "voice-stt": {"service": "stt", "gpu_uuid": SMALL},
+        "local-chat": {"service": "inference-engine-gpu", "kind": "chat", "gpu_uuid": BIG, "device": "gpu",
+                       "metrics": {"format": "ninfer-log"}, "fallback_for": None,
+                       "source": {"file": GPU_FILE}, "config": {"ctx": 200000, "mmproj": "/models/vision.gguf"}},
+        "local-chat-cpu": {"service": "inference-engine-cpu", "kind": "chat", "gpu_uuid": None, "device": "cpu",
+                           "metrics": {"format": "llamacpp"}, "fallback_for": "local-chat",
+                           "source": {"file": CPU_FILE}, "config": {"ctx": 200000}},
+        "comfyui": {"service": "comfyui", "kind": "image", "gpu_uuid": BIG, "device": "gpu",
+                    "metrics": {"format": "none"}, "fallback_for": None},
+        "voice-stt": {"service": "stt", "kind": "stt", "gpu_uuid": SMALL, "device": "gpu",
+                      "metrics": {"format": "none"}, "fallback_for": None},
     }},
     "/model-config": {"source_model": "auto", "active_model": "turbo", "active_file": GPU_FILE, "ctx_size": 106496,
                       "active_mmproj": "vision.gguf",
@@ -84,7 +91,12 @@ CARDS = [
      "open_url": "https://chat.example/", "ok": True, "error": None, "background": False},
     {"id": "codebase-memory", "name": "Codebase Memory", "category": "knowledge", "ops_service": "codebase-memory-ui",
      "open_url": "https://graph.example/", "ok": False, "error": "HTTP 404", "background": False},
+    {"id": "comfyui", "name": "ComfyUI", "category": "media", "ops_service": "comfyui",
+     "open_url": None, "ok": True, "error": None, "background": True},
 ]
+# ops-controller's ordo_engine_* figures, as routes_console._engine_rates reads them from Prometheus.
+RATES = {"inference-engine-gpu": {"generation_tps": 160.2, "output_tps": 0.0, "cache_reuse": 0.62},
+         "inference-engine-cpu": {"generation_tps": 13.5, "output_tps": 11.9, "prompt_tps": 140.0, "waiting": 2.0}}
 SERVED = {"gpu": None, "cpu": CPU_FILE, "embed": EMBED_FILE}
 DISK = [{"name": GPU_FILE, "size": 1}, {"name": CPU_FILE, "size": 2}, {"name": EMBED_FILE, "size": 3},
         {"name": "vision.gguf", "size": 4}, {"name": "spare.gguf", "size": 5}]
@@ -119,6 +131,7 @@ def live(dashboard_operator_headers):
          patch.object(routes_console, "_hardware", new=AsyncMock(return_value=HARDWARE)), \
          patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=CARDS)), \
          patch.object(routes_console, "_rag", new=AsyncMock(return_value={"ok": True, "points_count": 2483})), \
+         patch.object(routes_console, "_engine_rates", new=AsyncMock(return_value=RATES)), \
          patch.object(routes_console, "_throughput", new=AsyncMock(return_value=THROUGHPUT)), \
          patch.object(routes_console, "_served", new=AsyncMock(return_value=SERVED)), \
          patch.object(routes_console, "_disk_files", new=AsyncMock(return_value=DISK)), \
@@ -129,19 +142,35 @@ def live(dashboard_operator_headers):
 
 # --- overview ---
 
-def test_overview_says_chat_is_on_the_cpu_fallback_while_a_render_holds_the_gpu(live):
+def test_overview_says_chat_is_answered_by_the_stand_in_while_a_render_holds_the_gpu(live):
     body = live.get("/api/overview").json()
-    assert body["chat"]["engine"] == "cpu"
-    assert "ComfyUI" in body["chat"]["reason"]
-    # The medians come from the ROLE series: a model swap does not reset them, and each carries
-    # its sample count (the page marks a thin one provisional).
-    assert body["chat"]["cpu"]["p50"] == 2.7 and body["chat"]["cpu"]["n"] == 3
-    assert body["chat"]["cpu"]["model"] == CPU_FILE
-    # the GPU model is evicted, so nothing reports it as loaded, but its speed is still known
-    assert body["chat"]["gpu"]["p50"] == 48.6 and body["chat"]["gpu"]["n"] == 512
-    assert body["chat"]["gpu"]["model"] == GPU_FILE
+    assert body["chat"]["state"] == "fallback"
+    assert body["chat"]["model"]["model"] == "local-chat-cpu"
+    assert body["chat"]["reason"] == "GPU lent to ComfyUI"
     big = body["gpus"][0]
     assert big["name"] == "RTX 5090" and big["borrowed_by"] == ["ComfyUI"]
+
+
+def test_overview_lists_every_engine_with_its_state_and_speeds(live):
+    body = live.get("/api/overview").json()
+    engines = {e["model"]: e for e in body["engines"]}
+    assert set(engines) == {"local-chat", "local-chat-cpu", "comfyui", "voice-stt"}
+    assert [e["model"] for e in body["engines"]][:2] == ["local-chat", "local-chat-cpu"]
+    gpu, cpu = engines["local-chat"], engines["local-chat-cpu"]
+    # The GPU engine was stopped for the lease: lent, not down, and its last speed still known.
+    assert gpu["state"] == "lent" and gpu["device"] == "gpu" and gpu["file"] == GPU_FILE
+    assert gpu["speeds"]["generation_tps"] == 160.2
+    assert cpu["state"] == "serving" and cpu["standing_in"] is True and cpu["fallback_for"] == "local-chat"
+    assert cpu["speeds"] == RATES["inference-engine-cpu"]
+    assert engines["comfyui"]["measured"] is False and engines["comfyui"]["speeds"] is None
+    assert body["rates_available"] is True
+
+
+def test_overview_without_prometheus_says_the_speeds_are_unavailable(live):
+    with patch.object(routes_console, "_engine_rates", new=AsyncMock(return_value=None)):
+        body = live.get("/api/overview").json()
+    assert body["rates_available"] is False
+    assert all(e["speeds"] is None for e in body["engines"])
 
 
 def test_overview_status_counts_what_needs_attention(live):
@@ -176,7 +205,7 @@ def test_overview_carries_host_knowledge_and_links_from_the_catalog(live):
 def test_overview_with_the_control_plane_down_is_unknown_not_healthy(live):
     with patch.object(routes_console, "_ops_json", new=AsyncMock(return_value=None)):
         body = TestClient(app).get("/api/overview").json()
-    assert body["chat"]["engine"] == "unknown"
+    assert body["chat"]["state"] == "unknown"
     assert body["status"]["level"] == "unknown"
     assert body["status"]["text"] == "The control plane is not answering"
 
@@ -778,34 +807,50 @@ def test_comfyui_calls_are_skipped_when_no_gate_url_is_configured(monkeypatch):
 
 # --- performance ---
 
-def test_perf_series_returns_gpu_and_cpu_rates(live):
+def test_perf_series_returns_one_series_per_engine(live):
     matrix = {"status": "success", "data": {"resultType": "matrix", "result": [
-        {"metric": {"job": "inference-engine-gpu"}, "values": [[1000, "12.5"], [1300, "20"]]},
-        {"metric": {"job": "inference-engine-cpu"}, "values": [[1000, "0"], [1300, "2.5"]]},
+        {"metric": {"engine": "inference-engine-gpu"}, "values": [[1000, "12.5"], [1300, "20"]]},
+        {"metric": {"engine": "vendor-engine"}, "values": [[1000, "0"], [1300, "2.5"]]},
     ]}}
     with patch.object(routes_console, "_get_json", new=AsyncMock(return_value=matrix)):
         body = live.get("/api/perf/series").json()
-    assert body["available"] is True
-    assert body["gpu"] == [[1000, 12.5], [1300, 20.0]] and body["cpu"] == [[1000, 0.0], [1300, 2.5]]
+    assert body == {"available": True, "series": {"inference-engine-gpu": [[1000, 12.5], [1300, 20.0]],
+                                                  "vendor-engine": [[1000, 0.0], [1300, 2.5]]}}
 
 
-def test_perf_series_reads_the_gpu_rate_from_the_gateway_not_llama_cpp(live):
-    """NInfer serves no /metrics, so llama.cpp's counter left the GPU sparkline empty. The GPU
-    series is the gateway's output-token rate for the inference-engine-gpu:8080 deployment (either engine)."""
+def test_perf_series_reads_the_engine_family_and_names_no_engine(live):
+    """ordo_engine_* is read the engine's own way by ops-controller; the query names no engine."""
     from urllib.parse import parse_qs, urlsplit
 
     fetch = AsyncMock(return_value={"status": "success", "data": {"result": []}})
     with patch.object(routes_console, "_get_json", new=fetch):
         live.get("/api/perf/series")
     query = parse_qs(urlsplit(fetch.call_args.args[0]).query)["query"][0]
-    assert 'litellm_output_tokens_metric_total' in query and 'api_base="http://inference-engine-gpu:8080/v1"' in query
-    assert 'llamacpp:tokens_predicted_total{job="inference-engine-cpu"}' in query
+    assert "ordo_engine_output_tokens_total" in query and "inference-engine" not in query
+
+
+def test_engine_rates_parse_each_figure_by_engine():
+    def answer(value):
+        return {"status": "success", "data": {"result": [
+            {"metric": {"engine": "inference-engine-cpu"}, "value": [1, value]},
+            {"metric": {"engine": "idle-engine"}, "value": [1, "NaN"]}]}}
+
+    with patch.object(routes_console, "_get_json", new=AsyncMock(side_effect=lambda url, **kw: answer("0.6251"))):
+        rates = asyncio.run(routes_console._engine_rates())
+    assert rates["inference-engine-cpu"]["cache_reuse"] == 0.625
+    assert rates["inference-engine-cpu"]["generation_tps"] == 0.6
+    assert "idle-engine" not in rates           # no samples yet is absent, never zero
+
+
+def test_engine_rates_without_prometheus_are_none():
+    with patch.object(routes_console, "_get_json", new=AsyncMock(return_value=None)):
+        assert asyncio.run(routes_console._engine_rates()) is None
 
 
 def test_perf_series_without_prometheus_is_unavailable_not_empty(live):
     with patch.object(routes_console, "_get_json", new=AsyncMock(return_value=None)):
         body = live.get("/api/perf/series").json()
-    assert body == {"available": False, "gpu": [], "cpu": []}
+    assert body == {"available": False, "series": {}}
 
 
 def test_grafana_status_reports_reachability_and_the_embed_path(live):

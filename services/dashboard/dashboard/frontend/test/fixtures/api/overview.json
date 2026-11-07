@@ -37,8 +37,8 @@
       "util_pct": 41,
       "temp_c": 58,
       "tenants": [
-        "GPU chat",
-        "ComfyUI"
+        "comfyui",
+        "local-chat"
       ],
       "borrowed_by": []
     },
@@ -50,32 +50,134 @@
       "util_pct": 2,
       "temp_c": 44,
       "tenants": [
-        "Whisper",
-        "Kokoro"
+        "voice-stt",
+        "voice-tts"
       ],
       "borrowed_by": []
     }
   ],
-  "chat": {
-    "engine": "gpu",
-    "reason": "",
-    "gpu": {
-      "p50": 48.6,
-      "n": 512,
-      "provisional": false,
-      "first_ts": 1760000000,
-      "last_ts": 1760086400,
-      "model": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf"
+  "engines": [
+    {
+      "model": "local-chat",
+      "engine": "inference-engine-gpu",
+      "kind": "chat",
+      "device": "gpu",
+      "file": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf",
+      "ctx": 200000,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": true,
+      "standing_in": false,
+      "speeds": {
+        "output_tps": 64.7,
+        "generation_tps": 160.2,
+        "prompt_tps": 7140.0,
+        "cache_reuse": 0.62,
+        "waiting": 3.0
+      }
     },
-    "cpu": {
-      "p50": 9.2,
-      "n": 3,
-      "provisional": true,
-      "first_ts": 1760050000,
-      "last_ts": 1760086000,
-      "model": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+    {
+      "model": "local-chat-cpu",
+      "engine": "inference-engine-cpu",
+      "kind": "chat",
+      "device": "cpu",
+      "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+      "ctx": 200000,
+      "fallback_for": "local-chat",
+      "state": "serving",
+      "reason": "",
+      "measured": true,
+      "standing_in": false,
+      "speeds": {
+        "output_tps": 0.0,
+        "generation_tps": 13.5,
+        "prompt_tps": 140.0,
+        "cache_reuse": 0.78
+      }
+    },
+    {
+      "model": "local-embed",
+      "engine": "inference-engine-embed",
+      "kind": "embedding",
+      "device": "cpu",
+      "file": "embeddinggemma-2-Q8_0.gguf",
+      "ctx": 8192,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": false,
+      "standing_in": false,
+      "speeds": null
+    },
+    {
+      "model": "comfyui",
+      "engine": "comfyui",
+      "kind": "image",
+      "device": "gpu",
+      "file": null,
+      "ctx": null,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": false,
+      "standing_in": false,
+      "speeds": null
+    },
+    {
+      "model": "voice-stt",
+      "engine": "stt",
+      "kind": "stt",
+      "device": "gpu",
+      "file": "Systran/faster-whisper-base.en",
+      "ctx": null,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": false,
+      "standing_in": false,
+      "speeds": null
+    },
+    {
+      "model": "voice-tts",
+      "engine": "tts",
+      "kind": "tts",
+      "device": "gpu",
+      "file": null,
+      "ctx": null,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": false,
+      "standing_in": false,
+      "speeds": null
     }
+  ],
+  "chat": {
+    "state": "primary",
+    "model": {
+      "model": "local-chat",
+      "engine": "inference-engine-gpu",
+      "kind": "chat",
+      "device": "gpu",
+      "file": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf",
+      "ctx": 200000,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": true,
+      "standing_in": false,
+      "speeds": {
+        "output_tps": 64.7,
+        "generation_tps": 160.2,
+        "prompt_tps": 7140.0,
+        "cache_reuse": 0.62,
+        "waiting": 3.0
+      }
+    },
+    "reason": ""
   },
+  "rates_available": true,
   "attention": [
     {
       "severity": "critical",
