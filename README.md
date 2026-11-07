@@ -116,7 +116,6 @@ Every UI is published only through the front door, behind Google sign-in; APIs a
 - **Image & video** — ComfyUI workflows with scheduler-gated GPU access; large models download on demand.
 - **Agents** — a pluggable agent framework (`agent.yaml` manifests) with an included default assistant (Hermes): chat through the model gateway, tools through that gateway's `/mcp` endpoint, GPU through the scheduler.
 - **Shared tools** — MCP servers run as their own services on an internal network and are aggregated behind one `/mcp` URL on the model gateway, so host clients (Claude Code, editors) and in-stack services use the same endpoint and key.
-- **Code intelligence** — a codebase-memory service that indexes your repositories into a queryable knowledge graph, with its own UI.
 - **Unified dashboard**: five pages (Overview, Services, Models, Performance, Logs) covering stack health, per-container actions and logs, one safe GPU model switch, and an embedded Grafana performance view; plus a Ctrl/Cmd K command palette.
 - **Ops controller** — the render/scheduler control plane (internal, token-auth).
 - **Agent tracing**: optional self-hosted [Langfuse](services/langfuse/README.md): every agent turn, LLM call and tool call as a searchable trace, plus datasets and evals, with unattended first-boot setup. Opt-in; the agent fails open when it is off or down.
@@ -141,7 +140,7 @@ flowchart TB
         OPS["Ops controller<br/>render + GPU scheduler"]
         GPU[("GPU")]
         subgraph mcpnet["MCP network (ordo-mcp-net, internal)"]
-            MCPS["mcp-comfyui · mcp-orchestration · mcp-qdrant-rag<br/>mcp-searxng · mcp-codebase-memory · mcp-memory-vault"]
+            MCPS["mcp-comfyui · mcp-orchestration · mcp-qdrant-rag<br/>mcp-searxng · mcp-memory-vault"]
         end
     end
     UIs -- "own key each (Hermes · Open WebUI)" --> MG

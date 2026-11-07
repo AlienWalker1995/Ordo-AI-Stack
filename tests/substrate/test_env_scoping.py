@@ -51,7 +51,7 @@ HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
 NINFER_HW = {**HW, "gpus": [{**HW["gpus"][0], "compute_cap": "12.0"}, HW["gpus"][1]]}
 # The operator's plugin set, so every service renders.
 PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "inference-engine-cpu", "open-webui",
-           "searxng-web", "searxng", "codebase-memory-ui", "codebase-memory", "comfyui-mcp",
+           "searxng-web", "searxng", "comfyui-mcp",
            "orchestration", "hermes-dashboard", "monitoring", "memory-vault", "edge", "tailnet-names",
            "obsidian-livesync", "langfuse", "evals"]
 

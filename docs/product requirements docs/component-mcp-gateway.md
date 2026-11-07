@@ -107,7 +107,6 @@ LiteLLM namespaces tools **`<litellm_name>-<tool>`**, and Hermes prefixes its ow
 | Server | Compose service | LiteLLM name | Tool as Hermes sees it |
 |--------|-----------------|--------------|------------------------|
 | `memory-vault` | `mcp-memory-vault` | `memory_vault` | `gateway__memory_vault-read_note` |
-| `codebase-memory` | `mcp-codebase-memory` | `codebase_memory` | `gateway__codebase_memory-list_projects` |
 | `qdrant-rag` | `mcp-qdrant-rag` | `qdrant_rag` | `gateway__qdrant_rag-qdrant_search` |
 | `searxng` | `mcp-searxng` | `searxng` | `gateway__searxng-searxng_web_search` |
 
@@ -163,8 +162,7 @@ CMD ["mcp-proxy", "--host", "0.0.0.0", "--port", "9000", "--stateless", "--pass-
    declares `mcp>=1.17.0` unbounded and `mcp` 2.x breaks its imports. `supergateway` was rejected:
    its stateless mode spawns the child per request.
 
-   Two servers use the recipe: [`services/codebase-memory/Dockerfile`](../../services/codebase-memory/Dockerfile)
-   and [`services/memory-vault/Dockerfile`](../../services/memory-vault/Dockerfile).
+   [`services/memory-vault/Dockerfile`](../../services/memory-vault/Dockerfile) uses the recipe.
 
 In all three cases, finish by adding the plugin id to `ordo.yaml`'s `plugins:` list, then
 `ordo apply` (it recreates `model-gateway`, whose definition carries a digest of its MCP config).

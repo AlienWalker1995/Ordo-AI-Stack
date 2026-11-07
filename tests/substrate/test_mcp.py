@@ -161,15 +161,15 @@ def test_hosted_server_renders_no_compose_service():
     assert yaml.safe_load(render_litellm_mcp_fragment(servers))["mcp_servers"]["ext"]["url"] == "https://h.example/mcp"
 
 
-# ── Restored roster (V1→V2 migration dropped these): codebase-memory, comfyui, orchestration
+# ── Restored roster (V1→V2 migration dropped these): comfyui, orchestration
 #    must reappear in the rendered servers.json + compose services with correct wiring. ──
-RESTORED = {"codebase-memory", "comfyui", "orchestration"}
+RESTORED = {"comfyui", "orchestration"}
 
 
 def test_restored_mcp_plugins_loaded():
     mcp = {p.id for p in REGISTRY.plugins if p.kind == "mcp"}
     # plugin ids (comfyui-mcp decoupled from its server_id) — the manifests are present
-    assert {"codebase-memory", "comfyui-mcp", "orchestration"} <= mcp
+    assert {"comfyui-mcp", "orchestration"} <= mcp
 
 
 def test_restored_servers_in_rendered_registry():
@@ -201,22 +201,6 @@ def test_comfyui_server_id_decoupled_from_plugin_id():
     assert cm["timeout"] == 1800
 
 
-def test_codebase_memory_wiring():
-    rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
-    cb = next(s for s in rc.mcp_servers if s["id"] == "codebase-memory")
-    assert cb["image"] == "ordo/codebase-memory-mcp"
-    # a 100% local indexer: internal MCP network only, so only LiteLLM can reach it
-    assert cb["network"] == "internal"
-    assert cb["url"] == "http://mcp-codebase-memory:9000/mcp"
-    # no manifest healthcheck: the renderer supplies the default probe (test_compose.py)
-    assert cb["healthcheck"] == {}
-    # read-only host code-root bind (a compose ${VAR} ref) + named cache volume
-    assert "${CODE_ROOT:-/c/dev}:/c/dev:ro" in cb["volumes"]
-    assert "codebase-memory-cache:/cache" in cb["volumes"]
-    assert cb["env"]["CBM_CACHE_DIR"] == "/cache"
-    assert "index_repository" in cb["tools"] and "search_graph" in cb["tools"]
-
-
 def test_orchestration_wiring():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     orc = next(s for s in rc.mcp_servers if s["id"] == "orchestration")
@@ -232,7 +216,7 @@ def test_orchestration_wiring():
 
 
 def test_restored_images_do_not_warn():
-    # codebase-memory/comfyui/orchestration = project buildable images.
+    # comfyui/orchestration = project buildable images.
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     assert not any("placeholder" in w for w in rc.warnings)
     assert not any("not digest-pinned" in w for w in rc.warnings)
@@ -258,9 +242,6 @@ def test_restored_servers_in_written_servers_json(tmp_path):
     assert RESTORED <= ids
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
     assert {f"mcp-{i}" for i in RESTORED} <= set(c["services"])
-    # codebase-memory's declared volumes survive the write, onto its own compose service
-    cb = c["services"]["mcp-codebase-memory"]
-    assert "${CODE_ROOT:-/c/dev}:/c/dev:ro" in cb["volumes"]
 
 
 # ── server_id → plugin_id map: emitted so an operator can re-enable a disabled MCP by adding its
@@ -274,7 +255,7 @@ def test_render_builds_server_plugin_map():
     # the identity-mapped ones (server_id defaults to plugin id)
     assert m["qdrant-rag"] == "qdrant-rag" and m["searxng"] == "searxng"
     assert m["orchestration"] == "orchestration"
-    assert m["codebase-memory"] == "codebase-memory" and m["memory-vault"] == "memory-vault"
+    assert m["memory-vault"] == "memory-vault"
     # keyed by SERVER id, never the decoupled plugin id
     assert "comfyui-mcp" not in m
 
@@ -293,8 +274,7 @@ def test_write_emits_server_plugin_map_in_servers_json(tmp_path):
     render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
     m = json.loads((tmp_path / "mcp" / "servers.json").read_text())["plugin_map"]
     assert m["comfyui"] == "comfyui-mcp"
-    assert {"qdrant-rag", "searxng", "orchestration",
-            "codebase-memory", "memory-vault"} <= set(m)
+    assert {"qdrant-rag", "searxng", "orchestration", "memory-vault"} <= set(m)
     # servers.json is the ONLY file the render emits into out/mcp (no compose service mounts it anymore)
     assert [p.name for p in (tmp_path / "mcp").iterdir()] == ["servers.json"]
 

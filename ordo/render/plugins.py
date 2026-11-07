@@ -289,7 +289,7 @@ class McpSpec:
     compose service built from `image` (needs `port`, joins the internal MCP network; `healthcheck`
     is an OPTIONAL override of the renderer's default HTTP probe)
     or a hosted `url` (no container). LiteLLM registers it by URL. stdio-only upstreams are bridged
-    INSIDE their image (see services/codebase-memory/Dockerfile), never spawned by the gateway."""
+    INSIDE their image (see services/memory-vault/Dockerfile), never spawned by the gateway."""
     server_id: str
     image: str = ""
     url: str = ""

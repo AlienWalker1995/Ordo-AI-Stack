@@ -76,7 +76,7 @@ def test_background_flag_flows_through_services_endpoint(client, monkeypatch):
     for bg_id in ("rag-ingestion", "inference-engine-gpu", "qdrant", "stt", "tts"):
         assert by_id[bg_id]["background"] is True, f"{bg_id} should be background"
     # User-facing UIs (main grid) never carry a truthy background flag.
-    for ui_id in ("webui", "comfyui", "hermes", "codebase-memory-ui", "model-gateway"):
+    for ui_id in ("webui", "comfyui", "hermes", "model-gateway"):
         assert not by_id[ui_id].get("background"), f"{ui_id} must stay user-facing"
 
 
