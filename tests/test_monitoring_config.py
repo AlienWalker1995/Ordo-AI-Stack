@@ -41,7 +41,8 @@ def test_container_series_keep_their_own_service_label():
 
 def test_no_engine_is_scraped_by_name():
     """Engines are read by ops-controller from the registry; a per-engine job is a list to keep in sync
-    (and NInfer's target was down by design, since it has no /metrics)."""
+    (and NInfer's target was down by design: its /metrics has no per-phase time, so ops-controller reads
+    its request log instead)."""
     targets = [t for j in PROM["scrape_configs"] for c in j.get("static_configs", []) for t in c["targets"]]
     assert not [t for t in targets if t.startswith("inference-engine")]
 
