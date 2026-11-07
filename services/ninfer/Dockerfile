@@ -46,11 +46,14 @@ RUN git init -q \
 # Link against the toolkit's driver stub, as upstream does: the build stage has no host GPU driver.
 RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/libcuda.so.1
 
-# The RTX 5090 target (sm_120a); upstream's other target is DGX Spark, which this host is not.
+# The RTX 5090 target; upstream's other target is DGX Spark, which this host is not. The target
+# implies sm_120a and cmake refuses any other architecture for it, so the explicit value only makes
+# the image's GPU requirement visible here.
 ARG NINFER_BUILD_JOBS=8
 RUN cmake -S . -B /build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DNINFER_TARGET=rtx5090 \
+        -DCMAKE_CUDA_ARCHITECTURES=120a \
         -DNINFER_BUILD_APPS=ON \
         -DBUILD_TESTING=OFF \
         -DNINFER_BUILD_BENCHMARKS=OFF \
