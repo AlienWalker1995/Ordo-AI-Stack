@@ -6,9 +6,10 @@ OpenAI-compatible `ninfer-serve` server, at `/usr/local/bin`. A catalog model th
 names it untagged as its `backend_image`, and render fills in the tag `ordo build` recorded.
 
 ## Pins
-- **Engine:** upstream commit `d44ab58408aa389728cd8b1ee50179527e1f3e0d` (2026-09-29), fetched by
-  sha inside the build (`NINFER_COMMIT`). It is the commit the model eval built and served. Bump it
-  only after re-running the eval; the build checks that the fetched commit is exactly this sha.
+- **Engine:** upstream commit `77c2e5e273b53843f0564fb53b7bad249e7c85c0` (2026-11-07), fetched by
+  sha inside the build (`NINFER_COMMIT`); the build checks that the fetched commit is exactly this
+  sha. The weight converter (`convert/`) pins the same commit. The previous pin was `d44ab584`
+  (2026-09-29); artifacts are v3 under both.
 - **Base images:** `nvidia/cuda:13.0.2-devel-ubuntu24.04` and `-runtime-ubuntu24.04`, each pinned by
   its index digest.
 - **GPU:** sm_120a only (RTX 50 series). Upstream's CMakeLists refuses any other architecture.
@@ -35,7 +36,7 @@ Docker lacks. Never `docker build` it by hand: a hand tag is invisible to the st
 
 ## Converting weights
 `convert/` converts a source checkpoint into a `.ninfer` artifact with upstream's own converter, or (a `<name>.upgrade` recipe) upgrades a published v2 artifact to v3 with upstream's offline upgrade tool,
-(`python -m tools.convert`, [docs/weight-conversion.md](https://github.com/Neroued/ninfer/blob/d44ab58408aa389728cd8b1ee50179527e1f3e0d/docs/weight-conversion.md))
+(`python -m tools.convert`, [docs/weight-conversion.md](https://github.com/Neroued/ninfer/blob/77c2e5e273b53843f0564fb53b7bad249e7c85c0/docs/weight-conversion.md))
 at the same engine commit this image serves, on the CPU only. Each artifact is two files in
 `convert/inputs/`:
 - `<name>.sources`: every input file with its sha256 and its source URL at a pinned revision;

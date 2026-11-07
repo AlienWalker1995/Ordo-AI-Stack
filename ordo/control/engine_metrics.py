@@ -14,10 +14,12 @@ engine, a CPU engine and any engine a plugin adds with the same definitions:
 
 Readers:
   llamacpp     the llama.cpp server's own /metrics (`--metrics`).
-  ninfer-log   NInfer's request log, read from the container with `docker logs --since`. This is a
-               TEMPORARY reader: NInfer has no metrics endpoint yet, and the durable fix is one
-               upstream. Its counters start at zero when ops-controller starts (Prometheus' rate()
-               handles the reset).
+  ninfer-log   NInfer's request log, read from the container with `docker logs --since`. NInfer
+               serves Prometheus /metrics since upstream abb7f14f, but it has no per-phase time:
+               its TTFT histogram settles at the first token and its duration and queue histograms
+               at the end, so prompt and generation seconds cannot be told apart from it. Each done
+               line carries all of them for one request, so this reader stays. Its counters start
+               at zero when ops-controller starts (Prometheus' rate() handles the reset).
 
 A reader that fails reports the engine as down (`ordo_engine_up 0`) and leaves its counters out,
 never zeroed, so a broken reader cannot look like an idle engine.

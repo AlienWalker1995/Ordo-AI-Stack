@@ -845,7 +845,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     gpu_chat_svc = _svc(gpu_chat_img, net=net, gpu=uses_cuda)
     if chat_backend == "llama.cpp":
         # always-on Prometheus metrics endpoint (the monitoring plugin's prometheus scrapes it).
-        # NInfer has no Prometheus endpoint; ops-controller's chat probe covers its liveness.
+        # NInfer serves /metrics without a flag; ops-controller reads its request log instead
+        # (ordo/control/engine_metrics.py) and its chat probe covers its liveness.
         gpu_chat_svc["command"] = [LLAMACPP_METRICS_ARG]
     # Pin the compute service to the PRIMARY card by uuid (V1 does this in gpu-assignments.yml).
     # Without the CUDA_VISIBLE_DEVICES pin, on a dual-GPU WSL2 box `count: all` lets llama.cpp see
@@ -883,8 +884,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     # Its entrypoint script is read at start: an edit recreates it (ordo/render/bind_configs.py).
     bind_configs.add_labels("inference-engine-gpu", gpu_chat_svc, ["/llamacpp-scripts"])
     # The core chat engine is declared here, not in a manifest. Its device follows the backend
-    # wiring above (a CPU-only host runs it on CPU); NInfer has no metrics endpoint yet, so its
-    # throughput is read from its request log (engines.METRICS_FORMATS).
+    # wiring above (a CPU-only host runs it on CPU). NInfer's throughput is read from its request
+    # log, which has the per-request timings its /metrics lacks (engines.METRICS_FORMATS).
     engines.stamp(gpu_chat_svc, engines.Serves(
         model="local-chat", kind="chat", port=8080,
         metrics="llamacpp" if chat_backend == "llama.cpp" else "ninfer-log"))

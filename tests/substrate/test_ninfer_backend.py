@@ -60,7 +60,7 @@ def test_the_ninfer_entry_pins_the_official_v3_artifact():
     assert model.sha256 == "74d2c57145e6ff11d1d2faa79594477f9bc903a611af1fb20218189fbbb77d82"
     assert model.size_bytes == 23719715844
     assert "/resolve/a107ba1b5b0609d9ca90d5ed61439f5f5cc7d64d/" in model.source
-    for flag in ("--kv-dtype fp8", "--spec mtp", "--draft-tokens 3", "--lm-head-draft", "--preserve-thinking",
+    for flag in ("--kv-dtype fp8", "--spec mtp", "--draft-tokens 3", "--proposal-head optimized", "--preserve-thinking",
                  "--max-concurrency 1"):
         assert flag in model.extra_args
     assert model.vision is False and model.vision_max_context == 200000
@@ -216,7 +216,7 @@ def test_every_ninfer_entry_queues_on_the_gpu_instead_of_failing_over_to_the_cpu
     for model in entries:
         assert "--max-concurrency 1" in model.extra_args, model.id
         pending = re.search(r"--max-pending-requests (\d+)", model.extra_args)
-        timeout = re.search(r"--pending-timeout-ms (\d+)", model.extra_args)
+        timeout = re.search(r"--pending-timeout (\d+)\b", model.extra_args)
         assert pending and int(pending.group(1)) >= 64, model.id
         assert timeout and 1200000 <= int(timeout.group(1)) < gateway_timeout_ms, model.id
 

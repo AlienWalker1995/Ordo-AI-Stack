@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 
 # Must equal NINFER_COMMIT in services/ninfer/Dockerfile: an artifact is converted by the same
 # engine revision that serves it. The build checks the fetched commit is exactly this sha.
-ARG NINFER_COMMIT=d44ab58408aa389728cd8b1ee50179527e1f3e0d
+ARG NINFER_COMMIT=77c2e5e273b53843f0564fb53b7bad249e7c85c0
 WORKDIR /ninfer
 RUN git init -q \
     && git remote add origin https://github.com/Neroued/ninfer \
