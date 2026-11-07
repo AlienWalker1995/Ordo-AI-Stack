@@ -363,12 +363,23 @@ def test_only_ops_controller_the_agent_and_the_log_proxy_mount_the_docker_socket
 
 
 def test_the_log_proxy_is_read_only_and_reachable_by_alloy_alone():
-    """A container listing carries every container's environment, so the Docker API proxy Alloy reads
-    logs through must allow no writes and must not sit on the stack network every service shares."""
+    """Inspect carries every container's environment, and an "all of /containers" grant would also allow
+    /containers/{id}/archive (any file in any container). So the proxy allows only the paths Alloy calls,
+    only GET/HEAD, only from Alloy, and never sits on the stack network every service shares."""
+    import re
+
     c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
     proxy = c["services"]["docker-socket-proxy"]
-    assert proxy["environment"]["POST"] == "0"
+    allow = {a.partition("=")[0]: a.partition("=")[2] for a in proxy["command"] if a.startswith("-allow")}
+    assert set(allow) == {"-allowfrom", "-allowHEAD", "-allowGET", "-allowhealthcheck"}
+    assert allow["-allowfrom"] == "alloy"
+    get = re.compile(allow["-allowGET"])
+    for path in ("/v1.47/containers/json", "/containers/abc123/logs", "/v1.47/containers/abc123/json", "/networks"):
+        assert get.fullmatch(path), path
+    for path in ("/containers/abc123/archive", "/containers/abc123/export", "/images/json", "/info", "/secrets"):
+        assert not get.fullmatch(path), path
     assert "/var/run/docker.sock:/var/run/docker.sock:ro" in proxy["volumes"]
+    assert proxy["group_add"] == ["0"]  # the socket's group, instead of running the proxy as root
     (private,) = proxy["networks"]
     assert c["networks"][private]["internal"] is True
     peers = sorted(n for n, s in c["services"].items() if private in (s.get("networks") or []))
@@ -820,3 +831,21 @@ def test_every_service_rotates_its_container_log():
         assert service["logging"] == {"driver": "json-file", "options": {"max-size": "20m", "max-file": "5"}}, name
     first, second = list(c["services"].values())[:2]
     assert first["logging"] is not second["logging"], "one dict per service, no yaml anchors"
+
+
+def test_a_gate_enforced_service_cannot_declare_networks():
+    """The gate decides a gated service's networks (a private upstream network only it joins), so a
+    manifest that also lists `networks:` is refused rather than silently overridden."""
+    import dataclasses
+
+    import pytest
+
+    from ordo.render import gpu
+
+    rc = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY)
+    claim = gpu.gated_claims(rc.gpu_inventory())[0]
+    plugin, service = next((p, s) for p in REGISTRY.plugins for s in p.services if s.name == claim.service)
+    declared = dataclasses.replace(service, networks=("stack", "private"))
+    with pytest.raises(ValueError, match="networks"):
+        compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[],
+                               plugin_services=[(plugin, declared)], gpu_claims={claim.service: claim})

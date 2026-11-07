@@ -179,6 +179,9 @@ class PluginService:
     # by one peer and nobody else (the log shipper's read-only Docker API proxy) lists only its
     # private network. Default: the stack network alone.
     networks: tuple[str, ...] = ("stack",)
+    # compose `group_add`: extra groups for the container's user, e.g. "0" so a non-root image can
+    # open Docker Desktop's root:root, mode-660 socket without running as root.
+    group_add: tuple[str, ...] = ()
     # compose `entrypoint` - REPLACES the image's baked ENTRYPOINT (`command` only replaces CMD).
     # Exec form (a list) so there is no shell word-splitting ambiguity; a shell one-liner is
     # written explicitly as ["sh", "-c", "…"]. Needed by images that must run a setup step before
@@ -254,6 +257,7 @@ class PluginService:
             shm_size=str(d.get("shm_size", "")),
             network_mode=str(d.get("network_mode", "")),
             networks=parse_networks(where, d.get("networks"), network_mode=str(d.get("network_mode", ""))),
+            group_add=tuple(str(g) for g in (d.get("group_add", []) or [])),
             entrypoint=[str(e) for e in (d.get("entrypoint", []) or [])],
             security_opt=[str(o) for o in (d.get("security_opt", []) or [])],
             ulimits=dict(d.get("ulimits", {}) or {}),

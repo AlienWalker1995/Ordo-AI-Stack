@@ -707,6 +707,8 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
         s["command"] = list(ps.command)
     if ps.volumes:
         s["volumes"] = list(ps.volumes)
+    if ps.group_add:
+        s["group_add"] = list(ps.group_add)
     if ps.healthcheck:
         s["healthcheck"] = dict(ps.healthcheck)
     dep = _depends_on(ps.depends_on)
