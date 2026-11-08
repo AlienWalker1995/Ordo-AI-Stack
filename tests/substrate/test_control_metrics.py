@@ -206,64 +206,73 @@ def test_metrics_reads_the_hand_edited_files_of_a_declaring_container(plane):
     container = plane.broker.backend.project_containers["mcp-comfyui"]
     container.immutable_roots = ("/opt/app",)
     container.immutable_changes = ["/opt/app/a.py", "/opt/app/b.py"]
+    plane.metrics.refresh_immutable_changes()
     got = _samples(plane.metrics_text())
     assert got[("ordo_container_immutable_files_changed", (("service", "mcp-comfyui"),))] == 2
     assert ("ordo_container_immutable_files_changed", (("service", "inference-engine-gpu"),)) not in got
 
 
-def test_the_immutable_changes_reading_is_reused_until_it_is_stale(plane, monkeypatch):
-    """`docker diff` costs seconds, so one reading serves scrapes for IMMUTABLE_CHANGES_MAX_AGE_SECONDS;
-    a failed reading is never kept."""
-    calls = []
-    readings = iter([RuntimeError("docker diff timed out"), {"agent": 1}, {"agent": 5}])
+def test_a_scrape_never_runs_docker_diff(plane, monkeypatch):
+    """`docker diff` of the agent took 44 s on 2026-11-08. Read inline, it pushed every scrape past
+    Prometheus's 30 s timeout and took the whole ops-controller target, and so every container alert,
+    down. A scrape reads the reader thread's last reading from memory and nothing else."""
+    monkeypatch.setattr(plane.broker.backend, "running_container_ids", lambda: {"agent": "id-1"})
+    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", lambda: {"agent": 2})
+    plane.metrics.refresh_immutable_changes()
 
-    def read():
-        calls.append(None)
-        reading = next(readings)
-        if isinstance(reading, Exception):
-            raise reading
-        return reading
+    def diff_during_scrape():
+        raise AssertionError("a scrape ran docker diff")
 
+    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", diff_during_scrape)
+    key = ("ordo_container_immutable_files_changed", (("service", "agent"),))
+    assert _samples(plane.metrics_text())[key] == 2
+
+
+def test_no_reading_yet_or_a_failed_one_is_a_failed_collector_never_a_zero(plane, monkeypatch):
+    collector_ok = ("ordo_metrics_collector_ok", (("collector", "immutable_paths"),))
+    assert _samples(plane.metrics_text())[collector_ok] == 0      # the thread has not read yet
+    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", lambda: {"agent": 1})
+    plane.metrics.refresh_immutable_changes()
+    assert _samples(plane.metrics_text())[collector_ok] == 1
+
+    def timed_out():
+        raise TimeoutError("docker diff timed out after 180 seconds")
+
+    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", timed_out)
+    plane.metrics.refresh_immutable_changes()
+    got = _samples(plane.metrics_text())
+    assert got[collector_ok] == 0, "a failed reading clears the last count instead of serving it as current"
+    assert ("ordo_container_immutable_files_changed", (("service", "agent"),)) not in got
+
+
+def test_a_reading_the_thread_stopped_refreshing_goes_stale(plane, monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(metrics.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", read)
+    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", lambda: {"agent": 1})
+    plane.metrics.refresh_immutable_changes()
     key = ("ordo_container_immutable_files_changed", (("service", "agent"),))
-    assert key not in _samples(plane.metrics_text())             # failed: not kept
-    assert _samples(plane.metrics_text())[key] == 1               # read again at once
-    clock[0] += metrics.IMMUTABLE_CHANGES_MAX_AGE_SECONDS - 1
-    assert _samples(plane.metrics_text())[key] == 1               # still fresh: reused
-    clock[0] += 2
-    assert _samples(plane.metrics_text())[key] == 5               # stale: read again
-    assert len(calls) == 3
+    clock[0] += metrics.IMMUTABLE_CHANGES_STALE_SECONDS
+    assert _samples(plane.metrics_text())[key] == 1
+    clock[0] += 1
+    assert key not in _samples(plane.metrics_text())
 
 
-def test_a_recreated_container_invalidates_the_cached_immutable_reading(plane, monkeypatch):
-    """The cache is keyed on the containers it describes, not wall-clock age alone: after
-    `ordo recreate hermes` — the step the alert's own description tells the operator to run —
-    the old nonzero count must not keep paging a clean new container until the age expires."""
-    calls = []
-    readings = iter([{"agent": 3}, {"agent": 0}])
-
-    def read():
-        calls.append(None)
-        return next(readings)
-
-    ids = [{"agent": "old-container-id"}]
-
-    def container_ids():
-        return dict(ids[0])
-
-    clock = [1000.0]
-    monkeypatch.setattr(metrics.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", read)
-    monkeypatch.setattr(plane.broker.backend, "running_container_ids", container_ids)
-    key = ("ordo_container_immutable_files_changed", (("service", "agent"),))
-    assert _samples(plane.metrics_text())[key] == 3
-    clock[0] += 10
-    assert _samples(plane.metrics_text())[key] == 3, "same container inside the window: reused"
-    ids[0] = {"agent": "new-container-id"}                        # `ordo recreate hermes`
-    assert _samples(plane.metrics_text())[key] == 0, "recreate: read at once, no stale page"
-    assert len(calls) == 2
+def test_a_recreated_container_drops_its_old_count_and_wakes_the_reader(plane, monkeypatch):
+    """After `ordo recreate hermes`, the step the alert's own description tells the operator to run,
+    the old nonzero count must not keep paging a clean new container until the next reading."""
+    ids = [{"agent": "old-container-id", "caddy": "caddy-id"}]
+    monkeypatch.setattr(plane.broker.backend, "running_container_ids", lambda: dict(ids[0]))
+    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", lambda: {"agent": 3, "caddy": 1})
+    plane.metrics.refresh_immutable_changes()
+    agent = ("ordo_container_immutable_files_changed", (("service", "agent"),))
+    caddy = ("ordo_container_immutable_files_changed", (("service", "caddy"),))
+    assert _samples(plane.metrics_text())[agent] == 3
+    assert not plane.metrics.immutable_refresh_wanted.is_set()
+    ids[0] = {"agent": "new-container-id", "caddy": "caddy-id"}   # `ordo recreate hermes`
+    got = _samples(plane.metrics_text())
+    assert agent not in got, "recreate: no stale page for the new container"
+    assert got[caddy] == 1, "an unchanged container keeps its count"
+    assert plane.metrics.immutable_refresh_wanted.is_set()
 
 
 def test_a_failing_docker_still_serves_the_rest(plane, monkeypatch):

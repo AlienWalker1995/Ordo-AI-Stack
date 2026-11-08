@@ -370,6 +370,8 @@ def test_metrics_answers_as_recorded(world, tmp_path, plane, method, token):
     world.setattr(metrics, "read_cert_not_after", lambda path: 1_797_981_483.0)
     cp = _plane(tmp_path / "metrics", plane, world, disk_paths={"docker": "/", "host": "/config"},
                 tls_cert_files={"edge": "/certs/edge.pem"})
+    # serve.py's reader thread takes the immutable-path reading; a scrape only reads it from memory.
+    cp.metrics.refresh_immutable_changes()
     client = TestClient(cp.app(auth_token="characterization-token"), raise_server_exceptions=False)
     headers = {"Authorization": "Bearer characterization-token"} if token else {}
     response = client.request(method, "/metrics", headers=headers)

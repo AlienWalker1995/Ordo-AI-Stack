@@ -21,6 +21,7 @@ from ..render.plugins import PluginRegistry
 from ..secret_env import SecretFileError, read_secret
 from . import principals
 from .comfyui_reclaim import SWEEP_SECONDS as COMFYUI_RECLAIM_SECONDS
+from .metrics import IMMUTABLE_CHANGES_REFRESH_SECONDS
 
 # How often ops-controller looks for netns members a Docker daemon restart left stopped
 # (ordo/control/netns_repair.py): a dashboard name is back within this long of its owner.
@@ -119,6 +120,17 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
 
     if cp.netns_repair is not None:
         threading.Thread(target=_netns_loop, daemon=True, name="netns-repair").start()
+
+    # The immutable-path reading for GET /metrics (metrics.py). Its own thread: `docker diff` can take
+    # longer than Prometheus waits for a scrape, so a scrape only reads the last reading.
+    def _immutable_changes_loop() -> None:
+        while True:
+            cp.metrics.refresh_immutable_changes()
+            cp.metrics.immutable_refresh_wanted.wait(IMMUTABLE_CHANGES_REFRESH_SECONDS)
+            cp.metrics.immutable_refresh_wanted.clear()
+
+    if cp.metrics.broker is not None:
+        threading.Thread(target=_immutable_changes_loop, daemon=True, name="immutable-changes").start()
 
     # The GPU chat service's liveness, for GET /lease and /metrics. Its own thread: a probe of a
     # loading or evicted engine waits out its timeout and must never delay the lease clock.

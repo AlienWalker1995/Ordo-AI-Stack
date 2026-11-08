@@ -1362,8 +1362,10 @@ class DockerBackend:
             if not (service and roots):
                 continue
             try:
+                # Off the scrape path (metrics.py reads this on its own thread), so the timeout only
+                # bounds a wedged daemon: the agent's diff took 44 s on 2026-11-08.
                 diff = subprocess.run(["docker", "diff", container_id], capture_output=True, text=True,
-                                      encoding="utf-8", errors="replace", timeout=30, check=True)
+                                      encoding="utf-8", errors="replace", timeout=180, check=True)
             except subprocess.CalledProcessError as e:
                 logger.warning("metrics: %s vanished before its diff (%s); skipping it this scrape",
                                container_id[:12], (e.stderr or "").strip()[:120])
