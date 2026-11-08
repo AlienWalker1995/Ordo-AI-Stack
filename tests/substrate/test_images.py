@@ -836,6 +836,21 @@ def test_a_step_that_fails_fails_the_prune_but_the_rest_still_runs(tmp_path):
     assert docker.pruned == ["dangling", f"cache<={images.BUILD_CACHE_MAX}"]
 
 
+def test_the_build_cache_trim_uses_the_flag_both_builders_accept(monkeypatch):
+    # --keep-storage, not --max-used-space (buildx-only): a docker CLI without the buildx plugin
+    # runs the legacy builder, which rejects it (exit 125, unknown flag).
+    ran: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+
+    monkeypatch.setattr("ordo.host.images.subprocess.run",
+                        lambda cmd, *a, **kw: ran.append(list(cmd)) or Result())
+    assert images.Pruner().prune_build_cache(images.BUILD_CACHE_MAX) is True
+    assert ran == [["docker", "builder", "prune", "--force", "--keep-storage", images.BUILD_CACHE_MAX]]
+
+
 def test_docker_creation_stamps_read_with_nanoseconds():
     assert images._epoch("2026-11-07T23:07:56.123456789Z") == pytest.approx(1794092876.123456)
     assert images._epoch("2026-11-07T23:07:56Z") == 1794092876.0
