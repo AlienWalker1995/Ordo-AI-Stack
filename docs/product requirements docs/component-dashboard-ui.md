@@ -20,7 +20,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/hardware/service-pressure` | GET | None | Per-container CPU/RAM; VRAM null until ops-controller measures it; unmeasured values are null with a `reason` |
 | `/api/overview` | GET | None | Status line, GPUs and who holds them, chat engine, attention items, host (Overview page) |
 | `/api/activity` | GET | None | Renders, GPU leases and operator actions, newest first |
-| `/api/services/table` | GET | None | Every container on the host as one flat list: verdict, control kind (`ordo`, `managed`, `host`, `link`, `none`) and allowed actions (Services page) |
+| `/api/services/table` | GET | None | Every container on the host: verdict, control kind (`ordo`, `managed`, `host`, `link`, `group`, `none`) and allowed actions; a service's containers nest under its row (`parent` names it), which carries `group_verdict`, the worst state across the group (Services page) |
 | `/api/ops/services/{id}/start` | POST | Y | Start service (via ops-controller) |
 | `/api/ops/services/{id}/stop` | POST | Y | Stop service |
 | `/api/ops/services/{id}/restart` | POST | Y | Restart service |

@@ -221,7 +221,7 @@ def _read_manifest() -> dict | None:
 
 
 def load_service_groups() -> list[dict]:
-    """The manifest's `service_groups` (ordo/render/engine.py RenderContext.service_groups): which
+    """The manifest's `service_groups` (ordo/render/engine.py RenderedConfig.service_groups): which
     containers make up one service. Empty when the manifest is unavailable, so the Services page
     falls back to one row per container rather than failing."""
     groups = (_read_manifest() or {}).get("service_groups")
