@@ -314,25 +314,34 @@ def container_health_check(project: str, *, rendered_services: set[str] | frozen
                            clock: Callable[[], float] = time.monotonic) -> tuple[bool, str]:
     """(ok, one-line report) on every container's state and health.
 
-    Waits up to `settle_seconds` while a healthcheck is still in its start period, so the check that
-    ends an apply judges the services it just recreated instead of their first seconds.
+    Waits up to `settle_seconds` while a RUNNING container's healthcheck is still in its start period,
+    so the check that ends an apply judges the services it just recreated instead of their first
+    seconds. A stopped container's health status is frozen at whatever it was when it stopped (Docker
+    persists the last health state until it starts again), so its healthcheck is not running and there
+    is nothing to settle for it — waiting on it held the whole window open on every doctor run.
 
-    A stopped container of a service the render no longer defines (a removed plugin's, which apply
+    An exited container of a service the render no longer defines (a removed plugin's, which apply
     stops but does not delete, so its volumes stay) is not judged: it is listed in the report instead.
-    Its last health status is frozen at whatever it was when it stopped, so judging it failed every
-    apply after a plugin removal (2026-11-08). A leftover that is still running is judged as usual."""
+    Judging it failed every apply after a plugin removal (2026-11-08). A leftover that is still
+    running is judged as usual, and a leftover in another non-running state (restarting, dead) is
+    judged too — it is an anomaly, not a benign stopped leftover."""
     # Looked up at call time (not a default argument) so a test can replace the module's reader.
     read = read or read_container_states
     deadline = clock() + settle_seconds
     try:
         rows = read(project)
-        while any(r["health"] == "starting" for r in rows) and clock() < deadline:
+        # Only a running container's healthcheck can be in its start period; a stopped one's health
+        # status is frozen, so it would otherwise hold the whole settle window open forever.
+        while any(r["health"] == "starting" and r["state"] == "running" for r in rows) and clock() < deadline:
             sleep(CONTAINER_SETTLE_POLL_SECONDS)
             rows = read(project)
     except ContainerUnreadable as e:
         return False, f"! containers: cannot read them ({e})"
+    # A benign leftover is an EXITED container of a removed service (apply stops it, keeps its
+    # volumes). A leftover in another non-running state (restarting, dead) is an anomaly and is
+    # judged below instead of listed as "stopped".
     leftovers = sorted(r["service"] for r in rows
-                       if r["service"] not in rendered_services and r["state"] != "running" and not r["oneoff"])
+                       if r["service"] not in rendered_services and r["state"] == "exited" and not r["oneoff"])
     judged = [r for r in rows if r["service"] not in leftovers]
     leftover_note = (f"; stopped, no longer rendered: {', '.join(leftovers)} (`docker rm` them to clear)"
                      if leftovers else "")

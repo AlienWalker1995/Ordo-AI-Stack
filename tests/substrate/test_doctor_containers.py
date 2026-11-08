@@ -86,3 +86,35 @@ def test_a_rendered_service_that_stopped_is_still_a_problem():
     rows = [_row("couchdb", state="exited", health="unhealthy", exit_code=1)]
     ok, line = doctor.container_health_check("ordo", rendered_services=RENDERED, read=lambda p: rows)
     assert not ok and "couchdb is unhealthy" in line
+
+
+def test_a_stopped_leftover_frozen_at_starting_does_not_hold_the_settle_window():
+    """A removed plugin's container stopped mid-start keeps its health status frozen at 'starting'
+    (Docker persists the last health state until it starts again). It is not judged, and it must not
+    hold the whole settle window open on every doctor run (2026-11-08 review)."""
+    rows = [_row("couchdb"), _row("codebase-memory-ui", state="exited", health="starting")]
+    slept = []
+    ticks = iter(range(0, 10_000, 10))
+    ok, line = doctor.container_health_check("ordo", rendered_services=RENDERED, read=lambda p: rows,
+                                             sleep=slept.append, clock=lambda: float(next(ticks)))
+    assert ok, line
+    assert len(slept) == 0
+    assert "stopped, no longer rendered: codebase-memory-ui" in line
+
+
+def test_a_restarting_leftover_is_judged_not_listed_as_stopped():
+    """A leftover in 'restarting' state is an anomaly, not a benign stopped leftover: it is judged and
+    reported as a problem instead of landing in the 'stopped, no longer rendered' list."""
+    rows = [_row("couchdb"), _row("codebase-memory-ui", state="restarting", health=None)]
+    ok, line = doctor.container_health_check("ordo", rendered_services=RENDERED, read=lambda p: rows)
+    assert not ok, line
+    assert "codebase-memory-ui is restarting" in line
+    assert "stopped, no longer rendered" not in line
+
+
+def test_a_dead_leftover_is_judged_not_listed_as_stopped():
+    rows = [_row("couchdb"), _row("codebase-memory-ui", state="dead", health=None)]
+    ok, line = doctor.container_health_check("ordo", rendered_services=RENDERED, read=lambda p: rows)
+    assert not ok, line
+    assert "codebase-memory-ui is dead" in line
+    assert "stopped, no longer rendered" not in line
