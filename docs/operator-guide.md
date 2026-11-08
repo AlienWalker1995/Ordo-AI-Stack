@@ -92,6 +92,12 @@ model-gateway, gpu-gate, the dashboard, the agent, the MCP adapters) are built f
 - Every render (yours, and ops-controller's on a model switch) writes the recorded tag into the
   compose `image:` field, or `current` for an image not built yet. The compose therefore names the
   exact build each service runs, and `docker inspect` on a container shows its commit.
+- `ordo prune-images` drops what retention no longer keeps: first-party builds the stack no longer
+  runs (kept: every tag of an image a container uses, the tag `out/images.json` records plus
+  `:current`, and one previous build per image), the upstream pulls a digest bump leaves behind,
+  dangling images, and build cache past 30 GB. `--dry-run` prints the plan without removing
+  anything. `ordo deploy` runs it after every successful deploy; a failed cleanup is reported,
+  never a failed deploy.
 
 ### Deploying: `ordo apply`
 
@@ -137,8 +143,9 @@ remain for single steps; a deploy is `ordo apply`.
 ### Following main: `ordo deploy`
 
 `ordo deploy` is one pass of keeping the stack on `origin/main`: when main moved since the last
-deploy, it fast-forwards the checkout, runs `ordo build --all`, then `ordo apply`. It waits instead
-(and tries again on the next pass) while any of these holds:
+deploy, it fast-forwards the checkout, runs `ordo build --all`, then `ordo apply`, then
+`ordo prune-images` (best effort: a failed cleanup is reported, never a failed deploy). It waits
+instead (and tries again on the next pass) while any of these holds:
 
 - the checkout is not on `main` (do feature work in a worktree, not in the deploy checkout);
 - the checkout has uncommitted changes to tracked files, or commits that are not on `origin/main`

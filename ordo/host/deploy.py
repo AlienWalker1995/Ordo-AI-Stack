@@ -23,9 +23,9 @@ every few minutes (`ordo deploy --install-schedule` registers it). Each run is o
   3. fast-forward the checkout, `ordo build --all`, check the gates again (a build takes minutes),
      then `ordo apply`, which ends with `ordo doctor`
   4. record the result in <out>/deploy/state.json and post it to the operator's Discord channel
-  5. after a successful deploy, `ordo prune-images`: the builds the stack no longer runs, dangling
-     images, and build cache past its cap (ordo/host/images.py). Best effort: a failed cleanup is
-     reported, never a failed deploy
+  5. after a successful deploy, `ordo prune-images`: the first-party builds and superseded upstream
+     pulls the stack no longer runs, dangling images, and build cache past its cap
+     (ordo/host/images.py). Best effort: a failed cleanup is reported, never a failed deploy
 
 A failed deploy is reported once and not retried: the fix is a new commit on main (a revert, or a
 fix), which the next run deploys. A deploy that has waited an hour is reported once, with the gate

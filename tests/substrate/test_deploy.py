@@ -1146,3 +1146,26 @@ def test_a_failed_cleanup_is_reported_and_the_deploy_still_counts(tmp_path, fail
     # Recorded as deployed: the next pass does nothing, and does not clean up again.
     assert deploy.run_once(host, out=tmp_path, now=2000.0) == 0
     assert host.prunes == 1
+
+
+def test_the_argv_the_deploy_builds_for_prune_images_parses_in_the_cli(tmp_path, monkeypatch):
+    # RealHost._ordo appends --out/--project to every command it runs; the CLI must accept that
+    # argv (the subparser once lacked --project, so every post-deploy cleanup died with exit 2).
+    from ordo import cli
+    from ordo.host import cli_stack
+
+    host = deploy.RealHost(out=tmp_path, project="ordo")
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(deploy.subprocess, "run", fake_run)
+    assert host.prune_images(tmp_path / "log.txt") == 0
+    argv = seen[0][3:]   # [sys.executable, "-m", "ordo"] + the command's argv
+
+    parsed: dict = {}
+    monkeypatch.setattr(cli_stack, "cmd_prune_images", lambda args: parsed.update(vars(args)) or 0)
+    assert cli.main(argv) == 0
+    assert parsed["out"] == str(tmp_path) and parsed["project"] == "ordo"

@@ -519,7 +519,9 @@ class Pruner:
         return self._ok(["docker", "image", "prune", "--force"])
 
     def prune_build_cache(self, max_used: str) -> bool:
-        return self._ok(["docker", "builder", "prune", "--force", "--max-used-space", max_used])
+        # --keep-storage, not --max-used-space: the latter is buildx-only, and a docker CLI without
+        # the buildx plugin runs the legacy builder, which rejects it (exit 125, unknown flag).
+        return self._ok(["docker", "builder", "prune", "--force", "--keep-storage", max_used])
 
 
 def prune_images(out_dir: str | Path, *, docker: PrunerLike, dry_run: bool = False) -> int:

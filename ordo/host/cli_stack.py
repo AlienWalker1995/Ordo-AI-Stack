@@ -346,7 +346,8 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 
 def cmd_prune_images(args: argparse.Namespace) -> int:
-    """`ordo prune-images`: retention for first-party builds (ordo/host/images.py)."""
+    """`ordo prune-images`: retention for first-party builds and superseded upstream pulls
+    (ordo/host/images.py)."""
     return images.run_prune(args.out, dry_run=args.dry_run)
 
 
