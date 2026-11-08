@@ -47,6 +47,11 @@ CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 IMMUTABLE_CHANGES_REFRESH_SECONDS = 300.0
 # A reading older than this is unknown, not "still clean": the reader thread died or wedged.
 IMMUTABLE_CHANGES_STALE_SECONDS = 3 * IMMUTABLE_CHANGES_REFRESH_SECONDS
+# How soon a failed reading is retried: short enough that a transient docker hiccup (a daemon
+# restart, a socket timeout) does not leave the ImmutableFilesModified alert blind for the full
+# interval; before this PR the next scrape (~15 s later) retried, so recovery stays within two of
+# Prometheus's 15 s scrapes.
+IMMUTABLE_CHANGES_RETRY_SECONDS = 30.0
 
 # The filesystems ops-controller reports, by the `mount` label the alert rules use.
 #   docker: the container's own root, which lives on the Docker data disk (on Docker Desktop, the
@@ -321,13 +326,15 @@ class MetricsCollector:
         # Set by a scrape that sees the containers changed, so the reader thread reads again now.
         self.immutable_refresh_wanted = threading.Event()
 
-    def refresh_immutable_changes(self) -> None:
-        """Take one immutable-path reading. Called by its own thread (serve.py), never by a scrape.
-        A failed reading clears the last one, so the collector reports failed instead of serving an
-        old count as current."""
+    def refresh_immutable_changes(self) -> bool:
+        """Take one immutable-path reading. Called by the reader thread (serve.py), never by a scrape.
+        Returns whether the reading succeeded: the thread backs off shorter after a failure, so a
+        transient docker hiccup does not leave the collector failed for the full interval. A failed
+        reading clears the last one, so the collector reports failed instead of serving an old count
+        as current."""
         broker = self.broker
         if broker is None:
-            return
+            return True
         try:
             # The container IDs first: the reading describes these containers or newer ones.
             containers = broker.backend.running_container_ids()
@@ -336,9 +343,10 @@ class MetricsCollector:
             logger.warning("metrics: cannot read the immutable-path changes: %s", e)
             with self._immutable_lock:
                 self._immutable_reading = None
-            return
+            return False
         with self._immutable_lock:
             self._immutable_reading = (changes, containers, time.monotonic())
+        return True
 
     def _read_immutable_changes(self) -> Mapping[str, int] | None:
         """The last reading, from memory. None (a failed collector) when there is none yet, the last
