@@ -101,6 +101,8 @@ services:
       start_period: 20s
   - name: grafana
     image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    # The stack network for Caddy and Prometheus; the private `logs` network for Loki.
+    networks: [stack, logs]
     depends_on: [prometheus]
     # Served under /grafana/ behind Caddy (subpath rewrite); anonymous Viewer so the embed needs
     # no second login (SSO at Caddy is the real gate); embedding allowed for the dashboard iframe.
@@ -130,9 +132,15 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-  # ---- Central logs: every container on the host, 7 days, searchable in Grafana and the dashboard ----
+  # ---- Central logs: every container on the host, 7 days, searchable in Grafana ----
   - name: loki
     image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    # Every container's stdout/stderr, and any secret that ever leaked into one, is readable through
+    # Loki's API without a token (auth_enabled: false), and its admin API can push and delete. So it
+    # sits only on the plugin's private `logs` network: Alloy (the one writer) and Grafana (the one
+    # reader) join it, no other service can reach it. A later consumer (the dashboard's Logs page)
+    # joins this network too, or reads through Grafana.
+    networks: [logs]
     command:
       - -config.file=/etc/loki/loki.yaml
     # Read at start: an edit recreates the service on the next `ordo apply` (ordo/render/bind_configs.py).
@@ -155,7 +163,9 @@ services:
     image: wollomatic/socket-proxy:1.13.2@sha256:ff95d6ff6c27853005ef85eb8f4ab5923dc3d2f1e055f98fb6aeeaceec3fe848
     networks: [docker-api]
     # The image runs as nobody; Docker Desktop's socket is root:root mode 660, so the root group
-    # lets it connect without running the proxy as root.
+    # lets it connect without running the proxy as root. Portability limit: a stock Linux engine's
+    # socket is root:docker, so there the proxy gets EACCES, its healthcheck turns unhealthy within
+    # about two minutes and no logs ship; such a host needs the docker group's gid here instead.
     group_add: ["0"]
     command:
       - -listenip=0.0.0.0
@@ -177,7 +187,9 @@ services:
     # Ships every container's stdout/stderr to Loki (monitoring/alloy/config.alloy). Its own UI and
     # API stay on loopback: nothing outside the container needs them.
     image: grafana/alloy:v1.21.2@sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18
-    networks: [stack, docker-api]
+    # Reads the Docker API on `docker-api` and pushes to Loki on `logs`. Not on the stack network:
+    # it calls nothing else, and nothing else calls it.
+    networks: [docker-api, logs]
     depends_on: [loki, docker-socket-proxy]
     command:
       - run

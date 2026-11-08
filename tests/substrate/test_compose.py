@@ -384,7 +384,18 @@ def test_the_log_proxy_is_read_only_and_reachable_by_alloy_alone():
     assert c["networks"][private]["internal"] is True
     peers = sorted(n for n, s in c["services"].items() if private in (s.get("networks") or []))
     assert peers == ["alloy", "docker-socket-proxy"]
-    assert "ordo-net" in c["services"]["alloy"]["networks"]  # it pushes to loki on the stack network
+
+
+def test_loki_is_reachable_by_alloy_and_grafana_alone():
+    """Loki runs without auth and with its admin API on, and it holds every container's logs (and any
+    secret that leaked into one), so only its writer and its reader may reach it."""
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    (private,) = c["services"]["loki"]["networks"]
+    assert c["networks"][private]["internal"] is True
+    peers = sorted(n for n, s in c["services"].items() if private in (s.get("networks") or []))
+    assert peers == ["alloy", "grafana", "loki"]
+    assert "ordo-net" in c["services"]["grafana"]["networks"], "Caddy and Prometheus still reach Grafana"
+    assert "ordo-net" not in c["services"]["alloy"]["networks"], "Alloy calls only the proxy and Loki"
 
 
 def test_a_service_cannot_declare_networks_and_network_mode():

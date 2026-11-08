@@ -1,6 +1,7 @@
-# Loki: every container's logs on this host, kept 7 days, searchable from Grafana and the dashboard's
-# Logs page. One process, filesystem storage on the loki-data named volume (never a 9p bind: Loki
-# fsyncs and mmaps its index). Alloy (monitoring/alloy/config.alloy) pushes to it; nothing else writes.
+# Loki: every container's logs on this host, kept 7 days, searchable from Grafana. One process,
+# filesystem storage on the loki-data named volume (never a 9p bind: Loki fsyncs and mmaps its index).
+# Alloy (monitoring/alloy/config.alloy) pushes to it; nothing else writes. No auth: it sits on the
+# monitoring plugin's private `logs` network, which only Alloy and Grafana join.
 auth_enabled: false
 
 server:
@@ -33,8 +34,8 @@ limits_config:
   # (2026-11-07); the compactor below deletes older chunks.
   retention_period: 168h
   max_query_lookback: 168h
-  # Every line gets a `detected_level` (error, warn, info, ...) read from the line itself, so the
-  # dashboard can show errors across services without a per-service parser.
+  # Every line gets a `detected_level` (error, warn, info, ...) read from the line itself, so a
+  # Grafana query can filter errors across services without a per-service parser.
   discover_log_levels: true
   allow_structured_metadata: true
   volume_enabled: true
