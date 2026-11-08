@@ -34,6 +34,10 @@ class FakeHost:
         self.unknown: str | None = None
         self.build_code = 0
         self.apply_code = 0
+        # Image cleanup after a deploy: how many times it ran, and how it ends.
+        self.prunes = 0
+        self.prune_code = 0
+        self.prune_raises = False
         self.calls: list[str] = []
         self.notes: list[str] = []
         # Rescue: the checkout's tree, what the scanner flags, and the pull requests opened.
@@ -118,6 +122,12 @@ class FakeHost:
     def apply(self, log: Path) -> int:
         self.calls.append("apply")
         return self.apply_code
+
+    def prune_images(self, log: Path) -> int:
+        self.prunes += 1
+        if self.prune_raises:
+            raise OSError("docker is not answering")
+        return self.prune_code
 
     def notify(self, text: str) -> None:
         self.notes.append(text)
@@ -1106,3 +1116,33 @@ def test_the_real_host_reads_and_reclaims_the_board(monkeypatch):
     assert seen[0] == ["exec", "--user", "hermes", "ordo-agent-1", "hermes", "kanban", "list", "--status", "running", "--json"]
     assert seen[-1] == ["exec", "--user", "hermes", "ordo-agent-1", "hermes", "kanban", "reclaim", "--reason",
                         "interrupted for the deploy of abc", "t_aaa"]
+
+
+# ---- image cleanup after a deploy ----
+
+def test_a_successful_deploy_cleans_up_the_builds_it_replaced(tmp_path):
+    host = FakeHost()
+    assert deploy.run_once(host, out=tmp_path, now=1000.0) == 0
+    assert host.prunes == 1
+    assert host.notes == [f"Deployed `{NEW[:12]}`: {OLD[:12]} -> {NEW[:12]}."]
+
+
+def test_a_failed_deploy_cleans_up_nothing(tmp_path):
+    host = FakeHost()
+    host.apply_code = 1
+    assert deploy.run_once(host, out=tmp_path, now=1000.0) == 1
+    assert host.prunes == 0
+
+
+@pytest.mark.parametrize("fail", ["exit", "raise"])
+def test_a_failed_cleanup_is_reported_and_the_deploy_still_counts(tmp_path, fail):
+    host = FakeHost()
+    host.prune_code = 1 if fail == "exit" else 0
+    host.prune_raises = fail == "raise"
+    assert deploy.run_once(host, out=tmp_path, now=1000.0) == 0
+    saved = state(tmp_path)
+    assert saved["deployed"] == NEW and saved["failed"] == ""
+    assert len(host.notes) == 2 and host.notes[1].startswith("Image cleanup after the deploy failed")
+    # Recorded as deployed: the next pass does nothing, and does not clean up again.
+    assert deploy.run_once(host, out=tmp_path, now=2000.0) == 0
+    assert host.prunes == 1

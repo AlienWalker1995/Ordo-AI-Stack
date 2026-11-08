@@ -23,6 +23,9 @@ every few minutes (`ordo deploy --install-schedule` registers it). Each run is o
   3. fast-forward the checkout, `ordo build --all`, check the gates again (a build takes minutes),
      then `ordo apply`, which ends with `ordo doctor`
   4. record the result in <out>/deploy/state.json and post it to the operator's Discord channel
+  5. after a successful deploy, `ordo prune-images`: the builds the stack no longer runs, dangling
+     images, and build cache past its cap (ordo/host/images.py). Best effort: a failed cleanup is
+     reported, never a failed deploy
 
 A failed deploy is reported once and not retried: the fix is a new commit on main (a revert, or a
 fix), which the next run deploys. A deploy that has waited an hour is reported once, with the gate
@@ -161,6 +164,7 @@ class Host(Protocol):
     def reclaim_kanban_task(self, task_id: str, reason: str) -> None: ...  # back to ready, worker stopped
     def build(self, log: Path) -> int: ...
     def apply(self, log: Path) -> int: ...
+    def prune_images(self, log: Path) -> int: ...
     def notify(self, text: str) -> None: ...
     # Rescuing changes made on the checkout outside a pull request. Each raises GateUnknown when it
     # cannot run, which makes the pass wait.
@@ -602,8 +606,24 @@ def _deploy(host: Host, state: State, state_path: Path, target: str, log: Path, 
                      f"`ordo apply` refused before recreating anything (log: {log})", now)
     if code != 0:
         return _finish(host, state, state_path, target, ok=False, result="`ordo apply` failed", log=log)
-    return _finish(host, state, state_path, target, ok=True, result=f"{short(previous)} -> {short(target)}",
+    code = _finish(host, state, state_path, target, ok=True, result=f"{short(previous)} -> {short(target)}",
                    log=log)
+    _prune(host, log)
+    return code
+
+
+def _prune(host: Host, log: Path) -> None:
+    """Drop the builds this deploy replaced. Runs after the result is recorded, so a cleanup that
+    fails or crashes never turns a deployed commit into a failed one; its failure is reported."""
+    try:
+        code = host.prune_images(log)
+    except Exception as e:  # noqa: BLE001 - housekeeping must not break the deploy's bookkeeping
+        code, why = 1, f"{type(e).__name__}: {e}"
+    else:
+        why = f"log: `{log}`"
+    if code != 0:
+        _report(host, f"Image cleanup after the deploy failed ({why}); old builds stay on disk until "
+                      "the next deploy cleans up.")
 
 
 # --------------------------------------------------------------------------- #
@@ -901,6 +921,9 @@ class RealHost:
 
     def apply(self, log: Path) -> int:
         return self._ordo(["apply"], log)
+
+    def prune_images(self, log: Path) -> int:
+        return self._ordo(["prune-images"], log)
 
     def notify(self, text: str) -> None:
         secret = self.out / "secrets" / WEBHOOK_SECRET_FILE

@@ -687,3 +687,111 @@ def test_a_tag_that_keeps_failing_fails_after_the_attempts(monkeypatch):
     monkeypatch.setattr(images, "TAG_RETRY_WAIT_S", 0.0)
     assert docker.tag("ordo/x:abc", "ordo/x:current") is False
     assert len(calls) == images.TAG_ATTEMPTS
+
+
+# ---- retention: `ordo prune-images` ----
+
+def _img(repo, tag, image_id, created):
+    return images.LocalImage(f"ordo/{repo}", tag, image_id, float(created))
+
+
+AGENT = [
+    _img("agent-hermes", "c3", "id-c3", 30), _img("agent-hermes", "current", "id-c3", 30),
+    _img("agent-hermes", "c2", "id-c2", 20), _img("agent-hermes", "c1", "id-c1", 10),
+    _img("agent-hermes", "c0", "id-c0", 5),
+]
+
+
+def test_retention_keeps_the_recorded_build_current_and_one_previous():
+    removed = images.tags_to_remove(AGENT, {"ordo/agent-hermes": "c3"}, in_use={"id-c3"})
+    assert removed == ["ordo/agent-hermes:c0", "ordo/agent-hermes:c1"]
+
+
+def test_retention_never_removes_an_image_a_container_uses():
+    # A stopped one-shot job still runs the old c0 build.
+    removed = images.tags_to_remove(AGENT, {"ordo/agent-hermes": "c3"}, in_use={"id-c3", "id-c0"})
+    assert removed == ["ordo/agent-hermes:c1"]
+
+
+def test_retention_keeps_a_recorded_image_no_container_runs_right_now():
+    # The voice engine is recorded but stopped: its build stays, so starting it needs no rebuild.
+    voice = [_img("voice-tts", "v2", "id-v2", 20), _img("voice-tts", "current", "id-v2", 20),
+             _img("voice-tts", "v1", "id-v1", 10), _img("voice-tts", "v0", "id-v0", 5)]
+    removed = images.tags_to_remove(voice, {"ordo/voice-tts": "v2"}, in_use=set())
+    assert removed == ["ordo/voice-tts:v0"]
+
+
+def test_retention_drops_an_image_the_stack_stopped_building():
+    retired = [_img("n8n-mcp", "current", "id-n", 10), _img("n8n-mcp", "n1", "id-n", 10)]
+    assert images.tags_to_remove(retired, {"ordo/agent-hermes": "c3"}, in_use=set()) == [
+        "ordo/n8n-mcp:current", "ordo/n8n-mcp:n1"]
+
+
+def test_one_previous_build_means_one_image_however_many_tags_it_carries():
+    tags = [*AGENT, _img("agent-hermes", "c2-alias", "id-c2", 20)]
+    removed = images.tags_to_remove(tags, {"ordo/agent-hermes": "c3"}, in_use=set())
+    assert removed == ["ordo/agent-hermes:c0", "ordo/agent-hermes:c1"]
+
+
+class FakePruner:
+    def __init__(self, listed, in_use, fail=()):
+        self.listed, self.in_use, self.fail = listed, in_use, set(fail)
+        self.removed: list[str] = []
+        self.pruned: list[str] = []
+
+    def first_party_images(self):
+        return self.listed
+
+    def images_in_use(self):
+        return self.in_use
+
+    def remove_tag(self, ref):
+        if ref in self.fail:
+            return False
+        self.removed.append(ref)
+        return True
+
+    def prune_dangling(self):
+        self.pruned.append("dangling")
+        return "dangling" not in self.fail
+
+    def prune_build_cache(self, max_used):
+        self.pruned.append(f"cache<={max_used}")
+        return "cache" not in self.fail
+
+
+def test_prune_removes_old_builds_then_dangling_images_and_trims_the_cache(tmp_path):
+    image_tags.save_record(tmp_path, {"ordo/agent-hermes": "c3"})
+    docker = FakePruner(AGENT, {"id-c3"})
+    assert images.prune_images(tmp_path, docker=docker) == 0
+    assert docker.removed == ["ordo/agent-hermes:c0", "ordo/agent-hermes:c1"]
+    assert docker.pruned == ["dangling", f"cache<={images.BUILD_CACHE_MAX}"]
+
+
+def test_a_dry_run_prunes_nothing(tmp_path, capsys):
+    image_tags.save_record(tmp_path, {"ordo/agent-hermes": "c3"})
+    docker = FakePruner(AGENT, {"id-c3"})
+    assert images.prune_images(tmp_path, docker=docker, dry_run=True) == 0
+    assert docker.removed == [] and docker.pruned == []
+    assert "would remove ordo/agent-hermes:c0" in capsys.readouterr().out
+
+
+def test_without_the_record_nothing_is_removed(tmp_path):
+    docker = FakePruner(AGENT, {"id-c3"})
+    with pytest.raises(ValueError, match="nothing removed"):
+        images.prune_images(tmp_path, docker=docker)
+    assert docker.removed == [] and docker.pruned == []
+
+
+def test_a_step_that_fails_fails_the_prune_but_the_rest_still_runs(tmp_path):
+    image_tags.save_record(tmp_path, {"ordo/agent-hermes": "c3"})
+    docker = FakePruner(AGENT, {"id-c3"}, fail={"ordo/agent-hermes:c0", "cache"})
+    assert images.prune_images(tmp_path, docker=docker) == 1
+    assert docker.removed == ["ordo/agent-hermes:c1"]
+    assert docker.pruned == ["dangling", f"cache<={images.BUILD_CACHE_MAX}"]
+
+
+def test_docker_creation_stamps_read_with_nanoseconds():
+    assert images._epoch("2026-11-07T23:07:56.123456789Z") == pytest.approx(1794092876.123456)
+    assert images._epoch("2026-11-07T23:07:56Z") == 1794092876.0
+    assert images._epoch("not a date") == 0.0

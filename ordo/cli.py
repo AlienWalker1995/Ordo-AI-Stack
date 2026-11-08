@@ -206,6 +206,12 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
     pb.add_argument("--dry-run", action="store_true", help="print what would be built, build nothing")
     pb.set_defaults(func=_handler("ordo.host.cli_stack", "cmd_build"))
+    # `prune-images`: the first-party builds the stack no longer runs, dangling images, and build cache
+    # past its cap (ordo/host/images.py retention). `ordo deploy` runs it after every successful deploy.
+    ppi = sub.add_parser("prune-images", help="remove first-party image builds the stack no longer runs")
+    ppi.add_argument("--out", default="out", help="the rendered stack directory (default: out)")
+    ppi.add_argument("--dry-run", action="store_true", help="print what would be removed, remove nothing")
+    ppi.set_defaults(func=_handler("ordo.host.cli_stack", "cmd_prune_images"))
     # `apply`: the deploy. Builds what changed, renders, materializes secrets, then recreates
     # exactly the services whose config or image changed, ops-controller first (ordo/host/apply.py).
     pa = sub.add_parser("apply", help="deploy the checkout and the source: recreate exactly what changed")
