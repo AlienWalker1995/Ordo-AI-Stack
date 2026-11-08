@@ -1339,7 +1339,7 @@ class DockerBackend:
         `docker ps`, then per running container a `docker inspect` for the label and, when it
         carries one (today only the agent), a `docker diff`. A container that vanishes between the
         ps and its inspect or diff is skipped, not a failed reading: a failed reading drops the
-        metric out and the alert resolves early, and the next scrape sees whatever is left anyway."""
+        metric out and the alert resolves early, and the next reading (within 30 s) sees whatever is left anyway."""
         ids = [row["id"] for row in self._project_ps() if row.get("id") and row.get("state") == "running"]
         if not ids:
             return {}
