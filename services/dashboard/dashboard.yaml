@@ -69,10 +69,12 @@ environment:
   # No dashboard-specific auth config: its protected routes (dashboard/auth.py) trust the SSO
   # identity only from the `caddy` peer, resolved by name (no subnet to drift), or the
   # OPS_CONTROLLER_TOKEN bearer declared in `secret_files:` above.
-  # The rendered manifest (out/manifest.json) — the machine-readable enabled-plugin set.
-  # The service grid gates its cards on manifest.plugins_enabled (services_catalog.visible_services)
-  # so it reflects what THIS render actually enabled and can't silently omit an enabled service.
-  # Mounted read-only; the dashboard only reads it. Fails open (full catalog) if ever absent.
+  # The rendered manifest (out/manifest.json) — the machine-readable enabled-plugin set and the
+  # service-group map. The service grid gates its cards on manifest.plugins_enabled
+  # (services_catalog.visible_services) so it reflects what THIS render actually enabled and can't
+  # silently omit an enabled service, and the Services page groups its rows on
+  # manifest.service_groups (services_catalog.load_service_groups). Mounted read-only; the
+  # dashboard only reads it. Fails open (full catalog, one row per container) if ever absent.
   MANIFEST_PATH: /ordo-manifest.json
   # The rendered service-card catalog (out/services-catalog.json) — `ordo render` aggregates it
   # from the per-service services/<id>/catalog.json fragments (each service declares its own
@@ -94,8 +96,8 @@ volumes:
   # ${BASE_PATH}/out/ (not ./) on the two binds below: ops-controller recreates the dashboard
   # with the project dir at its own /config mount, where ./x resolves to a host path that
   # does not exist (tests/substrate/test_compose.py pins this).
-  # The rendered manifest (out/manifest.json). Read-only: the grid's
-  # enabled-gate only reads plugins_enabled. See MANIFEST_PATH above.
+  # The rendered manifest (out/manifest.json). Read-only: the grid's enabled-gate reads
+  # plugins_enabled and the Services page reads service_groups. See MANIFEST_PATH above.
   - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/manifest.json:/ordo-manifest.json:ro
   # The rendered service-card catalog (out/services-catalog.json). Read-only: the grid's
   # card list — see SERVICES_CATALOG_PATH above.

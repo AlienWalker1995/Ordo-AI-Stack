@@ -1,5 +1,7 @@
-// The Services page is one flat list of every container on the host: no group headers, a filter
-// over name and project, and per row exactly the controls its control kind allows.
+// The Services page groups every container on the host under its service: a service's containers
+// nest beneath its row behind a disclosure toggle, and a filter over name and project opens a
+// service whose container matches. The shared fixture here carries no group rows, so these tests
+// cover the flat fallback and the controls each row's control kind allows.
 import { fireEvent, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { INPUT } from '../src/components/ui.jsx'
