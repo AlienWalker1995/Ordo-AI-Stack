@@ -100,4 +100,45 @@ describe('Services: one row per service', () => {
     expect(rowNamed(rows, 'prometheus')).toBeUndefined()
     expect(rows).toHaveLength(2)
   })
+
+  it('lets the chevron close a service the filter opened', async () => {
+    mockApi({ 'GET /api/services/table': groupedTable() })
+    renderInShell(<ServicesPage />)
+    await tableRows()
+
+    fireEvent.change(screen.getByLabelText('Filter services'), { target: { value: 'grafana' } })
+
+    // The filter opened Monitoring itself (only grafana matches): the chevron offers to hide.
+    const [open] = screen.getAllByRole('button', { name: 'Hide the 2 containers of Monitoring' })
+    expect(open.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(open)
+
+    let rows = await tableRows()
+    expect(rowNamed(rows, 'grafana')).toBeUndefined()
+    const [collapsed] = screen.getAllByRole('button', { name: 'Show the 2 containers of Monitoring' })
+    expect(collapsed.getAttribute('aria-expanded')).toBe('false')
+
+    // The second click reopens it without touching the filter.
+    fireEvent.click(collapsed)
+    rows = await tableRows()
+    expect(rowNamed(rows, 'grafana')).toBeTruthy()
+  })
+
+  it('reopens a filter-closed service when the query changes', async () => {
+    mockApi({ 'GET /api/services/table': groupedTable() })
+    renderInShell(<ServicesPage />)
+    await tableRows()
+
+    fireEvent.change(screen.getByLabelText('Filter services'), { target: { value: 'grafana' } })
+    const [open] = screen.getAllByRole('button', { name: 'Hide the 2 containers of Monitoring' })
+    fireEvent.click(open)
+    let rows = await tableRows()
+    expect(rowNamed(rows, 'grafana')).toBeUndefined()
+
+    // A new query starts fresh: the auto-open applies again.
+    fireEvent.change(screen.getByLabelText('Filter services'), { target: { value: 'prometheus' } })
+    rows = await tableRows()
+    expect(rowNamed(rows, 'prometheus')).toBeTruthy()
+    expect(rowNamed(rows, 'grafana')).toBeUndefined()
+  })
 })

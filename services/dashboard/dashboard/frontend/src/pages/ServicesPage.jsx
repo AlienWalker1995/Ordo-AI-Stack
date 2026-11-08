@@ -419,6 +419,14 @@ function matches(row, query) {
   return [row.name, row.project, row.compose].some((value) => (value || '').toLowerCase().includes(query))
 }
 
+// A copy of a Set with one id toggled: added if absent, removed if present.
+function flipped(set, id) {
+  const next = new Set(set)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  return next
+}
+
 // A row is busy while its action is requesting or confirming; idle and failed rows can act.
 function isBusy(action) {
   return action?.phase === 'requesting' || action?.phase === 'confirming'
@@ -548,14 +556,12 @@ export default function ServicesPage() {
   const [asking, setAsking] = useState(null)
   // The services whose containers are open, by row id.
   const [expanded, setExpanded] = useState(() => new Set())
-  const toggleGroup = useCallback((id) => {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
+  // A service the filter opened itself (it matches only through its containers) stays open until
+  // the user closes it; that explicit close wins over the auto-open, and resets when the query
+  // changes.
+  const [closedByFilter, setClosedByFilter] = useState(() => new Set())
+  const query = filter.trim().toLowerCase()
+  useEffect(() => { setClosedByFilter(new Set()) }, [query])
   const { states: actionStates, run, settle } = useRowActions(table.refresh, toast)
 
   // The fast confirming loop stops once no row is confirming. Keep settling on the page's own
@@ -596,7 +602,6 @@ export default function ServicesPage() {
       : <Skeleton className="h-64 w-full" />
   }
 
-  const query = filter.trim().toLowerCase()
   const allRows = table.data.rows
   const childrenOf = new Map()
   for (const row of allRows) {
@@ -613,10 +618,18 @@ export default function ServicesPage() {
     return children.filter((child) => matches(child, query))
   }
   const rows = allRows.filter((row) => !row.parent && (!query || matches(row, query) || visibleChildren(row).length > 0))
-  const isOpen = (row) => expanded.has(row.id) || (!!query && !matches(row, query) && visibleChildren(row).length > 0)
+  // The filter opens a service that matches only through its containers. While it does, the
+  // chevron records the user's explicit choice instead of flipping the shared expansion set, so
+  // the first click on an auto-opened group closes it.
+  const autoOpen = (row) => !!query && !matches(row, query) && visibleChildren(row).length > 0
+  const isOpen = (row) => (autoOpen(row) ? !closedByFilter.has(row.id) : expanded.has(row.id))
+  const toggleRow = (row) => {
+    if (autoOpen(row)) setClosedByFilter((prev) => flipped(prev, row.id))
+    else setExpanded((prev) => flipped(prev, row.id))
+  }
   const groupFor = (row) => {
     const children = childrenOf.get(row.id)
-    return children ? { children, expanded: isOpen(row), onToggle: toggleGroup } : null
+    return children ? { children, expanded: isOpen(row), onToggle: () => toggleRow(row) } : null
   }
   const ownUsage = (row) => usageById[row.compose] || usageById[row.card_id]
   // A service's CPU and memory are its containers' together.
