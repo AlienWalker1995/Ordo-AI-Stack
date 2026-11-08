@@ -1353,7 +1353,7 @@ class DockerBackend:
                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
                     check=True)
             except subprocess.CalledProcessError as e:
-                logger.warning("metrics: %s vanished before its inspect (%s); skipping it this scrape",
+                logger.warning("metrics: %s vanished before its inspect (%s); skipping it this reading",
                                container_id[:12], (e.stderr or "").strip()[:120])
                 continue
             line = proc.stdout.splitlines()[0] if proc.stdout.strip() else ""
@@ -1367,7 +1367,7 @@ class DockerBackend:
                 diff = subprocess.run(["docker", "diff", container_id], capture_output=True, text=True,
                                       encoding="utf-8", errors="replace", timeout=180, check=True)
             except subprocess.CalledProcessError as e:
-                logger.warning("metrics: %s vanished before its diff (%s); skipping it this scrape",
+                logger.warning("metrics: %s vanished before its diff (%s); skipping it this reading",
                                container_id[:12], (e.stderr or "").strip()[:120])
                 continue
             counts[service] = len(changed_immutable_files(diff.stdout.splitlines(), roots))
