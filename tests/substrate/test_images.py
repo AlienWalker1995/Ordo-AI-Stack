@@ -733,14 +733,59 @@ def test_one_previous_build_means_one_image_however_many_tags_it_carries():
     assert removed == ["ordo/agent-hermes:c0", "ordo/agent-hermes:c1"]
 
 
+WEBUI = "ghcr.io/open-webui/open-webui"
+NEW_DIGEST, OLD_DIGEST = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+
+
+def _stack(out: Path, images_run=(f"{WEBUI}:v0.12.5@{NEW_DIGEST}",)) -> None:
+    """A rendered stack: the image record and a compose running `images_run`."""
+    image_tags.save_record(out, {"ordo/agent-hermes": "c3"})
+    services = {f"s{i}": {"image": ref} for i, ref in enumerate(images_run)}
+    (out / "docker-compose.yml").write_text(yaml.safe_dump({"services": services}), encoding="utf-8")
+
+
+def test_an_upgrade_leaves_its_old_pull_behind_and_retention_removes_it():
+    pulls = [images.PulledImage(WEBUI, NEW_DIGEST, "id-new"), images.PulledImage(WEBUI, OLD_DIGEST, "id-old")]
+    assert images.superseded_upstream(pulls, [f"{WEBUI}:v0.12.5@{NEW_DIGEST}"], in_use=set()) == [
+        f"{WEBUI}@{OLD_DIGEST}"]
+
+
+def test_upstream_retention_spares_what_runs_what_it_does_not_pin_and_overridable_refs():
+    old = images.PulledImage(WEBUI, OLD_DIGEST, "id-old")
+    # A container still runs the old pull.
+    assert images.superseded_upstream([old], [f"{WEBUI}:v0.12.5@{NEW_DIGEST}"], in_use={"id-old"}) == []
+    # A repository the stack does not run belongs to someone else.
+    assert images.superseded_upstream([old], ["grafana/grafana:13.3.0@" + NEW_DIGEST], in_use=set()) == []
+    # `${VAR:-default}`: the operator may point the variable at exactly this pull.
+    assert images.superseded_upstream([old], ["${WEBUI_IMAGE:-" + f"{WEBUI}@{NEW_DIGEST}" + "}"], in_use=set()) == []
+
+
+def test_prune_removes_superseded_upstream_pulls_too(tmp_path):
+    _stack(tmp_path)
+    docker = FakePruner(AGENT, {"id-c3"}, upstream=[images.PulledImage(WEBUI, OLD_DIGEST, "id-old")])
+    assert images.prune_images(tmp_path, docker=docker) == 0
+    assert docker.removed == ["ordo/agent-hermes:c0", "ordo/agent-hermes:c1", f"{WEBUI}@{OLD_DIGEST}"]
+
+
+def test_without_a_rendered_stack_nothing_is_removed(tmp_path):
+    image_tags.save_record(tmp_path, {"ordo/agent-hermes": "c3"})
+    docker = FakePruner(AGENT, {"id-c3"})
+    with pytest.raises(ValueError, match="nothing removed"):
+        images.prune_images(tmp_path, docker=docker)
+    assert docker.removed == []
+
+
 class FakePruner:
-    def __init__(self, listed, in_use, fail=()):
-        self.listed, self.in_use, self.fail = listed, in_use, set(fail)
+    def __init__(self, listed, in_use, fail=(), upstream=()):
+        self.listed, self.in_use, self.fail, self.upstream = listed, in_use, set(fail), list(upstream)
         self.removed: list[str] = []
         self.pruned: list[str] = []
 
     def first_party_images(self):
         return self.listed
+
+    def untagged_upstream_images(self):
+        return self.upstream
 
     def images_in_use(self):
         return self.in_use
@@ -761,7 +806,7 @@ class FakePruner:
 
 
 def test_prune_removes_old_builds_then_dangling_images_and_trims_the_cache(tmp_path):
-    image_tags.save_record(tmp_path, {"ordo/agent-hermes": "c3"})
+    _stack(tmp_path)
     docker = FakePruner(AGENT, {"id-c3"})
     assert images.prune_images(tmp_path, docker=docker) == 0
     assert docker.removed == ["ordo/agent-hermes:c0", "ordo/agent-hermes:c1"]
@@ -769,7 +814,7 @@ def test_prune_removes_old_builds_then_dangling_images_and_trims_the_cache(tmp_p
 
 
 def test_a_dry_run_prunes_nothing(tmp_path, capsys):
-    image_tags.save_record(tmp_path, {"ordo/agent-hermes": "c3"})
+    _stack(tmp_path)
     docker = FakePruner(AGENT, {"id-c3"})
     assert images.prune_images(tmp_path, docker=docker, dry_run=True) == 0
     assert docker.removed == [] and docker.pruned == []
@@ -784,7 +829,7 @@ def test_without_the_record_nothing_is_removed(tmp_path):
 
 
 def test_a_step_that_fails_fails_the_prune_but_the_rest_still_runs(tmp_path):
-    image_tags.save_record(tmp_path, {"ordo/agent-hermes": "c3"})
+    _stack(tmp_path)
     docker = FakePruner(AGENT, {"id-c3"}, fail={"ordo/agent-hermes:c0", "cache"})
     assert images.prune_images(tmp_path, docker=docker) == 1
     assert docker.removed == ["ordo/agent-hermes:c1"]

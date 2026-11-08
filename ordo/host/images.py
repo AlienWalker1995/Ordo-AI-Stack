@@ -370,7 +370,8 @@ def run_build(out_dir: str | Path, services: Sequence[str] | None, *, project: s
 #   - the tag out/images.json records (what every render pins), and `:current`
 #   - the newest KEEP_PREVIOUS_BUILDS other builds, while the stack still records the image
 # Everything else is untagged. A repository the record no longer names (an image the stack stopped
-# building) keeps only what a container uses.
+# building) keeps only what a container uses. Upstream images get the same treatment for the pulls a
+# digest bump leaves behind (superseded_upstream).
 KEEP_PREVIOUS_BUILDS = 1
 # The build cache keeps rebuilds fast; past this size docker drops its least recently used entries.
 BUILD_CACHE_MAX = "30gb"
@@ -410,8 +411,37 @@ def tags_to_remove(images: Iterable[LocalImage], record: dict[str, str], in_use:
     return sorted(remove)
 
 
+@dataclasses.dataclass(frozen=True)
+class PulledImage:
+    """An upstream image the daemon holds without a tag: `repo:<none>` with a digest."""
+    repository: str
+    digest: str                  # `sha256:...`
+    image_id: str
+
+    @property
+    def ref(self) -> str:
+        return f"{self.repository}@{self.digest}"
+
+
+def superseded_upstream(images: Iterable[PulledImage], rendered: Iterable[str], in_use: set[str]) -> list[str]:
+    """The untagged upstream images an upgrade left behind, sorted: a digest of a repository the
+    rendered compose pins to a different digest, used by no container. Upstream images are pinned by
+    digest, so every version bump leaves the old pull as `repo:<none>` (open-webui alone left 13 GB).
+    A tagged image (`python:3.11`) is someone's deliberate pull and is left alone, and so is a
+    repository whose rendered ref is a `${VAR}` the operator may point elsewhere."""
+    pinned: dict[str, set[str]] = {}
+    for ref in rendered:
+        if ref.startswith("${") or "@" not in ref:
+            continue
+        pinned.setdefault(buildspec.image_ident(ref), set()).add(ref.rsplit("@", 1)[1])
+    return sorted(image.ref for image in images
+                  if image.repository in pinned and image.digest not in pinned[image.repository]
+                  and image.image_id not in in_use)
+
+
 class PrunerLike(Protocol):
     def first_party_images(self) -> list[LocalImage]: ...
+    def untagged_upstream_images(self) -> list[PulledImage]: ...
     def images_in_use(self) -> set[str]: ...
     def remove_tag(self, ref: str) -> bool: ...
     def prune_dangling(self) -> bool: ...
@@ -469,6 +499,13 @@ class Pruner:
             created[image_id] = _epoch(stamp)
         return [LocalImage(repo, tag, image_id, created.get(image_id, 0.0)) for repo, tag, image_id in rows]
 
+    def untagged_upstream_images(self) -> list[PulledImage]:
+        listing = self._out(["docker", "image", "ls", "--no-trunc", "--digests", "--filter", "dangling=false",
+                             "--format", "{{.Repository}}\t{{.Tag}}\t{{.Digest}}\t{{.ID}}"])
+        rows = [line.split("\t") for line in listing.splitlines() if line.count("\t") == 3]
+        return [PulledImage(repo, digest, image_id) for repo, tag, digest, image_id in rows
+                if tag == "<none>" and digest.startswith("sha256:") and not repo.startswith("ordo/")]
+
     def images_in_use(self) -> set[str]:
         containers = self._out(["docker", "ps", "--all", "--quiet", "--no-trunc"]).split()
         if not containers:
@@ -486,20 +523,28 @@ class Pruner:
 
 
 def prune_images(out_dir: str | Path, *, docker: PrunerLike, dry_run: bool = False) -> int:
-    """Untag the first-party builds retention does not keep, then drop dangling images and trim the
-    build cache. Returns 0 when every step succeeded, else 1 (nothing is retried)."""
+    """Remove the first-party builds retention does not keep and the upstream pulls an upgrade left
+    behind, then drop dangling images and trim the build cache. Returns 0 when every step succeeded,
+    else 1 (nothing is retried)."""
     record = load_record(out_dir)
     if not record:
         # Without the record nothing says which builds the stack still needs (an image no container
         # runs right now, like the voice engine or a model switch's engine, would lose every tag).
         raise ValueError(f"no image record in {out_dir} ({RECORD_FILE}); nothing removed. "
                          "Run `ordo build --all` first")
-    doomed = tags_to_remove(docker.first_party_images(), record, docker.images_in_use())
+    try:
+        compose = load_compose(Path(out_dir).as_posix())
+    except OSError as e:
+        raise ValueError(f"cannot read {out_dir}/{COMPOSE_FILE} ({e}); nothing removed. Render first") from e
+    rendered = [str((svc or {}).get("image") or "") for svc in (compose.get("services") or {}).values()]
+    in_use = docker.images_in_use()
+    doomed = (tags_to_remove(docker.first_party_images(), record, in_use)
+              + superseded_upstream(docker.untagged_upstream_images(), rendered, in_use))
     if dry_run:
         for ref in doomed:
             print(f"  would remove {ref}")
-        print(f"{len(doomed)} first-party tag(s) would be removed; dangling images and build cache "
-              f"over {BUILD_CACHE_MAX} would be pruned")
+        print(f"{len(doomed)} image(s) would be removed; dangling images and build cache over "
+              f"{BUILD_CACHE_MAX} would be pruned")
         return 0
     failed = []
     for ref in doomed:
@@ -509,7 +554,7 @@ def prune_images(out_dir: str | Path, *, docker: PrunerLike, dry_run: bool = Fal
             failed.append(ref)
     pruned = docker.prune_dangling()
     trimmed = docker.prune_build_cache(BUILD_CACHE_MAX)
-    print(f"{len(doomed) - len(failed)} first-party tag(s) removed"
+    print(f"{len(doomed) - len(failed)} image(s) removed"
           + (f", {len(failed)} could not be" if failed else "")
           + ("" if pruned else "; the dangling-image prune failed")
           + ("" if trimmed else "; the build-cache prune failed"))
