@@ -1,0 +1,47 @@
+// Alloy: ships every container's stdout/stderr on this host to Loki.
+//
+// It reads Docker through docker-socket-proxy (read-only: container list and logs, no writes), which
+// sits on a network only Alloy joins, so no other container can reach the Docker API through it.
+// Every compose project counts (ordo, nas-stack, min-max, ...), and containers started outside
+// compose are picked up too. Labels: container, project, service, stream. The level is not a label:
+// Loki detects it per line (`detected_level`, monitoring/loki/loki.yaml).
+
+discovery.docker "containers" {
+  host             = "tcp://docker-socket-proxy:2375"
+  refresh_interval = "15s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "stream"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "tcp://docker-socket-proxy:2375"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

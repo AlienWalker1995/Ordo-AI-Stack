@@ -1,6 +1,6 @@
 id: monitoring
-name: Monitoring (Grafana + Prometheus + GPU exporter + Alertmanager)
-description: Real-time llama.cpp + GPU perf and alerting. Grafana at /grafana/ (SSO), embedded in the dashboard; alerts to Discord.
+name: Monitoring (Grafana + Prometheus + GPU exporter + Alertmanager + Loki)
+description: Real-time model engine + GPU perf, alerting, and every container's logs. Grafana at /grafana/ (SSO), embedded in the dashboard; alerts to Discord.
 requires:
   nvidia: false          # grafana + prometheus are CPU-ok; only gpu-exporter wants a GPU
   ram_gb: 2
@@ -19,7 +19,7 @@ secrets:
 optional_secrets:
   - ALERTMANAGER_DISCORD_WEBHOOK_URL
   - ALERTMANAGER_HEARTBEAT_URL
-# Four compose services, all sha-pinned (the first three digests carried verbatim from V1 PR #71,
+# Seven compose services, all sha-pinned (the first three digests carried verbatim from V1 PR #71,
 # live-verified at commit 6fe4586: do NOT bump/relax). Prometheus scrapes gpu-exporter:9835 and
 # ops-controller:9000/metrics (which carries every model engine's ordo_engine_* series), and
 # evaluates the alert rules Alertmanager delivers. Config assets under monitoring/.
@@ -101,6 +101,8 @@ services:
       start_period: 20s
   - name: grafana
     image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    # The stack network for Caddy and Prometheus; the private `logs` network for Loki.
+    networks: [stack, logs]
     depends_on: [prometheus]
     # Served under /grafana/ behind Caddy (subpath rewrite); anonymous Viewer so the embed needs
     # no second login (SSO at Caddy is the real gate); embedding allowed for the dashboard iframe.
@@ -130,9 +132,88 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+  # ---- Central logs: every container on the host, 7 days, searchable in Grafana ----
+  - name: loki
+    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    # Every container's stdout/stderr, and any secret that ever leaked into one, is readable through
+    # Loki's API without a token (auth_enabled: false), and its admin API can push and delete. So it
+    # sits only on the plugin's private `logs` network: Alloy (the one writer) and Grafana (the one
+    # reader) join it, no other service can reach it. A later consumer (the dashboard's Logs page)
+    # joins this network too, or reads through Grafana.
+    networks: [logs]
+    command:
+      - -config.file=/etc/loki/loki.yaml
+    # Read at start: an edit recreates the service on the next `ordo apply` (ordo/render/bind_configs.py).
+    config_mounts: [/etc/loki/loki.yaml]
+    volumes:
+      # ${BASE_PATH} for the same reason as prometheus.yml above: a tracked repo file.
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/monitoring/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      # A named volume, never a 9p bind: Loki fsyncs its chunks and mmaps its index. The image
+      # creates /loki as its own user (10001), so a fresh volume is writable.
+      - loki-data:/loki
+    # No healthcheck: the image is distroless (no shell, no wget), so nothing in it can run one.
+    # ops-controller's container metrics still alert when it exits or restarts.
+  - name: docker-socket-proxy
+    # The Docker API Alloy reads logs through, reduced to exactly what it calls. Every other request
+    # is answered 403, including `/containers/{id}/archive` (a file read inside any container, which
+    # an "all of /containers" grant would allow), `/export`, `/images`, `/info` and every write.
+    # Two locks: it sits on the plugin's private `docker-api` network, which only Alloy joins, and
+    # `-allowfrom=alloy` refuses any other caller. It is the only service besides ops-controller and
+    # the agent that touches the Docker socket.
+    image: wollomatic/socket-proxy:1.13.2@sha256:ff95d6ff6c27853005ef85eb8f4ab5923dc3d2f1e055f98fb6aeeaceec3fe848
+    networks: [docker-api]
+    # The image runs as nobody; Docker Desktop's socket is root:root mode 660, so the root group
+    # lets it connect without running the proxy as root. Portability limit: a stock Linux engine's
+    # socket is root:docker, so there the proxy gets EACCES, its healthcheck turns unhealthy within
+    # about two minutes and no logs ship; such a host needs the docker group's gid here instead.
+    group_add: ["0"]
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=alloy
+      # Alloy's calls: version negotiation, the container list and each container's inspect and
+      # logs (discovery and tailing), and the network list (discovery's network labels).
+      - -allowHEAD=/(v[0-9.]+/)?_ping
+      - -allowGET=/(v[0-9.]+/)?(_ping|version|containers/json|containers/[a-zA-Z0-9_.-]+/(json|logs)|networks)
+      - -allowhealthcheck
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD", "./healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  - name: alloy
+    # Ships every container's stdout/stderr to Loki (monitoring/alloy/config.alloy). Its own UI and
+    # API stay on loopback: nothing outside the container needs them.
+    image: grafana/alloy:v1.21.2@sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18
+    # Reads the Docker API on `docker-api` and pushes to Loki on `logs`. Not on the stack network:
+    # it calls nothing else, and nothing else calls it.
+    networks: [docker-api, logs]
+    depends_on: [loki, docker-socket-proxy]
+    command:
+      - run
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    # Read at start: an edit recreates the service on the next `ordo apply` (ordo/render/bind_configs.py).
+    config_mounts: [/etc/alloy/config.alloy]
+    volumes:
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Where each container's log was read up to, so a restart neither re-sends nor skips lines.
+      - alloy-data:/var/lib/alloy/data
+    healthcheck:
+      # The image has bash but no wget or curl.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/12345 && printf 'GET /-/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q ' 200 ' <&3"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 # How `ordo backup` saves this manifest's named volumes (ordo/render/backup_policy.py).
 backup:
   prometheus-data: skip        # metrics history; the scrape targets regenerate it
   alertmanager-data: skip      # silences and notification log; a restart re-sends what still fires
   grafana-data: stopped        # SQLite (users, preferences); dashboards are provisioned from the repo
+  loki-data: skip              # seven days of container logs; Docker keeps each container's own log
+  alloy-data: skip             # read positions; losing them re-sends what Loki already has (it drops the duplicates)

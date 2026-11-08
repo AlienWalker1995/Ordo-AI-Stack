@@ -8,6 +8,10 @@
 #   promtool check rules   monitoring/prometheus/rules/*.yml
 #   promtool test rules    monitoring/prometheus/tests/*.test.yml (each alert against replayed series)
 #   amtool check-config    monitoring/alertmanager/alertmanager.yml
+#   loki -verify-config    monitoring/loki/loki.yaml
+#   alloy fmt              monitoring/alloy/config.alloy (a syntax check: it fails on a parse error)
+#   alloy validate         monitoring/alloy/config.alloy (semantic: a wrong attribute name or an undefined
+#                          component reference fails here, not at Alloy startup)
 set -euo pipefail
 
 MANIFEST=services/monitoring/plugin.yaml
@@ -30,6 +34,8 @@ PY
 
 PROMETHEUS_IMAGE="$(image_of prometheus)"
 ALERTMANAGER_IMAGE="$(image_of alertmanager)"
+LOKI_IMAGE="$(image_of loki)"
+ALLOY_IMAGE="$(image_of alloy)"
 
 # The rendered mounts: prometheus.yml at /etc/prometheus, the rules directory beside it.
 docker run --rm --entrypoint promtool \
@@ -48,4 +54,16 @@ docker run --rm --entrypoint amtool \
   -v "$MONITORING/alertmanager:/etc/alertmanager:ro" \
   "$ALERTMANAGER_IMAGE" check-config /etc/alertmanager/alertmanager.yml
 
-echo "monitoring configs valid (prometheus: $PROMETHEUS_IMAGE, alertmanager: $ALERTMANAGER_IMAGE)"
+# Loki is distroless with no healthcheck, so a bad config would only show as a restarting container.
+docker run --rm -v "$MONITORING/loki:/etc/loki:ro" "$LOKI_IMAGE" \
+  -config.file=/etc/loki/loki.yaml -verify-config
+
+docker run --rm -v "$MONITORING/alloy:/etc/alloy:ro" "$ALLOY_IMAGE" fmt /etc/alloy/config.alloy >/dev/null
+
+# Semantic check with the same pinned image: fmt only parses, validate also resolves the component
+# graph, so a mistyped attribute or a reference to an undefined component fails here instead of as
+# a crash-loop when Alloy starts.
+docker run --rm -v "$MONITORING/alloy:/etc/alloy:ro" "$ALLOY_IMAGE" validate /etc/alloy/config.alloy
+
+echo "monitoring configs valid (prometheus: $PROMETHEUS_IMAGE, alertmanager: $ALERTMANAGER_IMAGE," \
+     "loki: $LOKI_IMAGE, alloy: $ALLOY_IMAGE)"

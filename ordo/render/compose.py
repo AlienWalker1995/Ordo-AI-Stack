@@ -92,6 +92,13 @@ def _mcp_net(project: str) -> str:
     `<project>-net`). `internal: true` at the top level = no default gateway, no egress."""
     return f"{project}-mcp-net"
 
+def plugin_private_net(project: str, plugin_id: str, name: str) -> str:
+    """A network private to one plugin (a service's `networks:` entry other than `stack`): only the
+    plugin's services that list the same name join it. Internal, so it gives no egress; a service
+    that needs the stack or the internet also lists `stack`."""
+    return f"{project}-{plugin_id}-{name}"
+
+
 def gated_upstream_net(project: str, service: str) -> str:
     """The private network of a gate-enforced service: shared by that service and its admission
     gate ONLY. Nothing else can resolve `<service>:<port>`, so every caller has to go through the
@@ -700,6 +707,8 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
         s["command"] = list(ps.command)
     if ps.volumes:
         s["volumes"] = list(ps.volumes)
+    if ps.group_add:
+        s["group_add"] = list(ps.group_add)
     if ps.healthcheck:
         s["healthcheck"] = dict(ps.healthcheck)
     dep = _depends_on(ps.depends_on)
@@ -953,17 +962,26 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                          "can be published on one service only")
     if listeners:
         _mount_edge_cert(svcs["ops-controller"])
+    private_nets: list[str] = []
     for plugin, ps in (plugin_services or []):
         svcs[ps.name] = _plugin_service(ps, plugin, net=net,
                                         nvidia_gpu=nvidia_gpu, primary_uuid=primary_gpu_uuid,
                                         secondary_uuid=secondary_gpu_uuid,
                                         project=project, publish_local_ports=publish_local_ports,
                                         available_env=available_env, edge_ports=edge_ports)
+        joined = ps.compose_networks(net, lambda name, p=plugin: plugin_private_net(project, p.id, name))
+        if joined is not None:
+            svcs[ps.name]["networks"] = joined
+            private_nets.extend(n for n in joined if n != net and n not in private_nets)
         # A service whose GPU use is gate-enforced gets its gate rendered WITH it, from the same
         # declaration. Not opt-in and not a separate manifest entry: the two cannot disagree, and
         # an enabled gated service can never come up without the thing that arbitrates it.
         arb = ps.gpu_arbitration
         if arb is not None and arb.enforcement == "gate" and ps.name in claims:
+            if joined is not None:
+                raise ValueError(
+                    f"{plugin.id}/{ps.name} is gpu_arbitration.enforcement: gate, which decides its "
+                    f"networks itself; it cannot also declare `networks: {list(ps.networks)}`")
             if ps.network_mode:
                 # Sharing another container's namespace would make the upstream reachable by
                 # every peer of that container, voiding the isolation below without a trace.
@@ -998,7 +1016,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         "name": project,
         "services": svcs,
         "networks": {net: {"name": net}, _mcp_net(project): {"name": _mcp_net(project), "internal": True},
-                     **{n: {"name": n} for n in gated_nets}},
+                     **{n: {"name": n} for n in gated_nets},
+                     **{n: {"name": n, "internal": True} for n in private_nets}},
     }
     # Declare any named volumes the plugin services reference (a `src:dst` where src is a bare
     # name, not a ./bind or absolute path) — compose requires them in the top-level `volumes:`.
