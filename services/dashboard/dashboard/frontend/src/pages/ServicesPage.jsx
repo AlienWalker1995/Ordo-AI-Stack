@@ -1,4 +1,6 @@
-// Services: every container on the host, one flat list, with the actions the control plane allows.
+// Services: every container on the host, with the actions the control plane allows. A service made of
+// several containers (a plugin's, or a core service with its parts) is one row; its containers open
+// beneath it, and the row shows the worst of their states, so a failed part is never out of sight.
 //   GET  /api/services/table                                    rows with a verdict, a control kind and allowed actions
 //   GET  /api/hardware/service-pressure                         CPU and memory per container (slow: ~8 s, so async)
 //   POST /api/ops/services/{compose}/{action}                   start | stop | restart an ordo service
@@ -255,6 +257,48 @@ function NotManaged({ row }) {
   return <p className="text-caption text-muted">Not managed: {row.reason}</p>
 }
 
+// A service's row shows the worst state across its containers; any other row, its own.
+function shownVerdict(row) {
+  return row.group_verdict || row.verdict
+}
+
+// "9 containers", and how many of them need a look: the summary under a service's name.
+function groupSummary(children) {
+  const parts = [children.length === 1 ? '1 container' : `${children.length} containers`]
+  for (const verdict of ['failed', 'unhealthy', 'starting', 'stopped']) {
+    const n = children.filter((child) => !child.lent && child.verdict === verdict).length
+    if (n) parts.push(`${n} ${VERDICT_LABEL[verdict].toLowerCase()}`)
+  }
+  return parts.join(' · ')
+}
+
+// Opens and closes the containers listed under a service's row. Rows without containers keep an
+// empty slot of the same width, so every name in the column lines up.
+function GroupToggle({ row, group }) {
+  if (!group) return <ToggleSpace />
+  return (
+    <button type="button" aria-expanded={group.expanded} onClick={() => group.onToggle(row.id)}
+            aria-label={`${group.expanded ? 'Hide' : 'Show'} ${group.children.length === 1 ? 'the container' : `the ${group.children.length} containers`} of ${row.name}`}
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted transition-colors hover:bg-surface hover:text-fg">
+      <svg aria-hidden="true" viewBox="0 0 16 16" className={'h-3 w-3 transition-transform' + (group.expanded ? ' rotate-90' : '')}>
+        <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  )
+}
+
+// One toggle's width of empty space, so text beside it lines up with text beside a toggle.
+function ToggleSpace() {
+  return <span aria-hidden="true" className="w-6 shrink-0" />
+}
+
+// The name column's leading slot: a toggle on a service's row; on one of its containers, an indent
+// one step past its service's name.
+function NameLead({ row, group, nested }) {
+  if (nested) return <><ToggleSpace /><ToggleSpace /></>
+  return <GroupToggle row={row} group={group} />
+}
+
 // Status, name and the per-row actions are shared by the wide table row and the narrow card, so
 // the two layouts cannot drift apart. `action` is the row's action state (see useRowActions).
 function ServiceStatus({ row, action }) {
@@ -269,14 +313,19 @@ function ServiceStatus({ row, action }) {
   return (
     <span className="flex items-center gap-2">
       {/* An evicted resident exits cleanly, but "Finished" would misread a loan as done. */}
-      <Dot tone={row.lent ? 'info' : VERDICT_TONE[row.verdict]} />
-      <span className="text-caption text-fg-muted">{row.lent ? 'Lent to a render' : VERDICT_LABEL[row.verdict] || row.verdict}</span>
+      <Dot tone={row.lent ? 'info' : VERDICT_TONE[shownVerdict(row)]} />
+      <span className="text-caption text-fg-muted">{row.lent ? 'Lent to a render' : VERDICT_LABEL[shownVerdict(row)] || shownVerdict(row)}</span>
     </span>
   )
 }
 
 // A failed or unconfirmed action's reason stays on its row after the toast has gone.
-function ServiceName({ row, action }) {
+function ServiceName({ row, action, group }) {
+  const detail = [
+    row.compose && row.name !== row.compose ? row.compose : null,
+    group ? groupSummary(group.children) : null,
+    row.error,
+  ].filter(Boolean)
   return (
     <div className="flex min-w-0 flex-col">
       <span className="truncate text-body text-fg">
@@ -284,11 +333,7 @@ function ServiceName({ row, action }) {
           ? <a href={row.open_url} target="_blank" rel="noreferrer" className="text-fg no-underline hover:text-accent">{row.name}<span aria-hidden="true" className="ml-1 text-muted">↗</span></a>
           : row.name}
       </span>
-      {((row.compose && row.name !== row.compose) || row.error) && (
-        <span className="truncate font-mono text-micro text-muted">
-          {[row.compose && row.name !== row.compose ? row.compose : null, row.error].filter(Boolean).join(' · ')}
-        </span>
-      )}
+      {detail.length > 0 && <span className="truncate font-mono text-micro text-muted">{detail.join(' · ')}</span>}
       {action?.phase === 'failed' && <span className="text-micro text-danger">{action.note}</span>}
     </div>
   )
@@ -299,11 +344,16 @@ function LogsButton({ row, onLogs }) {
   return <button type="button" className={BTN} onClick={() => onLogs(row)} aria-label={`Logs for ${rowLabel(row)}`}>Logs</button>
 }
 
-function ServiceRow({ row, usage, onLogs, onAction, action }) {
+function ServiceRow({ row, usage, onLogs, onAction, action, group, nested }) {
   return (
-    <tr className="border-b border-border-subtle last:border-b-0 hover:bg-surface/60">
+    <tr className={'border-b border-border-subtle last:border-b-0 hover:bg-surface/60' + (nested ? ' bg-surface/30' : '')}>
       <td className="py-2 pl-3 pr-2"><ServiceStatus row={row} action={action} /></td>
-      <td className="px-2 py-2"><ServiceName row={row} action={action} /></td>
+      <td className="px-2 py-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <NameLead row={row} group={group} nested={nested} />
+          <ServiceName row={row} action={action} group={group} />
+        </div>
+      </td>
       <td className="whitespace-nowrap px-2 py-2 text-caption text-fg-muted">{row.project || '—'}</td>
       <td className="whitespace-nowrap px-2 py-2 text-caption tabular-nums text-muted">{row.uptime || '—'}</td>
       <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.cpu_pct} format={formatCpu} /></td>
@@ -326,28 +376,40 @@ function ServiceRow({ row, usage, onLogs, onAction, action }) {
 
 // The same row as a card, for widths where the table would need a sideways scroll: status and
 // name first, then the numbers, then every action on its own line so none sits off-screen.
-function ServiceCard({ row, usage, onLogs, onAction, action }) {
+function ServiceCard({ row, usage, onLogs, onAction, action, group, nested }) {
   return (
-    <li className="grid gap-2 border-b border-border-subtle px-3 py-3 last:border-b-0">
-      <div className="flex items-start justify-between gap-3">
-        <ServiceName row={row} action={action} />
-        <div className="shrink-0 whitespace-nowrap"><ServiceStatus row={row} action={action} /></div>
-      </div>
-      <dl className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted">
-        <div className="flex gap-1"><dt>Project</dt><dd className="text-fg-muted">{row.project || '—'}</dd></div>
-        <div className="flex gap-1"><dt>Up for</dt><dd className="tabular-nums text-fg-muted">{row.uptime || '—'}</dd></div>
-        <div className="flex gap-1"><dt>CPU</dt><dd className="font-mono tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.cpu_pct} format={formatCpu} /></dd></div>
-        <div className="flex gap-1"><dt>Memory</dt><dd className="font-mono tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.mem_gb} format={formatMem} /></dd></div>
-      </dl>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {row.control === 'none'
-          ? <NotManaged row={row} />
-          : (
-            <>
-              <LogsButton row={row} onLogs={onLogs} />
-              <StateActions row={row} onAction={onAction} busy={isBusy(action)} />
-            </>
+    <li className={'border-b border-border-subtle px-3 py-3 last:border-b-0' + (nested ? ' bg-surface/30' : '')}>
+      {/* A service's container indents to its service's name, past the toggle. */}
+      <div className="flex gap-1.5">
+        {nested && <ToggleSpace />}
+        <div className="grid min-w-0 flex-1 gap-2">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-1.5">
+              {group && <GroupToggle row={row} group={group} />}
+              <ServiceName row={row} action={action} group={group} />
+            </div>
+            <div className="shrink-0 whitespace-nowrap"><ServiceStatus row={row} action={action} /></div>
+          </div>
+          <dl className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted">
+            <div className="flex gap-1"><dt>Project</dt><dd className="text-fg-muted">{row.project || '—'}</dd></div>
+            <div className="flex gap-1"><dt>Up for</dt><dd className="tabular-nums text-fg-muted">{row.uptime || '—'}</dd></div>
+            <div className="flex gap-1"><dt>CPU</dt><dd className="font-mono tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.cpu_pct} format={formatCpu} /></dd></div>
+            <div className="flex gap-1"><dt>Memory</dt><dd className="font-mono tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.mem_gb} format={formatMem} /></dd></div>
+          </dl>
+          {/* A service's own row has no controls (its containers do), so no empty line either. */}
+          {row.control !== 'group' && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {row.control === 'none'
+                ? <NotManaged row={row} />
+                : (
+                  <>
+                    <LogsButton row={row} onLogs={onLogs} />
+                    <StateActions row={row} onAction={onAction} busy={isBusy(action)} />
+                  </>
+                )}
+            </div>
           )}
+        </div>
       </div>
     </li>
   )
@@ -484,6 +546,16 @@ export default function ServicesPage() {
   const [logsFor, setLogsFor] = useState(null)
   // The stop or restart waiting on the confirmation dialog: { row, action }.
   const [asking, setAsking] = useState(null)
+  // The services whose containers are open, by row id.
+  const [expanded, setExpanded] = useState(() => new Set())
+  const toggleGroup = useCallback((id) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
   const { states: actionStates, run, settle } = useRowActions(table.refresh, toast)
 
   // The fast confirming loop stops once no row is confirming. Keep settling on the page's own
@@ -525,8 +597,49 @@ export default function ServicesPage() {
   }
 
   const query = filter.trim().toLowerCase()
-  const rows = table.data.rows.filter((row) => !query || matches(row, query))
-  const usageFor = (row) => usageById[row.compose] || usageById[row.card_id]
+  const allRows = table.data.rows
+  const childrenOf = new Map()
+  for (const row of allRows) {
+    if (!row.parent) continue
+    if (!childrenOf.has(row.parent)) childrenOf.set(row.parent, [])
+    childrenOf.get(row.parent).push(row)
+  }
+  // A service shows when it or any of its containers matches the filter. Under a matching service
+  // every container shows; under a service that matches only through its containers, just those,
+  // opened so they are seen.
+  const visibleChildren = (row) => {
+    const children = childrenOf.get(row.id) || []
+    if (!query || matches(row, query)) return children
+    return children.filter((child) => matches(child, query))
+  }
+  const rows = allRows.filter((row) => !row.parent && (!query || matches(row, query) || visibleChildren(row).length > 0))
+  const isOpen = (row) => expanded.has(row.id) || (!!query && !matches(row, query) && visibleChildren(row).length > 0)
+  const groupFor = (row) => {
+    const children = childrenOf.get(row.id)
+    return children ? { children, expanded: isOpen(row), onToggle: toggleGroup } : null
+  }
+  const ownUsage = (row) => usageById[row.compose] || usageById[row.card_id]
+  // A service's CPU and memory are its containers' together.
+  const usageFor = (row) => {
+    const children = childrenOf.get(row.id)
+    if (!children) return ownUsage(row)
+    const measured = [row, ...children].map(ownUsage).filter(Boolean)
+    if (!measured.length) return undefined
+    const total = (field) => {
+      const values = measured.map((usage) => usage[field]).filter((value) => value != null)
+      return values.length ? values.reduce((a, b) => a + b, 0) : null
+    }
+    return { cpu_pct: total('cpu_pct'), mem_gb: total('mem_gb'), reason: 'none of its containers was measured' }
+  }
+  // Each top-level row, then (while it is open) the containers listed under it.
+  const shown = rows.flatMap((row) => {
+    const group = groupFor(row)
+    const entries = [{ row, group, nested: false }]
+    if (group?.expanded) {
+      for (const child of visibleChildren(row)) entries.push({ row: child, group: null, nested: true })
+    }
+    return entries
+  })
 
   // Every note on how far the list can be trusted, keyed by the id the list's aria-describedby names.
   const notes = []
@@ -562,8 +675,8 @@ export default function ServicesPage() {
         <div className="min-w-0 rounded-md border border-border-subtle bg-bg-elevated">
           {/* Cards below lg: the table needs 52rem, more than a phone or a narrow tablet has. */}
           <ul className="lg:hidden" aria-label="Services" aria-describedby={describedBy}>
-            {rows.map((row) => (
-              <ServiceCard key={row.id} row={row} usage={usageFor(row)}
+            {shown.map(({ row, group, nested }) => (
+              <ServiceCard key={row.id} row={row} usage={usageFor(row)} group={group} nested={nested}
                            onLogs={setLogsFor} onAction={onAction} action={actionStates[row.id]} />
             ))}
           </ul>
@@ -572,7 +685,8 @@ export default function ServicesPage() {
               <thead>
                 <tr className="border-b border-border-subtle text-left text-micro uppercase tracking-[0.08em] text-muted">
                   <th scope="col" className="w-[8.5rem] py-2 pl-3 pr-2 font-semibold">Status</th>
-                  <th scope="col" className="px-2 py-2 font-semibold">Service</th>
+                  {/* The heading sits over the names, past the toggle slot every row keeps. */}
+                  <th scope="col" className="px-2 py-2 font-semibold"><span className="flex items-center gap-1.5"><ToggleSpace />Service</span></th>
                   <th scope="col" className="w-[8rem] px-2 py-2 font-semibold">Project</th>
                   <th scope="col" className="w-[8rem] px-2 py-2 font-semibold">Up for</th>
                   <th scope="col" className="w-[6.5rem] px-2 py-2 text-right font-semibold">CPU</th>
@@ -581,8 +695,8 @@ export default function ServicesPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <ServiceRow key={row.id} row={row} usage={usageFor(row)}
+                {shown.map(({ row, group, nested }) => (
+                  <ServiceRow key={row.id} row={row} usage={usageFor(row)} group={group} nested={nested}
                               onLogs={setLogsFor} onAction={onAction} action={actionStates[row.id]} />
                 ))}
               </tbody>

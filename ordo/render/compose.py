@@ -41,6 +41,12 @@ if TYPE_CHECKING:
 _CORE = ["inference-engine-gpu", "litellm-db", "model-gateway", "model-gateway-keys",
          "ops-controller", "dashboard"]
 
+# Core services that are parts of another core service rather than services of their own: the
+# gateway's database and its one-shot key provisioner. The dashboard's Services page lists them
+# under the gateway's row (RenderContext.service_groups), the way a plugin's containers list under
+# the plugin's.
+CORE_SERVICE_PARTS = {"model-gateway": ("litellm-db", "model-gateway-keys")}
+
 # How `ordo backup` saves the named volumes the core services own (ordo/render/backup_policy.py);
 # the plugin and agent manifests declare theirs under `backup:`. The model stores are re-derivable
 # (`ordo fetch`, `download_comfyui_model`) and far larger than everything else put together. The

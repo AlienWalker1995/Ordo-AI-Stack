@@ -860,3 +860,21 @@ def test_a_gate_enforced_service_cannot_declare_networks():
     with pytest.raises(ValueError, match="networks"):
         compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[],
                                plugin_services=[(plugin, declared)], gpu_claims={claim.service: claim})
+
+
+def test_service_groups_name_the_containers_of_one_service():
+    """The dashboard's Services page lists a service's containers under one row; the manifest says
+    which containers those are: a plugin's own, its admission gate, and a core service's parts."""
+    rc = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY)
+    groups = {g["id"]: g for g in rc.manifest()["service_groups"]}
+    rendered = set(rc.compose_dict()["services"])
+    assert groups["monitoring"]["name"] == "Monitoring"
+    assert set(groups["monitoring"]["services"]) == {
+        s.name for p in REGISTRY.plugins if p.id == "monitoring" for s in p.services}
+    assert "comfyui-gate" in groups["comfyui"]["services"]
+    assert groups["model-gateway"]["services"] == ["model-gateway", "litellm-db", "model-gateway-keys"]
+    for group in groups.values():
+        assert len(group["services"]) >= 2 and set(group["services"]) <= rendered
+    # A container belongs to one service at most.
+    listed = [s for g in groups.values() for s in g["services"]]
+    assert len(listed) == len(set(listed))

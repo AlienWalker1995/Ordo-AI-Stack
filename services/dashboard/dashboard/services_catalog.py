@@ -205,13 +205,9 @@ CARD_PLUGINS = frozenset({
 })
 
 
-def _load_enabled_plugins() -> set[str] | None:
-    """Read `plugins_enabled` from the rendered manifest at MANIFEST_PATH.
-
-    Returns the enabled plugin-id set, or None when the manifest is unavailable
-    (env unset / file missing / malformed) so callers FAIL OPEN — a missing mount
-    must never blank the grid, it must fall back to showing the full catalog.
-    """
+def _read_manifest() -> dict | None:
+    """The rendered manifest at MANIFEST_PATH, or None when it is unavailable (env unset, file
+    missing or malformed)."""
     path = os.environ.get("MANIFEST_PATH", "").strip()
     if not path:
         return None
@@ -221,6 +217,28 @@ def _load_enabled_plugins() -> set[str] | None:
     except (OSError, ValueError) as e:
         logger.warning("[services] could not read manifest %s: %s", path, e)
         return None
+    return data if isinstance(data, dict) else None
+
+
+def load_service_groups() -> list[dict]:
+    """The manifest's `service_groups` (ordo/render/engine.py RenderContext.service_groups): which
+    containers make up one service. Empty when the manifest is unavailable, so the Services page
+    falls back to one row per container rather than failing."""
+    groups = (_read_manifest() or {}).get("service_groups")
+    return groups if isinstance(groups, list) else []
+
+
+def _load_enabled_plugins() -> set[str] | None:
+    """Read `plugins_enabled` from the rendered manifest at MANIFEST_PATH.
+
+    Returns the enabled plugin-id set, or None when the manifest is unavailable
+    (env unset / file missing / malformed) so callers FAIL OPEN — a missing mount
+    must never blank the grid, it must fall back to showing the full catalog.
+    """
+    data = _read_manifest()
+    if data is None:
+        return None
+    path = os.environ.get("MANIFEST_PATH", "").strip()
     plugins = data.get("plugins_enabled")
     if not isinstance(plugins, list):
         logger.warning("[services] manifest %s has no plugins_enabled list; showing all cards", path)
