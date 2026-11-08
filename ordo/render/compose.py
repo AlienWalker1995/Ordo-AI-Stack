@@ -22,6 +22,7 @@ process broker starts/stops these against the scheduler.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 from typing import TYPE_CHECKING, Any
 
@@ -387,6 +388,16 @@ _MODEL_GATEWAY_CONFIG_BIND = "${BASE_PATH:?BASE_PATH must be set}/out/model-gate
 # new key grant) changes their config hash and the changed set (ordo/render/changed_set.py) recreates
 # them, from the host's `ordo apply` and from ops-controller's post-render step alike.
 RENDERED_CONFIG_LABEL = "ordo.rendered-config"
+
+# Every service's container log, rotated: at most 5 files of 20 MB. Without it Docker's json-file
+# log grows without bound (one container's reached 378 MB, on a disk at 87%), and damage never ages
+# out: an unclean power-off (2026-11-07) left a run of NUL bytes in every running container's log,
+# where Docker's reader stops, so `docker logs --since` (ops-controller's engine metrics, Alloy)
+# returned nothing for those containers. A rotated log drops the damaged file within a few rotations.
+CONTAINER_LOGGING: dict[str, Any] = {
+    "driver": "json-file",
+    "options": {"max-size": "20m", "max-file": "5"},
+}
 MODEL_GATEWAY_CONFIG_READERS = ("model-gateway", "model-gateway-keys")
 
 
@@ -977,6 +988,11 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     if model_gateway_config_digest:
         for reader in MODEL_GATEWAY_CONFIG_READERS:
             svcs[reader].setdefault("labels", {})[RENDERED_CONFIG_LABEL] = model_gateway_config_digest
+
+    # Last, so every service (core, plugin, gate and MCP) gets it. A copy each: yaml would otherwise
+    # write one shared dict as an anchor and aliases.
+    for service in svcs.values():
+        service["logging"] = copy.deepcopy(CONTAINER_LOGGING)
 
     out: dict[str, Any] = {
         "name": project,
