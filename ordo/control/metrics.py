@@ -419,3 +419,19 @@ class MetricsCollector:
             gpu_chat_up=self.chat_up() if self.chat_up else None,
             netns_repair=self.netns_repair_stats() if self.netns_repair_stats else None,
             engines=engine_samples, engines_failed=engines_failed))
+
+
+def immutable_changes_loop(collector: MetricsCollector) -> None:
+    """The reader thread's loop (serve.py starts it): take a reading now, then wait for the interval
+    or a recreate a scrape saw. A failed reading backs off shorter, so a transient docker hiccup
+    does not leave the ImmutableFilesModified alert blind for the full interval; an unexpected error
+    is caught, so the thread cannot die and strand the collector failed until a process restart."""
+    while True:
+        try:
+            ok = collector.refresh_immutable_changes()
+        except Exception as e:  # noqa: BLE001 - the thread must survive an unexpected error
+            logger.warning("metrics: the immutable-path reading raised: %s", e)
+            ok = False
+        delay = IMMUTABLE_CHANGES_REFRESH_SECONDS if ok else IMMUTABLE_CHANGES_RETRY_SECONDS
+        collector.immutable_refresh_wanted.wait(delay)
+        collector.immutable_refresh_wanted.clear()

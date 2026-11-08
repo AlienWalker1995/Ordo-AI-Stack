@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -273,6 +275,147 @@ def test_a_recreated_container_drops_its_old_count_and_wakes_the_reader(plane, m
     assert agent not in got, "recreate: no stale page for the new container"
     assert got[caddy] == 1, "an unchanged container keeps its count"
     assert plane.metrics.immutable_refresh_wanted.is_set()
+
+
+# --- the reader thread's loop (serve.py starts it) ------------------------------------------------- #
+
+class _StopLoop(Exception):
+    """Raised from a patched Event.wait to end the reader thread under test."""
+
+
+def _loop_thread(plane, monkeypatch, stop_after_waits=2, wake_first_wait=False):
+    """Run metrics.immutable_changes_loop in a thread; the patched Event.wait stops it after
+    `stop_after_waits` calls and, when asked, simulates a scrape's recreate-wake on the first one.
+    Returns the wait timeouts the loop requested."""
+    delays = []
+    real_wait = plane.metrics.immutable_refresh_wanted.wait
+
+    def wait_and_track(timeout=None):
+        delays.append(timeout)
+        if wake_first_wait and len(delays) == 1:
+            plane.metrics.immutable_refresh_wanted.set()     # a scrape saw a recreate mid-wait
+        if len(delays) >= stop_after_waits:
+            raise _StopLoop
+        return real_wait(timeout)
+
+    monkeypatch.setattr(plane.metrics.immutable_refresh_wanted, "wait", wait_and_track)
+
+    def target():
+        try:
+            metrics.immutable_changes_loop(plane.metrics)
+        except _StopLoop:
+            pass
+
+    t = threading.Thread(target=target, daemon=True)
+    t.start()
+    t.join(10)
+    assert not t.is_alive(), "the reader thread did not stop"
+    return delays
+
+
+def test_the_reader_thread_takes_a_reading_at_startup(plane, monkeypatch):
+    """serve.py starts the thread before the first scrape: the first reading happens without waiting
+    for the interval, so a scrape seconds after boot is not a failed collector."""
+    monkeypatch.setattr(metrics, "IMMUTABLE_CHANGES_REFRESH_SECONDS", 0.5)
+    started = time.monotonic()
+    calls = []
+    real = plane.metrics.refresh_immutable_changes
+
+    def counting():
+        calls.append(time.monotonic() - started)
+        return real()
+
+    monkeypatch.setattr(plane.metrics, "refresh_immutable_changes", counting)
+    delays = _loop_thread(plane, monkeypatch, stop_after_waits=1)
+    assert len(calls) == 1, "exactly the startup reading: nothing waits for the interval before it"
+    assert calls[0] < 0.2, "the first reading is taken at once, not after the interval"
+    assert delays == [0.5], "then the loop waits the full interval"
+
+
+def test_a_recreate_seen_by_a_scrape_wakes_the_reader_before_the_interval(plane, monkeypatch):
+    """A scrape that sees a recreate sets the event: the thread must take the next reading at once,
+    not after the full interval."""
+    monkeypatch.setattr(metrics, "IMMUTABLE_CHANGES_REFRESH_SECONDS", 10.0)
+    monkeypatch.setattr(metrics, "IMMUTABLE_CHANGES_RETRY_SECONDS", 10.0)
+    calls = []
+    real = plane.metrics.refresh_immutable_changes
+
+    def counting():
+        calls.append(time.monotonic())
+        return real()
+
+    monkeypatch.setattr(plane.metrics, "refresh_immutable_changes", counting)
+    _loop_thread(plane, monkeypatch, stop_after_waits=2, wake_first_wait=True)
+    assert len(calls) == 2, "the wake took a second reading before the 10 s interval"
+    assert calls[1] - calls[0] < 5.0, "the second reading came at the wake, not the interval"
+
+
+def test_the_reader_clears_the_event_after_an_early_wake(plane, monkeypatch):
+    """The wake must not stick: the loop clears the event after the early reading, so the next wait
+    blocks for the full interval and a LATER recreate is what wakes it again."""
+    monkeypatch.setattr(metrics, "IMMUTABLE_CHANGES_REFRESH_SECONDS", 0.5)
+    _loop_thread(plane, monkeypatch, stop_after_waits=2, wake_first_wait=True)
+    assert not plane.metrics.immutable_refresh_wanted.is_set(), \
+        "the event is still set: every future wait returns at once and the interval is lost"
+
+
+def test_the_reader_survives_a_raising_refresh(plane, monkeypatch):
+    """An uncaught exception would kill the thread and leave the collector failed until the process
+    restarts: the loop catches it and keeps taking readings."""
+    monkeypatch.setattr(metrics, "IMMUTABLE_CHANGES_REFRESH_SECONDS", 0.5)
+    monkeypatch.setattr(metrics, "IMMUTABLE_CHANGES_RETRY_SECONDS", 0.5)
+    outcomes = []
+
+    def flaky():
+        if not outcomes:
+            outcomes.append(False)
+            raise RuntimeError("boom")
+        outcomes.append(True)
+        return True
+
+    monkeypatch.setattr(plane.metrics, "refresh_immutable_changes", flaky)
+    _loop_thread(plane, monkeypatch, stop_after_waits=2)
+    assert outcomes == [False, True], "the loop kept running after refresh raised"
+
+
+def test_a_failed_reading_backs_off_shorter_than_the_interval(plane, monkeypatch):
+    """A transient docker hiccup must not blind the ImmutableFilesModified alert for the full
+    interval: after a failed reading the loop retries after IMMUTABLE_CHANGES_RETRY_SECONDS, then
+    returns to the normal cadence once the reading succeeds again."""
+    monkeypatch.setattr(metrics, "IMMUTABLE_CHANGES_REFRESH_SECONDS", 10.0)
+    monkeypatch.setattr(metrics, "IMMUTABLE_CHANGES_RETRY_SECONDS", 0.3)
+    state = {"fail": True}
+
+    def changes():
+        if state["fail"]:
+            raise TimeoutError("docker diff timed out after 180 seconds")
+        return {"agent": 1}
+
+    monkeypatch.setattr(plane.broker.backend, "immutable_path_changes", changes)
+    delays = []
+    real_wait = plane.metrics.immutable_refresh_wanted.wait
+
+    def wait_and_track(timeout=None):
+        delays.append(timeout)
+        if len(delays) == 1:
+            state["fail"] = False          # the hiccup clears while the thread backs off
+        if len(delays) == 2:
+            raise _StopLoop
+        return real_wait(timeout)
+
+    monkeypatch.setattr(plane.metrics.immutable_refresh_wanted, "wait", wait_and_track)
+
+    def target():
+        try:
+            metrics.immutable_changes_loop(plane.metrics)
+        except _StopLoop:
+            pass
+
+    t = threading.Thread(target=target, daemon=True)
+    t.start()
+    t.join(10)
+    assert not t.is_alive(), "the reader thread did not stop"
+    assert delays == [metrics.IMMUTABLE_CHANGES_RETRY_SECONDS, metrics.IMMUTABLE_CHANGES_REFRESH_SECONDS]
 
 
 def test_a_failing_docker_still_serves_the_rest(plane, monkeypatch):
