@@ -785,3 +785,14 @@ def test_services_the_control_plane_recreates_have_no_project_relative_binds():
     relative_env = [f"{k}={v}" for k, v in rc.env.items() if isinstance(v, str) and v.startswith("./")]
     assert offenders == []
     assert relative_env == []
+
+
+def test_every_service_rotates_its_container_log():
+    """Unrotated json-file logs grew without bound, and the NUL run an unclean power-off left in them
+    (2026-11-07) never aged out, so `docker logs --since` stayed empty for those containers."""
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    assert len(c["services"]) > 20, "plugin, gate and MCP services rendered too"
+    for name, service in c["services"].items():
+        assert service["logging"] == {"driver": "json-file", "options": {"max-size": "20m", "max-file": "5"}}, name
+    first, second = list(c["services"].values())[:2]
+    assert first["logging"] is not second["logging"], "one dict per service, no yaml anchors"
