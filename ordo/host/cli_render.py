@@ -112,7 +112,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     cpu_fallback_ok, cpu_fallback_line = doctor.cpu_fallback_check(
         args.project, int(rc.env["LLAMACPP_CPU_THREADS"]) if cpu_fallback_rendered else None)
     print(cpu_fallback_line)
-    containers_ok, containers_line = doctor.container_health_check(args.project)
+    containers_ok, containers_line = doctor.container_health_check(
+        args.project, rendered_services=frozenset(rc.compose_dict()["services"]))
     print(containers_line)
     if args.bundle:
         doctor.write_bundle(bundle, args.bundle)

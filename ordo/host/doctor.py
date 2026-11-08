@@ -307,14 +307,20 @@ def container_problems(rows: list[dict[str, Any]]) -> list[str]:
     return problems
 
 
-def container_health_check(project: str, *, settle_seconds: float = CONTAINER_SETTLE_SECONDS,
+def container_health_check(project: str, *, rendered_services: set[str] | frozenset[str],
+                           settle_seconds: float = CONTAINER_SETTLE_SECONDS,
                            read: Callable[[str], list[dict[str, Any]]] | None = None,
                            sleep: Callable[[float], None] = time.sleep,
                            clock: Callable[[], float] = time.monotonic) -> tuple[bool, str]:
     """(ok, one-line report) on every container's state and health.
 
     Waits up to `settle_seconds` while a healthcheck is still in its start period, so the check that
-    ends an apply judges the services it just recreated instead of their first seconds."""
+    ends an apply judges the services it just recreated instead of their first seconds.
+
+    A stopped container of a service the render no longer defines (a removed plugin's, which apply
+    stops but does not delete, so its volumes stay) is not judged: it is listed in the report instead.
+    Its last health status is frozen at whatever it was when it stopped, so judging it failed every
+    apply after a plugin removal (2026-11-08). A leftover that is still running is judged as usual."""
     # Looked up at call time (not a default argument) so a test can replace the module's reader.
     read = read or read_container_states
     deadline = clock() + settle_seconds
@@ -325,11 +331,17 @@ def container_health_check(project: str, *, settle_seconds: float = CONTAINER_SE
             rows = read(project)
     except ContainerUnreadable as e:
         return False, f"! containers: cannot read them ({e})"
-    problems = container_problems(rows)
+    leftovers = sorted(r["service"] for r in rows
+                       if r["service"] not in rendered_services and r["state"] != "running" and not r["oneoff"])
+    judged = [r for r in rows if r["service"] not in leftovers]
+    leftover_note = (f"; stopped, no longer rendered: {', '.join(leftovers)} (`docker rm` them to clear)"
+                     if leftovers else "")
+    problems = container_problems(judged)
     if problems:
-        return False, f"! containers: {'; '.join(problems)} (read `docker logs ordo-<service>-1`)"
-    running = sum(1 for r in rows if r["state"] == "running")
-    return True, f"containers: {running} running, none unhealthy, restarting or failed"
+        return False, (f"! containers: {'; '.join(problems)} (read `docker logs ordo-<service>-1`)"
+                       f"{leftover_note}")
+    running = sum(1 for r in judged if r["state"] == "running")
+    return True, f"containers: {running} running, none unhealthy, restarting or failed{leftover_note}"
 
 
 def cpu_fallback_check(project: str, declared_threads: int | None) -> tuple[bool, str]:
