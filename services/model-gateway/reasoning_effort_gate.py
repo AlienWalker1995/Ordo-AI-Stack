@@ -7,7 +7,7 @@ Wired in `litellm_config.yaml` as:
 Why: Claude Code (and other Anthropic-API clients) send a `thinking` budget on
 /v1/messages. For a non-Claude target model LiteLLM's Anthropic adapter translates
 that budget into an OpenAI-style `reasoning_effort` ("high"/"medium"/"low"/
-"minimal"). The Qwen3.6 chat template only accepts xhigh/medium/low, so "high"
+"minimal"). The GPU model's Qwen3.8 chat template on NInfer (re-checked 2026-11-09) only accepts none/low/medium/xhigh, so "high"
 (and "minimal") raise a Jinja `raise_exception` and 400 the whole request.
 
 `additional_drop_params: [reasoning_effort]` does NOT fix it: that filter runs in
