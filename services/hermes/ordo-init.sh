@@ -70,7 +70,7 @@ hermes_config model.default local-chat
 hermes_config model.context_length "$CONTEXT_WINDOW"
 # Per-turn budgets, monitorable from .env. model.max_tokens: output cap per call (match
 # LLAMACPP_N_PREDICT); agent.max_turns: tool-loop ceiling; agent.gateway_timeout: wall-clock cap
-# on one turn (distinct from the stream-stale detector, HERMES_STREAM_STALE_TIMEOUT).
+# on one turn (distinct from the stream-stale detector, providers.custom.stale_timeout_seconds below).
 hermes_config model.max_tokens "${HERMES_MAX_TOKENS:-65536}"
 hermes_config agent.max_turns "${HERMES_MAX_TURNS:-90}"
 hermes_config agent.gateway_timeout "${HERMES_GATEWAY_TIMEOUT:-3600}"

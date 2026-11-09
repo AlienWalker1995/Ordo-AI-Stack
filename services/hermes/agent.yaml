@@ -100,8 +100,6 @@ environment:
   # bottleneck is inference-engine-gpu parallelism / streaming; this stops the false-hang kills meanwhile.
   HERMES_CRON_TIMEOUT: ${HERMES_CRON_TIMEOUT:-3000}
   HERMES_API_MAX_RETRIES: ${HERMES_API_MAX_RETRIES:-10}
-  # 24h — keeps the streaming stale-detector from killing slow local-model turns mid-flight.
-  HERMES_STREAM_STALE_TIMEOUT: ${HERMES_STREAM_STALE_TIMEOUT:-86400}
   # ── Langfuse tracing (upstream's official `langfuse` catalog plugin) ──
   # FAIL-OPEN BY DESIGN, and that is why there is no `depends_on: langfuse-web` below: with the
   # langfuse plugin disabled both keys interpolate to "", the plugin's _get_langfuse() returns
