@@ -273,9 +273,11 @@ def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
     if isinstance(ram, int | float) and ram >= _RAM_WARN_PCT:
         items.append({"severity": "warning", "title": f"Memory {round(ram)}% used", "detail": "",
                       "service": None})
-    for job in (status_gpu or {}).get("rejected", []) or []:
-        items.append({"severity": "warning", "title": f"GPU job {job.get('id')} was rejected",
-                      "detail": job.get("reason", ""), "service": None})
+    # The scheduler lists rejected jobs by id: a job is rejected only when it asks for more VRAM
+    # than the card has (ordo/control/scheduler.py).
+    for job_id in (status_gpu or {}).get("rejected", []) or []:
+        items.append({"severity": "warning", "title": f"GPU job {job_id} was rejected",
+                      "detail": "it needs more VRAM than the GPU has", "service": None})
     items.sort(key=lambda i: 0 if i["severity"] == "critical" else 1)
     return items
 
