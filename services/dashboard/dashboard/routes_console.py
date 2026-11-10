@@ -15,7 +15,7 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from dashboard import attention_store, console, diagnostics
 from dashboard.services_catalog import load_service_groups
@@ -342,6 +342,17 @@ async def _apply_dismissals(items: list[dict], read: set[str]) -> tuple[list[dic
 
 class AttentionBody(BaseModel):
     id: str = Field(min_length=1, max_length=300)
+
+    @field_validator("id")
+    @classmethod
+    def _names_a_known_kind(cls, value: str) -> str:
+        # Only ids build_attention can produce: a junk or mistyped id would never be pruned (its
+        # source is unknown), so the dismissals file would keep it for good.
+        kind = value.split(":", 1)[0]
+        if kind not in console.ATTENTION_SOURCES:
+            raise ValueError(f"not an attention item id: its kind {kind!r} is not one of "
+                             f"{sorted(console.ATTENTION_SOURCES)}")
+        return value
 
 
 @router.post("/attention/dismiss")

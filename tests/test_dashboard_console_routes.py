@@ -269,6 +269,13 @@ def test_restoring_an_id_that_is_not_dismissed_changes_nothing(live, dismissals_
     assert json.loads(dismissals_file.read_text()) == {"disk": 1.0}
 
 
+@pytest.mark.parametrize("item_id", ["foo", "faied:web", ":web", "disk-ish"])
+def test_a_dismissal_of_an_id_build_attention_cannot_produce_is_refused(live, dismissals_file, item_id):
+    response = live.post("/api/attention/dismiss", json={"id": item_id})
+    assert response.status_code == 422
+    assert not dismissals_file.exists()
+
+
 def test_a_dismissal_needs_an_id(live):
     assert live.post("/api/attention/dismiss", json={"id": ""}).status_code == 422
 
