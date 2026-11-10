@@ -305,3 +305,37 @@ export function kpiTiles(overview, perf) {
   }
   return tiles
 }
+
+// The Live work panel from GET /api/work (live_work.py) and the Overview's engines. Each request in
+// flight names the engine it runs on the way the engines list does (its model and device), falling
+// back to the gateway's deployment name for an engine the registry does not list.
+/** @param {{ inflight?: any[], recent?: { window_s?: number, callers?: any[] }, engines?: Record<string, any> } | null | undefined} work @param {any[]} engines */
+export function liveWork(work, engines) {
+  const byService = new Map((engines || []).map((e) => [e.engine, e]))
+  const where = (deployment) => {
+    const engine = byService.get(deployment)
+    return engine ? `${engine.model} on ${deviceLabel(engine.device)}` : (deployment || 'an unknown engine')
+  }
+  const running = (work?.inflight || []).map((r) => ({
+    id: r.call_id,
+    caller: r.caller || 'unknown',
+    where: where(r.deployment),
+    promptTokens: r.prompt_tokens,
+    runningS: r.running_s,
+    fallback: !!r.fallback,
+  }))
+  // Prefill progress is read only for an engine that serves it (the CPU fallback's /slots).
+  const prefill = Object.entries(work?.engines || {})
+    .filter(([, e]) => e?.prefill?.available && e.prefill.processing && e.prefill.prompt_tokens > 0)
+    .map(([service, e]) => ({
+      where: where(service),
+      done: e.prefill.processed + e.prefill.cached,
+      total: e.prefill.prompt_tokens,
+    }))
+  return {
+    running,
+    prefill,
+    windowS: work?.recent?.window_s ?? 300,
+    callers: work?.recent?.callers || [],
+  }
+}
