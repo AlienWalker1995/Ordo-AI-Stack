@@ -259,3 +259,20 @@ export function statusCounts(rows) {
   }
   return counts
 }
+
+// Each compose project with its top-level rows (a service and its containers count once) and how
+// many of them are failed or unhealthy: Ordo's own project first, then the rest by name.
+/** @param {any[]} rows */
+export function projectCounts(rows) {
+  const by = new Map()
+  for (const row of rows) {
+    if (row.parent || !row.project) continue
+    const entry = by.get(row.project) || { project: row.project, count: 0, failing: 0 }
+    entry.count += 1
+    const verdict = row.group_verdict || row.verdict
+    if (verdict === 'failed' || verdict === 'unhealthy') entry.failing += 1
+    by.set(row.project, entry)
+  }
+  const ordoFirst = (entry) => (entry.project === 'ordo' ? 0 : 1)
+  return [...by.values()].sort((a, b) => ordoFirst(a) - ordoFirst(b) || a.project.localeCompare(b.project))
+}
