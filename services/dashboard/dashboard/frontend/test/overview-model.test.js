@@ -188,6 +188,9 @@ describe('kpiTiles', () => {
     expect(speed.sparkline).toBe(SERIES.series['inference-engine-cpu'])
     const none = kpiTiles({ ...FULL_OVERVIEW, chat: { state: 'none', model: null, reason: 'no server' } }, SERIES)
     expect(none.find((t) => t.key === 'chat')).toMatchObject({ value: 'Nobody', tone: 'danger', sub: 'no server' })
+    // Loading after a restart or a model switch is not an outage.
+    const starting = kpiTiles({ ...FULL_OVERVIEW, chat: { state: 'starting', model: GPU_ENGINE, reason: '' } }, SERIES)
+    expect(starting.find((t) => t.key === 'chat')).toMatchObject({ value: 'Starting', tone: 'warning', sub: 'local-chat on GPU is loading' })
     const hot = kpiTiles({ ...FULL_OVERVIEW, gpus: [{ ...FULL_OVERVIEW.gpus[0], vram_used_gb: 33.5 }] }, SERIES)
     expect(hot.find((t) => t.key === 'vram').tone).toBe('warning')
     const full = kpiTiles({ ...FULL_OVERVIEW, host: { ...FULL_OVERVIEW.host, disk_pct: 91 } }, SERIES)

@@ -105,7 +105,7 @@
     },
     {
       "id": "ordo:inference-engine-cpu",
-      "name": "llama.cpp (CPU fallback)",
+      "name": "llama.cpp (CPU)",
       "project": "ordo",
       "container": "ordo-inference-engine-cpu-1",
       "compose": "inference-engine-cpu",

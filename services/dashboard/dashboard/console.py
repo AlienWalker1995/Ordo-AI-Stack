@@ -236,7 +236,9 @@ def model_engines(registry: dict, containers_by_id: dict, status_gpu: dict | Non
 
 def chat_summary(engines: list[dict], status_gpu: dict | None) -> dict:
     """Who answers `local-chat`, the model every consumer calls, right now: its own engine, an
-    engine standing in for it, or nobody. `model` is the engine record answering, or None."""
+    engine standing in for it, its own engine still starting (after a restart or a model switch:
+    nobody answers yet, but nothing is wrong), or nobody. `model` is the engine record answering,
+    or the one starting, or None."""
     if status_gpu is None:
         return {"state": "unknown", "model": None, "reason": "The control plane did not answer"}
     primary = next((e for e in engines if e["model"] == CHAT_MODEL), None)
@@ -246,6 +248,8 @@ def chat_summary(engines: list[dict], status_gpu: dict | None) -> dict:
     stand_in = next((e for e in engines if e["standing_in"] and e["fallback_for"] == CHAT_MODEL), None)
     if stand_in:
         return {"state": "fallback", "model": stand_in, "reason": reason}
+    if primary and primary["state"] == "starting":
+        return {"state": "starting", "model": primary, "reason": (primary.get("reason") or "")}
     return {"state": "none", "model": None, "reason": reason}
 
 

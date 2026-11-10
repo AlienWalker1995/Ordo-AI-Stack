@@ -129,12 +129,12 @@ describe('sortRows', () => {
 
   it('defaults to severity then name, with finished jobs last', () => {
     expect(sortRows(ordo()).map((r) => r.name)).toEqual([
-      'Codebase Memory', 'caddy', 'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU fallback)', 'llama.cpp (GPU)',
+      'Codebase Memory', 'caddy', 'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU)', 'llama.cpp (GPU)',
       'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI', 'ops-controller', 'Qdrant', 'evals',
     ])
     // Descending flips the health order but keeps the jobs last.
     expect(sortRows(ordo(), { dir: 'desc' }).map((r) => r.name)).toEqual([
-      'caddy', 'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU fallback)', 'llama.cpp (GPU)', 'mcp-searxng',
+      'caddy', 'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU)', 'llama.cpp (GPU)', 'mcp-searxng',
       'model-gateway', 'N8N', 'Open WebUI', 'ops-controller', 'Qdrant', 'Codebase Memory', 'evals',
     ])
   })
@@ -154,11 +154,11 @@ describe('sortRows', () => {
     })
     expect(sortRows(evicted).map((r) => r.name)).toEqual([
       'Codebase Memory', 'caddy', 'ops-controller', 'llama.cpp (GPU)', 'ComfyUI', 'Hermes Agent',
-      'llama.cpp (CPU fallback)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI', 'Qdrant', 'evals',
+      'llama.cpp (CPU)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI', 'Qdrant', 'evals',
     ])
     // Descending flips the health order but keeps the lent row behind the running ones.
     expect(sortRows(evicted, { dir: 'desc' }).map((r) => r.name)).toEqual([
-      'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU fallback)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI',
+      'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI',
       'Qdrant', 'llama.cpp (GPU)', 'caddy', 'ops-controller', 'Codebase Memory', 'evals',
     ])
   })

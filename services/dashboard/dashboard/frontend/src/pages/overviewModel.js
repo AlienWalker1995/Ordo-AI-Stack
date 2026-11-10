@@ -233,11 +233,14 @@ export function kpiTiles(overview, perf) {
     tiles.push({
       key: 'chat',
       label: 'Chat answered by',
-      value: answering ? deviceLabel(answering.device) : 'Nobody',
+      // Starting: the chat model's own engine is loading (after a restart or a model switch);
+      // nobody answers yet, but nothing is wrong.
+      value: chat.state === 'starting' ? 'Starting' : answering ? deviceLabel(answering.device) : 'Nobody',
       sub: chat.state === 'fallback' ? `${answering.model} standing in · ${chat.reason}`
-        : chat.state === 'none' ? chat.reason
-          : answering?.model || '',
-      tone: chat.state === 'none' ? 'danger' : chat.state === 'fallback' ? 'warning' : 'fg',
+        : chat.state === 'starting' ? `${answering.model} on ${deviceLabel(answering.device)} is loading`
+          : chat.state === 'none' ? chat.reason
+            : answering?.model || '',
+      tone: chat.state === 'none' ? 'danger' : chat.state === 'fallback' || chat.state === 'starting' ? 'warning' : 'fg',
       title: 'chat from /api/overview',
     })
     const speed = answering?.speeds?.generation_tps

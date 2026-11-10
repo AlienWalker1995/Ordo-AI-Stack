@@ -199,6 +199,23 @@ def test_no_one_answers_chat_when_both_engines_are_down():
     assert console.chat_summary(engines, IDLE)["state"] == "none"
 
 
+def test_chat_whose_engine_is_starting_reads_starting_not_nobody():
+    # The minute after a restart or a model switch: the health check has not passed yet.
+    engines = console.model_engines(REGISTRY, containers(
+        inference_engine_gpu={"state": "running", "health": "starting", "status": "Up 20 seconds (health: starting)"},
+        inference_engine_cpu={"state": "exited", "status": "Exited (0) now"}), IDLE, None)
+    summary = console.chat_summary(engines, IDLE)
+    assert summary["state"] == "starting" and summary["model"]["model"] == "local-chat"
+
+
+def test_a_serving_stand_in_answers_while_the_engine_starts():
+    engines = console.model_engines(REGISTRY, containers(
+        inference_engine_gpu={"state": "running", "health": "starting", "status": "Up 20 seconds (health: starting)"}),
+        IDLE, None)
+    summary = console.chat_summary(engines, IDLE)
+    assert summary["state"] == "fallback" and summary["model"]["model"] == "local-chat-cpu"
+
+
 def test_unknown_control_plane_state_is_reported_not_guessed():
     assert console.chat_summary([], None)["state"] == "unknown"
 
