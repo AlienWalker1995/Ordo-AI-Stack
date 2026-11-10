@@ -161,6 +161,21 @@ def client(dashboard_operator_headers, monkeypatch, tmp_path):
     # service-pressure reaches ops-controller through _ops_request, which needs the token.
     monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "fixture-ops-token")
 
+    # GET /api/work: one request running on the CPU fallback (so its prefill is read) and one
+    # finished, so every list in the answer has an element to compare.
+    from dashboard import live_work
+    store = live_work.WorkStore()
+    now = time.time()
+    store.started({"call_id": "running", "caller": "hermes", "model_group": "local-chat", "model": CPU_FILE,
+                   "deployment": "inference-engine-cpu", "prompt_tokens": 4000, "fallback": True,
+                   "started_at": now - 30}, now)
+    store.ended({"call_id": "done", "caller": "hermes", "model_group": "local-chat", "model": GPU_FILE,
+                 "deployment": "inference-engine-gpu", "prompt_tokens": 1200, "completion_tokens": 80,
+                 "outcome": "ok", "started_at": now - 20, "ended_at": now - 5}, now)
+    monkeypatch.setattr(dashboard_app, "_work_store", store)
+    monkeypatch.setattr(dashboard_app, "_cpu_prefill", AsyncMock(return_value={
+        "available": True, "processing": True, "prompt_tokens": 4000, "processed": 1000, "cached": 500}))
+
     async def ops_json(path, timeout=None):
         return OPS.get(path)
 
@@ -246,6 +261,7 @@ REAL_REQUESTS = {
     "api/perf/grafana.json": ("GET", "/api/perf/grafana", None),
     "api/auth/session.json": ("GET", "/api/auth/session", None),
     "api/diagnostics.json": ("GET", "/api/diagnostics", None),
+    "api/work.json": ("GET", "/api/work", None),
 }
 
 

@@ -1,0 +1,57 @@
+{
+  "inflight": [
+    {
+      "call_id": "call-1",
+      "caller": "hermes",
+      "model_group": "local-chat",
+      "model": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf",
+      "deployment": "inference-engine-gpu",
+      "prompt_tokens": 62149,
+      "fallback": false,
+      "started_at": 1790600000.0,
+      "running_s": 84.1
+    },
+    {
+      "call_id": "call-2",
+      "caller": "open-webui",
+      "model_group": "local-chat",
+      "model": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+      "deployment": "inference-engine-cpu",
+      "prompt_tokens": 40000,
+      "fallback": true,
+      "started_at": 1790600030.0,
+      "running_s": 54.0
+    }
+  ],
+  "recent": {
+    "window_s": 300,
+    "callers": [
+      {
+        "caller": "hermes",
+        "requests": 28,
+        "errors": 1,
+        "prompt_tokens": 2244094,
+        "completion_tokens": 38192,
+        "p50_latency_s": 15.9,
+        "last_seen": 1790600080.0
+      }
+    ]
+  },
+  "engines": {
+    "inference-engine-gpu": {
+      "inflight": 1,
+      "prefill": null
+    },
+    "inference-engine-cpu": {
+      "inflight": 1,
+      "prefill": {
+        "available": true,
+        "processing": true,
+        "prompt_tokens": 40000,
+        "processed": 9000,
+        "cached": 3000
+      }
+    }
+  },
+  "generated_at": 1790600084.1
+}
