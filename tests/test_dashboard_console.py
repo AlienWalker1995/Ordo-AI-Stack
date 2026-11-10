@@ -770,3 +770,71 @@ def test_medians_say_whether_they_are_provisional():
     assert slots["gpu"]["provisional"] is False and slots["cpu"]["provisional"] is True
     # no samples at all is not provisional, it is absent
     assert console.chat_medians({}, {"gpu": None, "cpu": None}, {})["cpu"]["provisional"] is False
+
+
+# ---- one row per service: a group's containers list under its main row ----
+
+def _svc(name, state="running", health="healthy", status="Up 1 hour (healthy)"):
+    return {"id": name, "name": f"ordo-{name}-1", "state": state, "health": health, "status": status}
+
+
+LANGFUSE_CARD = {**PROBE_CARD, "plugin": "langfuse"}
+STT_CARD = {"id": "stt", "name": "Speech-to-Text", "plugin": "voice", "ops_service": "stt", "ok": True}
+TTS_CARD = {"id": "tts", "name": "Text-to-Speech", "plugin": "voice", "ops_service": "tts", "ok": True}
+GROUP_SERVICES = {
+    "langfuse-web": _svc("langfuse-web"),
+    "langfuse-db": _svc("langfuse-db"),
+    "langfuse-minio-lifecycle": _svc("langfuse-minio-lifecycle", "exited", None, "Exited (0) 2 hours ago"),
+    "stt": _svc("stt"), "tts": _svc("tts"),
+    "prometheus": _svc("prometheus"), "grafana": _svc("grafana"),
+    "evals": ORDO_SERVICES["evals"],
+}
+GROUPS = [
+    {"id": "langfuse", "name": "Langfuse", "services": ["langfuse-web", "langfuse-db", "langfuse-minio-lifecycle"]},
+    {"id": "voice", "name": "Voice", "services": ["stt", "tts"]},
+    {"id": "monitoring", "name": "Monitoring", "services": ["prometheus", "grafana"]},
+]
+
+
+def _grouped(services=GROUP_SERVICES, groups=GROUPS):
+    return _by_id(console.build_service_table([LANGFUSE_CARD, STT_CARD, TTS_CARD], services, groups=groups))
+
+
+def test_a_services_containers_list_under_its_one_card():
+    rows = _grouped()
+    for part in ("ordo:langfuse-web", "ordo:langfuse-db", "ordo:langfuse-minio-lifecycle"):
+        assert rows[part]["parent"] == "link:langfuse"
+    assert rows["link:langfuse"]["parent"] is None
+    # A finished one-shot job is not a problem: the service reads as running.
+    assert rows["link:langfuse"]["group_verdict"] == "up"
+    assert rows["ordo:evals"]["parent"] is None and rows["ordo:evals"]["group_verdict"] is None
+
+
+def test_a_group_without_a_single_card_gets_a_row_of_its_own():
+    rows = _grouped()
+    for gid, name, parts in (("voice", "Voice", ["stt", "tts"]), ("monitoring", "Monitoring", ["prometheus", "grafana"])):
+        main = rows[f"group:{gid}"]
+        assert main["name"] == name and main["control"] == "group" and main["actions"] == []
+        assert main["container"] is None and main["verdict"] == "up" and main["parent"] is None
+        assert {i for i, r in rows.items() if r["parent"] == f"group:{gid}"} == {f"ordo:{p}" for p in parts}
+
+
+def test_a_failed_part_shows_on_its_services_row():
+    services = {**GROUP_SERVICES, "langfuse-db": _svc("langfuse-db", "exited", None, "Exited (1) 5 minutes ago"),
+                "grafana": _svc("grafana", "running", "unhealthy", "Up 1 hour (unhealthy)")}
+    rows = _grouped(services)
+    assert rows["link:langfuse"]["verdict"] == "up"  # the card's own probe still passes
+    assert rows["link:langfuse"]["group_verdict"] == "failed"
+    assert rows["group:monitoring"]["verdict"] == "unhealthy"
+
+
+def test_without_groups_every_container_is_its_own_row():
+    rows = _grouped(groups=[])
+    assert not any(r["parent"] for r in rows.values())
+    assert not any(i.startswith("group:") for i in rows)
+
+
+def test_grouping_leaves_the_container_counts_alone():
+    counts = console.service_counts(list(_grouped().values()))
+    ungrouped = console.service_counts(list(_grouped(groups=[]).values()))
+    assert counts == ungrouped

@@ -477,12 +477,16 @@ def _table_row(*, row_id: str, name: str, project: str | None, container: str | 
                lent: bool, actions: list[str], control: str, reason: str | None = None) -> dict:
     """One Services row. `control` says which routes act on it: "ordo" (the lifecycle routes),
     "managed" (a managed project's logs and restart), "host" (only the host can cycle it), "link"
-    (a probe-only card) or "none" (read-only, `reason` says why)."""
+    (a probe-only card), "group" (a row standing for several containers, with no controls of its
+    own) or "none" (read-only, `reason` says why).
+
+    `parent` is the id of the row a container is listed under (_nest_groups), and `group_verdict`
+    the worst state across a row and the rows listed under it; both None for a row not in a group."""
     return {
         "id": row_id, "name": name, "project": project, "container": container, "compose": compose,
         "card_id": card_id, "verdict": verdict, "uptime": uptime_from_status(status), "status": status,
         "open_url": open_url, "error": error, "lent": lent, "actions": actions, "control": control,
-        "reason": reason,
+        "reason": reason, "parent": None, "group_verdict": None,
     }
 
 
@@ -556,6 +560,54 @@ def _card_container(card: dict, containers_by_id: dict) -> str | None:
     return None
 
 
+# Worst first: the state a group shows is the worst of its containers'. A finished one-shot job is
+# no problem, and a resident lent to a render is away on purpose, so neither darkens its group.
+_GROUP_VERDICT_RANK = ("failed", "unhealthy", "starting", "stopped", "unknown", "up", "done")
+
+
+def _group_verdict(rows: list[dict]) -> str:
+    verdicts = ["up" if row["lent"] else row["verdict"] for row in rows]
+    return min(verdicts, key=lambda v: _GROUP_VERDICT_RANK.index(v) if v in _GROUP_VERDICT_RANK else 4)
+
+
+def _nest_groups(rows: list[dict], groups: list[dict], cards: list[dict]) -> list[dict]:
+    """List each group's containers under one row: the group's dashboard card when exactly one card
+    stands for it (a card whose `plugin`, or for a core card its id, is the group's id), else a row
+    of its own named after the group. The listed rows stay in the table with `parent` set, so
+    everything that reads one container (counts, action confirmation) still finds it; the main
+    row's `group_verdict` carries the worst state, so a failed part is never hidden."""
+    owner_of_card = {card.get("id"): card.get("plugin") or card.get("id") for card in cards or []}
+    by_compose = {row["compose"]: row for row in rows if row["compose"]}
+    out = list(rows)
+    for group in groups or []:
+        gid = group.get("id")
+        members = [by_compose[s] for s in group.get("services") or [] if s in by_compose]
+        card_rows = [row for row in rows if row["card_id"] and owner_of_card.get(row["card_id"]) == gid]
+        if len(card_rows) == 1:
+            main = card_rows[0]
+        else:
+            main = _table_row(
+                row_id=f"group:{gid}", name=group.get("name") or gid, project=ORDO_PROJECT, container=None,
+                compose=None, card_id=None, verdict="unknown", status=None, open_url=None, error=None,
+                lent=False, actions=[], control="group",
+            )
+        children = []
+        for row in [*card_rows, *members]:
+            if row is not main and row not in children:
+                children.append(row)
+        if not children:
+            continue
+        if main["id"].startswith("group:"):
+            out.append(main)
+        for row in children:
+            row["parent"] = main["id"]
+        main["group_verdict"] = _group_verdict(
+            children if main["control"] == "group" else [main, *children])
+        if main["control"] == "group":
+            main["verdict"] = main["group_verdict"]
+    return out
+
+
 def _sort_key(row: dict) -> tuple:
     """Ordo first, then the other projects alphabetically, then containers compose did not start."""
     project = row["project"]
@@ -565,11 +617,13 @@ def _sort_key(row: dict) -> tuple:
 
 def build_service_table(cards: list[dict], containers_by_id: dict,
                         status_gpu: dict | None = None, control_plane_up: bool = True,
-                        host_containers: list[dict] | None = None, managed: dict | None = None) -> list[dict]:
+                        host_containers: list[dict] | None = None, managed: dict | None = None,
+                        groups: list[dict] | None = None) -> list[dict]:
     """Every container on the host as one flat, sorted list. Ordo's rows come from its catalog cards
     (friendly names, Open links, probe-only cards) and ops-controller's /services; every other
     container from the host-wide /containers, enriched by the managed projects' /projects. With the
-    control plane down, a row bound to a container is `unknown` and offers no actions."""
+    control plane down, a row bound to a container is `unknown` and offers no actions. `groups`
+    (the manifest's service_groups) nests the containers of one service under one row."""
     evicted = set((status_gpu or {}).get("evicted_residents") or {})
     containers_by_id = containers_by_id or {}
     rows: list[dict] = []
@@ -586,6 +640,7 @@ def build_service_table(cards: list[dict], containers_by_id: dict,
     for sid, container in sorted(containers_by_id.items()):
         if sid not in claimed:
             rows.append(_ordo_row(sid, sid, container, lent=sid in evicted))
+    rows = _nest_groups(rows, groups or [], cards or [])
 
     ordo_names = {c.get("name") for c in containers_by_id.values() if c.get("name")}
     managed_projects = None if managed is None else {p.get("project") for p in managed.get("projects") or []}

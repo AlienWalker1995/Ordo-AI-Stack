@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from dashboard import console
+from dashboard.services_catalog import load_service_groups
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["console"])
@@ -278,7 +279,7 @@ async def services_table() -> dict:
     control_plane_up = services is not None
     rows = console.build_service_table(cards, _containers(services), (status or {}).get("gpu"),
                                        control_plane_up=control_plane_up, host_containers=host_containers,
-                                       managed=managed)
+                                       managed=managed, groups=load_service_groups())
     # host_containers: whether the rows outside the ordo project could be read at all.
     return {"rows": rows, "control_plane": "up" if control_plane_up else "down",
             "host_containers": "up" if host_containers is not None else "down"}
