@@ -370,14 +370,14 @@ function AppLauncher({ apps }) {
   }
   return (
     <div className="grid gap-4">
-      {groups.map((g) => (
-        <section key={g.name} aria-labelledby={`apps-${g.name}`} className="grid gap-2">
-          <h3 id={`apps-${g.name}`} className="text-label text-muted">{g.name}</h3>
+      {groups.map((g, i) => (
+        <section key={g.name} aria-labelledby={`apps-group-${i}`} className="grid gap-2">
+          <h3 id={`apps-group-${i}`} className="text-label text-muted">{g.name}</h3>
           <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {g.apps.map((a) => {
               const status = APP_STATUS[a.status] || APP_STATUS.unknown
               return (
-                <li key={a.url} className="min-w-0">
+                <li key={`${a.name} ${a.url}`} className="min-w-0">
                   <a href={a.url} target="_blank" rel="noreferrer"
                      className="grid h-full min-w-0 grid-cols-[auto_1fr] items-baseline gap-x-2.5 gap-y-0.5 rounded-sm border border-border-subtle bg-bg px-3 py-2.5 no-underline transition-colors hover:border-accent/40 hover:bg-surface-hover">
                     <Dot tone={status.tone} />

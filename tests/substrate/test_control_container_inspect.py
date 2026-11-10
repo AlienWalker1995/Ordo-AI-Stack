@@ -134,9 +134,9 @@ def test_a_container_outside_compose_has_empty_project_and_service():
 
 def test_homepage_labels_give_the_row_a_launcher_link():
     # The Homepage convention (gethomepage.dev): href is required, the rest optional.
-    line = "jellyfin\trunning\tjellyfin\tnas-stack\tjellyfin\tUp 4 days\tJellyfin\thttp://ultracam:8096\tMedia server\tMedia"
+    line = "jellyfin\trunning\tjellyfin\tnas-stack\tjellyfin\tUp 4 days\tJellyfin\thttp://host:8096\tMedia server\tMedia"
     assert broker_module.DockerBackend.container_row(line)["link"] == {
-        "href": "http://ultracam:8096", "name": "Jellyfin", "description": "Media server", "group": "Media"}
+        "href": "http://host:8096", "name": "Jellyfin", "description": "Media server", "group": "Media"}
 
 
 def test_labels_without_an_href_give_no_link():
@@ -154,6 +154,9 @@ def test_compose_labels_read_either_form():
     assert broker_module.compose_labels({"labels": {"homepage.href": "http://x"}}) == {"homepage.href": "http://x"}
     assert broker_module.compose_labels({"labels": ["homepage.href=http://x=y", "flag"]}) == {"homepage.href": "http://x=y"}
     assert broker_module.compose_labels({}) == {}
+    # An empty value is "" (as docker reports it), so it gives no link, the same on both backends.
+    assert broker_module.compose_labels({"labels": {"homepage.href": None}}) == {"homepage.href": ""}
+    assert broker_module.link_from_labels(broker_module.compose_labels({"labels": {"homepage.href": None}})) is None
 
 
 def test_a_malformed_ps_line_is_skipped():

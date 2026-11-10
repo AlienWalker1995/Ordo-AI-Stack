@@ -346,7 +346,8 @@ def compose_labels(spec: dict) -> dict[str, str]:
     """A compose service's `labels:` in either form compose accepts (a map, or KEY=VALUE strings)."""
     labels = spec.get("labels") or {}
     if isinstance(labels, dict):
-        return {str(k): str(v) for k, v in labels.items()}
+        # `key:` with no value is null in YAML; docker reports such a label as "".
+        return {str(k): "" if v is None else str(v) for k, v in labels.items()}
     return dict(str(item).split("=", 1) for item in labels if "=" in str(item))
 
 

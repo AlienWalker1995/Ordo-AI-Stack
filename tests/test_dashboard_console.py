@@ -877,3 +877,16 @@ def test_a_labelled_containers_status_follows_its_verdict():
 
 def test_no_cards_and_no_host_list_is_no_apps():
     assert console.launcher_apps([], None) == []
+
+
+def test_only_http_links_become_apps():
+    host = [_labelled("evil", "javascript:alert(1)"), _labelled("ftp", "ftp://files/"),
+            _labelled("ok", "HTTPS://fine.example/", label_name="Fine")]
+    cards = [{"id": "x", "name": "X", "open_url": "data:text/html,hi", "ok": True}]
+    assert [a["name"] for a in console.launcher_apps(cards, host)] == ["Fine"]
+
+
+def test_groups_differing_only_in_case_are_one_group():
+    host = [_labelled("a", "http://a/", group="Media", label_name="A"),
+            _labelled("b", "http://b/", group="media", label_name="B")]
+    assert [a["group"] for a in console.launcher_apps([], host)] == ["Media", "Media"]
