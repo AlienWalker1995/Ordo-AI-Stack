@@ -231,6 +231,32 @@ def test_an_unwritable_dismissals_file_degrades_instead_of_failing_the_overview(
     assert diagnostics._failures[-1]["code"] == "DEP-FS-UNWRITABLE"
 
 
+@pytest.mark.parametrize("verb, body, detail", [
+    ("dismiss", {"id": "disk"}, "The data volume could not be written, so the item is still listed"),
+    ("restore", {"id": "disk"}, "The data volume could not be written, so the item is still dismissed"),
+])
+def test_a_click_on_an_unwritable_volume_answers_503_and_records_the_failure(live, dismissals_file,
+                                                                             verb, body, detail):
+    """A click that cannot persist its change answers like the file's other dependency failures:
+    503 with a clear detail (the toast shows it), and DEP-FS-UNWRITABLE in diagnostics even when
+    the polls' pruning has nothing to remove."""
+    from dashboard import diagnostics
+
+    # restore only saves once it actually removed an entry; seed one so save runs.
+    if verb == "restore":
+        dismissals_file.write_text(json.dumps({"disk": 1.0}))
+    with patch.object(routes_console.attention_store, "save", side_effect=OSError(28, "No space left on device")):
+        response = live.post(f"/api/attention/{verb}", json=body)
+    assert response.status_code == 503
+    assert response.json()["detail"] == detail
+    assert diagnostics._failures[-1]["code"] == "DEP-FS-UNWRITABLE"
+    # Nothing persisted: the dismiss never wrote, and the restore left its entry in place.
+    if verb == "dismiss":
+        assert not dismissals_file.exists()
+    else:
+        assert json.loads(dismissals_file.read_text()) == {"disk": 1.0}
+
+
 def test_restoring_an_id_that_is_not_dismissed_changes_nothing(live, dismissals_file):
     dismissals_file.write_text(json.dumps({"disk": 1.0}))
     assert live.post("/api/attention/restore", json={"id": "failed:never-dismissed"}).json() == {"ok": True}

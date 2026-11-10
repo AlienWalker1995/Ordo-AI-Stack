@@ -302,14 +302,29 @@ def _dismiss(item_id: str) -> None:
     path = _dismissals_path()
     dismissed = attention_store.load(path)
     dismissed[item_id] = time.time()
-    attention_store.save(path, dismissed)
+    try:
+        attention_store.save(path, dismissed)
+    except OSError as e:
+        # A failed write on a click surfaces to the person who clicked: answer it like the
+        # other dependency failures in this file (503 + clear detail), and record it in
+        # diagnostics so an unwritable volume is visible even when the polls' pruning
+        # removes nothing.
+        diagnostics.record_failure("FS", "UNWRITABLE", f"{type(e).__name__}: {e.strerror or e}",
+                                   target=attention_store.FILE_NAME, elapsed_ms=0)
+        raise HTTPException(status_code=503, detail="The data volume could not be written, so the item is still listed")
 
 
 def _restore(item_id: str) -> None:
     path = _dismissals_path()
     dismissed = attention_store.load(path)
     if dismissed.pop(item_id, None) is not None:
-        attention_store.save(path, dismissed)
+        try:
+            attention_store.save(path, dismissed)
+        except OSError as e:
+            # Same as _dismiss: 503 + clear detail, and the failure lands in diagnostics.
+            diagnostics.record_failure("FS", "UNWRITABLE", f"{type(e).__name__}: {e.strerror or e}",
+                                       target=attention_store.FILE_NAME, elapsed_ms=0)
+            raise HTTPException(status_code=503, detail="The data volume could not be written, so the item is still dismissed")
 
 
 async def _apply_dismissals(items: list[dict], read: set[str]) -> tuple[list[dict], list[dict]]:
