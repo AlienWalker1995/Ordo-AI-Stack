@@ -1,7 +1,8 @@
 // The viewer's colour theme. 'auto' follows the operating system; 'light' and 'dark' pin one.
 // The choice is a per-viewer convenience kept in localStorage (it may be unavailable, in which case
 // the page simply follows the OS). The resolved theme is written to <html data-theme>, which
-// selects the palette in src/index.css.
+// selects the palette in src/index.css. Before the first paint, public/theme-init.js makes the same
+// choice (it has to run before this module loads).
 import { createContext, useContext, useEffect, useState } from 'react'
 
 const STORAGE_KEY = 'ordo.theme'
@@ -38,11 +39,6 @@ function systemPrefersLight() {
 export function resolveTheme(choice) {
   if (choice === 'light' || choice === 'dark') return choice
   return systemPrefersLight() ? 'light' : 'dark'
-}
-
-/** Set the palette before the first render, so the page never flashes the other theme. */
-export function applyThemeChoice(choice) {
-  document.documentElement.dataset.theme = resolveTheme(choice)
 }
 
 // The type is declared, not inferred from the no-op default, so setChoice(value) typechecks.

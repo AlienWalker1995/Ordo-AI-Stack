@@ -3,7 +3,10 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import PerformancePage from '../src/pages/PerformancePage.jsx'
-import { ThemeProvider, THEME_CHOICES, useTheme } from '../src/lib/theme.jsx'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import process from 'node:process'
+import { readThemeChoice, resolveTheme, ThemeProvider, THEME_CHOICES, useTheme } from '../src/lib/theme.jsx'
 import { mockApi } from './mockApi.js'
 
 // A controllable prefers-color-scheme: `os.light` is what the OS says; `os.flip()` changes it.
@@ -95,5 +98,38 @@ describe('the colour theme', () => {
     expect(ctx.resolved).toBe('dark')
     expect(typeof ctx.setChoice).toBe('function')
     expect(() => ctx.setChoice('light')).not.toThrow()
+  })
+})
+
+// public/theme-init.js runs in <head> before the app, so the first paint already has the palette.
+const INIT_SCRIPT = readFileSync(join(process.cwd(), 'public', 'theme-init.js'), 'utf-8')
+
+describe('the pre-paint theme script', () => {
+  it('agrees with the app for every stored choice and OS preference', () => {
+    for (const stored of [null, 'auto', 'light', 'dark', 'neon']) {
+      for (const osLight of [true, false]) {
+        fakeOs(osLight)
+        localStorage.clear()
+        if (stored !== null) localStorage.setItem('ordo.theme', stored)
+        delete document.documentElement.dataset.theme
+        new Function(INIT_SCRIPT)()
+        expect(document.documentElement.dataset.theme, `stored=${stored} osLight=${osLight}`)
+          .toBe(resolveTheme(readThemeChoice()))
+      }
+    }
+  })
+
+  it('follows the OS when storage is blocked', () => {
+    fakeOs(true)
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
+    new Function(INIT_SCRIPT)()
+    expect(document.documentElement.dataset.theme).toBe('light')
+    vi.restoreAllMocks()
+  })
+
+  it('is loaded by the page as a blocking script in <head>', () => {
+    const html = readFileSync(join(process.cwd(), 'index.html'), 'utf-8')
+    const head = html.slice(0, html.indexOf('</head>'))
+    expect(head).toMatch(/<script src="\/theme-init\.js"><\/script>/)
   })
 })
