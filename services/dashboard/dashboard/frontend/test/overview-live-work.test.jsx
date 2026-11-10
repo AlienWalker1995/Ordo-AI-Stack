@@ -65,6 +65,11 @@ describe('liveWork', () => {
     expect(running[0].where).toBe('vendor-engine')
   })
 
+  it('leaves out a prompt already read in full: the slot is generating', () => {
+    const work = { engines: { 'inference-engine-cpu': { prefill: { available: true, processing: true, prompt_tokens: 40000, processed: 37000, cached: 3000 } } } }
+    expect(liveWork(work, []).prefill).toEqual([])
+  })
+
   it('skips prefill for an engine that is not reading a prompt', () => {
     const work = { engines: { 'inference-engine-cpu': { prefill: { available: true, processing: false, prompt_tokens: 0, processed: 0, cached: 0 } } } }
     expect(liveWork(work, []).prefill).toEqual([])

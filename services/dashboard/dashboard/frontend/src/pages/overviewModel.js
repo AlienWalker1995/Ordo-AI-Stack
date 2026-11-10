@@ -324,9 +324,12 @@ export function liveWork(work, engines) {
     runningS: r.running_s,
     fallback: !!r.fallback,
   }))
-  // Prefill progress is read only for an engine that serves it (the CPU fallback's /slots).
+  // Prefill progress is read only for an engine that serves it (the CPU fallback's /slots). A slot
+  // stays `processing` while it generates too (llama.cpp: any state but idle), so a prompt already
+  // read in full is generation, not prefill, and is left out.
   const prefill = Object.entries(work?.engines || {})
-    .filter(([, e]) => e?.prefill?.available && e.prefill.processing && e.prefill.prompt_tokens > 0)
+    .filter(([, e]) => e?.prefill?.available && e.prefill.processing && e.prefill.prompt_tokens > 0
+      && e.prefill.processed + e.prefill.cached < e.prefill.prompt_tokens)
     .map(([service, e]) => ({
       where: where(service),
       done: e.prefill.processed + e.prefill.cached,
