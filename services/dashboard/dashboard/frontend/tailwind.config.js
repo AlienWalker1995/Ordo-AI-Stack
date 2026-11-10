@@ -1,35 +1,31 @@
 /** @type {import('tailwindcss').Config} */
-// The "Ordo Nexus" dark theme, ported from the legacy dashboard's CSS custom properties
-// into Tailwind design tokens. Components now style with utilities that reference these
+// The "Ordo Nexus" theme as Tailwind design tokens: a dark and a light palette, chosen per viewer
+// (src/lib/theme.js). Components now style with utilities that reference these
 // (bg-bg, text-fg, border-border, text-accent, …); a small @layer in src/index.css keeps
 // only the keyframe/pseudo-element effects that are awkward as inline utilities.
 export default {
   content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
   theme: {
     extend: {
+      // Every colour is a theme variable (src/index.css defines the dark and light values), written
+      // as RGB channels so opacity modifiers such as bg-accent/[0.12] keep working.
       colors: {
-        // Surfaces — neutral graphite, a hair warm. Deliberately NOT the slate-indigo /
-        // blue-charcoal (#0c0e15) default dark theme; elevation reads through tone, not hue.
-        bg: '#0a0a0b',
-        'bg-elevated': '#111113',
-        surface: '#161618',
-        'surface-hover': '#1e1e21',
-        card: '#161618',
-        border: '#2b2b30',
-        'border-subtle': '#1f1f23',
-        // Text — neutral, blue cast removed so it reads as ink on graphite, not tinted glass.
-        fg: '#eaeaec',
-        'fg-muted': '#9a9aa3',
-        muted: '#9a9aa3',
-        // Accent: a single disciplined cyan, slightly tempered from electric so it can
-        // carry state without shouting. Held as the ONLY chromatic accent across the UI.
-        accent: '#2bb8e6',
-        'accent-soft': '#63cdee',
-        // Semantic — reserved for state only, tuned to sit on graphite without neon glare.
-        success: '#2bb673',
-        warning: '#e0a52e',
-        danger: '#e5495f',
-        info: '#5a7290',
+        bg: 'rgb(var(--c-bg) / <alpha-value>)',
+        'bg-elevated': 'rgb(var(--c-bg-elevated) / <alpha-value>)',
+        surface: 'rgb(var(--c-surface) / <alpha-value>)',
+        'surface-hover': 'rgb(var(--c-surface-hover) / <alpha-value>)',
+        card: 'rgb(var(--c-card) / <alpha-value>)',
+        border: 'rgb(var(--c-border) / <alpha-value>)',
+        'border-subtle': 'rgb(var(--c-border-subtle) / <alpha-value>)',
+        fg: 'rgb(var(--c-fg) / <alpha-value>)',
+        'fg-muted': 'rgb(var(--c-fg-muted) / <alpha-value>)',
+        muted: 'rgb(var(--c-muted) / <alpha-value>)',
+        accent: 'rgb(var(--c-accent) / <alpha-value>)',
+        'accent-soft': 'rgb(var(--c-accent-soft) / <alpha-value>)',
+        success: 'rgb(var(--c-success) / <alpha-value>)',
+        warning: 'rgb(var(--c-warning) / <alpha-value>)',
+        danger: 'rgb(var(--c-danger) / <alpha-value>)',
+        info: 'rgb(var(--c-info) / <alpha-value>)',
       },
       fontFamily: {
         // Native system-font stacks — fully self-contained, zero external font hosts.

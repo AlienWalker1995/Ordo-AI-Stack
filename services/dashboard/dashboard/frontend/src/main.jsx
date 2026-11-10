@@ -2,12 +2,17 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
 import { HostStepsProvider } from './components/HostSteps.jsx'
+import { applyThemeChoice, readThemeChoice, ThemeProvider } from './lib/theme.jsx'
 import './index.css'
+
+applyThemeChoice(readThemeChoice())
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <HostStepsProvider>
-      <App />
-    </HostStepsProvider>
+    <ThemeProvider>
+      <HostStepsProvider>
+        <App />
+      </HostStepsProvider>
+    </ThemeProvider>
   </React.StrictMode>,
 )
