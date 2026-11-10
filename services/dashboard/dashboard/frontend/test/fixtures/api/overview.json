@@ -78,7 +78,7 @@
   },
   "attention": [
     {
-      "id": "failed:media-server",
+      "id": "host-failed:media-server",
       "severity": "critical",
       "title": "media-server exited with an error",
       "detail": "media-stack: Exited (1) 2 days ago",
