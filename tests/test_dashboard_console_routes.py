@@ -239,7 +239,8 @@ def test_a_click_on_an_unwritable_volume_answers_503_and_records_the_failure(liv
                                                                              verb, body, detail):
     """A click that cannot persist its change answers like the file's other dependency failures:
     503 with a clear detail (the toast shows it), and DEP-FS-UNWRITABLE in diagnostics even when
-    the polls' pruning has nothing to remove."""
+    the polls' pruning has nothing to remove. A later successful click writes and clears the
+    recorded failure again."""
     from dashboard import diagnostics
 
     # restore only saves once it actually removed an entry; seed one so save runs.
@@ -255,6 +256,11 @@ def test_a_click_on_an_unwritable_volume_answers_503_and_records_the_failure(liv
         assert not dismissals_file.exists()
     else:
         assert json.loads(dismissals_file.read_text()) == {"disk": 1.0}
+
+    # The volume answers again: the successful write clears the recorded failure.
+    assert live.post(f"/api/attention/{verb}", json=body).json() == {"ok": True}
+    fs_status = diagnostics._dep_status[("FS", None)]
+    assert fs_status["consecutive_failures"] == 0 and fs_status["last_ok"] is not None
 
 
 def test_restoring_an_id_that_is_not_dismissed_changes_nothing(live, dismissals_file):

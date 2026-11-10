@@ -304,6 +304,9 @@ def _dismiss(item_id: str) -> None:
     dismissed[item_id] = time.time()
     try:
         attention_store.save(path, dismissed)
+        # A write that lands means the volume answers again: clear the recorded failure the
+        # way the polls' pruning does.
+        diagnostics.mark_ok("FS")
     except OSError as e:
         # A failed write on a click surfaces to the person who clicked: answer it like the
         # other dependency failures in this file (503 + clear detail), and record it in
@@ -320,6 +323,9 @@ def _restore(item_id: str) -> None:
     if dismissed.pop(item_id, None) is not None:
         try:
             attention_store.save(path, dismissed)
+            # A write that lands means the volume answers again: clear the recorded failure
+            # the way the polls' pruning does.
+            diagnostics.mark_ok("FS")
         except OSError as e:
             # Same as _dismiss: 503 + clear detail, and the failure lands in diagnostics.
             diagnostics.record_failure("FS", "UNWRITABLE", f"{type(e).__name__}: {e.strerror or e}",
