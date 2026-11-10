@@ -36,7 +36,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/work/events` | POST | `X-Throughput-Token` when `THROUGHPUT_RECORD_TOKEN` is set | A model request attempt started or ended (called by model-gateway); kept in memory only |
 | `/api/work` | GET | None | Requests in flight per engine, a five-minute per-caller summary, the CPU fallback's prefill progress (`/slots`) |
 | `/api/throughput/benchmark` | POST | Y | Short generation against `local-chat` |
-| `/api/perf/series` | GET | None | Tokens per second per chat server (Prometheus) |
+| `/api/perf/series` | GET | None | Tokens generated per second per engine, keyed by engine service name (Prometheus) |
 | `/api/perf/grafana` | GET | None | Whether Grafana is up + the embed path (Performance page) |
 | `/api/orchestration/readiness` | GET | None | Orchestration readiness check |
 | `/api/orchestration/workflows*`, `/validate`, `/outputs` | GET/POST | Y | Workflow store used by the orchestration MCP server (`services/orchestration/server.py`) |
