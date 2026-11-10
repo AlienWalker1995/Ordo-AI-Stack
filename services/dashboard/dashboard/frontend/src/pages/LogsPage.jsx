@@ -5,7 +5,7 @@
 // Below lg each table is a list of cards, like the Services page.
 import { useMemo, useState } from 'react'
 import { api, usePolling } from '../api.js'
-import { Dot, INPUT, Panel, Skeleton, Unavailable } from '../components/ui.jsx'
+import { BTN, Dot, INPUT, Panel, Skeleton, Unavailable } from '../components/ui.jsx'
 import { formatElapsed, timeAgo } from '../lib/format.js'
 
 const STATUS_TONE = { ok: 'ok', failing: 'failed', unknown: 'unknown' }
@@ -28,15 +28,16 @@ function When({ at }) {
   return <time dateTime={when.toISOString()} title={when.toLocaleString()}>{timeAgo(at)}</time>
 }
 
-// Failing dependencies first, then the ones not seen yet, then the healthy: a failure never sits
-// below twenty OK rows. The server's order is kept within each.
-const STATUS_ORDER = { failing: 0, unknown: 1, ok: 2 }
+// Failing dependencies first, then the healthy, then the ones not seen yet (no call has reached
+// them, which is not trouble): a failure never sits below twenty OK rows. The server's order is
+// kept within each.
+const STATUS_ORDER = { failing: 0, ok: 1, unknown: 2 }
 
 /** @param {any[]} rows */
 export function worstFirst(rows) {
   return rows
     .map((row, i) => ({ row, i }))
-    .sort((a, b) => ((STATUS_ORDER[a.row.status] ?? 1) - (STATUS_ORDER[b.row.status] ?? 1)) || a.i - b.i)
+    .sort((a, b) => ((STATUS_ORDER[a.row.status] ?? 2) - (STATUS_ORDER[b.row.status] ?? 2)) || a.i - b.i)
     .map(({ row }) => row)
 }
 
@@ -238,6 +239,50 @@ function Legend({ legend }) {
   )
 }
 
+// "All 20 OK · 3 not seen yet": the dependency list at a glance.
+/** @param {any[]} rows */
+export function dependencySummary(rows) {
+  const count = (status) => rows.filter((r) => r.status === status).length
+  const failing = count('failing')
+  const ok = count('ok')
+  const unseen = rows.length - failing - ok
+  const parts = [failing ? `${failing} failing` : `All ${ok} OK`]
+  if (failing && ok) parts.push(`${ok} OK`)
+  if (unseen) parts.push(`${unseen} not seen yet`)
+  return parts.join(' · ')
+}
+
+// Only what is failing shows by default; the healthy and the not-yet-seen are one click away. With
+// nothing failing, the summary line says so and the full list stays folded.
+function DependencyStatus({ rows }) {
+  const [showAll, setShowAll] = useState(false)
+  const sorted = worstFirst(rows)
+  const failing = sorted.filter((r) => r.status === 'failing')
+  const shown = showAll ? sorted : failing
+  const hidden = sorted.length - failing.length
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className="flex items-center gap-2 text-body text-fg">
+          <Dot tone={failing.length ? 'failed' : 'ok'} />
+          {dependencySummary(rows)}
+        </span>
+        {hidden > 0 && (
+          <button type="button" className={BTN} aria-expanded={showAll} onClick={() => setShowAll((v) => !v)}>
+            {showAll ? 'Show only failing' : `Show all ${sorted.length}`}
+          </button>
+        )}
+      </div>
+      {shown.length > 0 && (
+        <>
+          <DependencyCards rows={shown} />
+          <DependencyTable rows={shown} />
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function LogsPage() {
   const diagnostics = usePolling(() => api.get('/api/diagnostics'), 10000)
   const data = diagnostics.data
@@ -252,8 +297,7 @@ export default function LogsPage() {
     <div className="grid gap-3 [&>*]:min-w-0">
       <p className="text-caption text-muted">Dependency failures and request traces since the dashboard started. Refreshes every 10 seconds.</p>
       <Panel title="Dependency status">
-        <DependencyCards rows={worstFirst(data.dependencies)} />
-        <DependencyTable rows={worstFirst(data.dependencies)} />
+        <DependencyStatus rows={data.dependencies} />
       </Panel>
       <RecentFailures recent={data.recent || []} />
       <Legend legend={data.legend} />
