@@ -241,8 +241,8 @@ async def overview() -> dict:
                  ("cpu_pct", "ram_used_gb", "ram_total_gb", "ram_pct",
                   "disk_used_gb", "disk_total_gb", "disk_pct")},
         "knowledge": {"documents": (rag or {}).get("points_count") if (rag or {}).get("ok") else None},
-        "links": [{"name": c["name"], "url": c["open_url"]} for c in cards
-                  if c.get("open_url") and not c.get("background")],
+        # Every web UI to open: catalog cards with an Open link and Homepage-labelled containers.
+        "apps": console.launcher_apps(cards, host_containers),
         "generated_at": time.time(),
     }
 

@@ -76,9 +76,11 @@ OPS = {
 # GET /containers: every container on the host, a bare list (DockerBackend.container_row).
 HOST_CONTAINERS = [
     {"name": "media-server", "status": "running", "image": "media", "project": "media-stack", "service": "server",
-     "health": "healthy", "status_text": "Up 4 days (healthy)"},
+     "health": "healthy", "status_text": "Up 4 days (healthy)",
+     "link": {"href": "http://media.example/", "name": "Media server", "description": "Movies and shows",
+              "group": "Media"}},
     {"name": "web-site-web-1", "status": "running", "image": "nginx", "project": "web-site", "service": "web",
-     "health": None, "status_text": "Up 6 days"},
+     "health": None, "status_text": "Up 6 days", "link": None},
 ]
 HARDWARE = {"cpu_pct": 18, "ram_used_gb": 46.8, "ram_total_gb": 109.7, "ram_pct": 43,
             "disk_used_gb": 1607.1, "disk_total_gb": 1999.8, "disk_pct": 80.4,

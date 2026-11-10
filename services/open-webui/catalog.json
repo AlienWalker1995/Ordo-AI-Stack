@@ -3,6 +3,7 @@
     {
       "id": "webui",
       "name": "Open WebUI",
+      "description": "Chat with the local models",
       "order": 30,
       "port": 8443,
       "url": "http://127.0.0.1:8443",

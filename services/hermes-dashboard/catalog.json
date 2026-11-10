@@ -3,6 +3,7 @@
     {
       "id": "hermes",
       "name": "Hermes Agent",
+      "description": "The agent: sessions, skills and cron jobs",
       "order": 80,
       "port": 9119,
       "url": "http://agent:9119",

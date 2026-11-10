@@ -45,7 +45,10 @@ COMPOSE = {
     "services": {
         "db": {**SLEEPER, "healthcheck": {"test": ["CMD", "true"], "interval": "1s", "timeout": "5s",
                                           "retries": 3}},
-        "web": {**SLEEPER, "depends_on": ["db"]},
+        # Labelled the Homepage way, so the container list carries its launcher link.
+        "web": {**SLEEPER, "depends_on": ["db"],
+                "labels": {"homepage.name": "Web", "homepage.href": "http://web.example/",
+                           "homepage.description": "The front end"}},
         # A netns owner and its member, in the shape the renderer emits (ordo/render/compose.py):
         # `depends_on.<owner>.restart: true` is what makes compose restart the member with it.
         "owner": dict(SLEEPER),
@@ -368,12 +371,16 @@ def test_list_containers_is_a_bare_list_that_includes_every_project_container(un
     ours = {row["service"]: row for row in listing if row["project"] == unchanged.project}
     assert sorted(ours) == SERVICES
     for service, row in ours.items():
-        assert set(row) == {"name", "status", "image", "project", "service", "health", "status_text"}
+        assert set(row) == {"name", "status", "image", "project", "service", "health", "status_text", "link"}
         assert row["name"] == f"{unchanged.project}-{service}-1"
         assert BUSYBOX.startswith(row["image"]) and row["image"]
     assert (ours["web"]["status"], ours["web"]["health"]) == ("running", None)
     assert (ours["db"]["status"], ours["db"]["health"]) == ("running", "healthy")
     assert ours["job"]["status"] == "exited"
+    # The Homepage labels give a launcher link; an unlabelled container has none.
+    assert ours["web"]["link"] == {"href": "http://web.example/", "name": "Web",
+                                   "description": "The front end", "group": ""}
+    assert ours["db"]["link"] is None
     # docker's Status text: the uptime and the exit code the dashboard's verdict reads.
     assert ours["db"]["status_text"].startswith("Up ") and ours["job"]["status_text"].startswith("Exited (0)")
 

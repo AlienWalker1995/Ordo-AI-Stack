@@ -114,18 +114,46 @@ def test_a_sparse_inspect_object_does_not_raise():
 # the host-wide list gains project, service and health
 # --------------------------------------------------------------------------- #
 
+NO_LINK = "\t\t\t\t"   # the four Homepage link labels, all unset
+
+
 def test_a_ps_line_becomes_a_container_row():
-    line = "nas-stack-janitorr\trunning\tghcr.io/schaka/janitorr:jvm-v2.1.1\tnas-stack\tjanitorr\tUp 3 hours (unhealthy)"
+    line = ("nas-stack-janitorr\trunning\tghcr.io/schaka/janitorr:jvm-v2.1.1\tnas-stack\tjanitorr"
+            "\tUp 3 hours (unhealthy)" + NO_LINK)
     assert broker_module.DockerBackend.container_row(line) == {
         "name": "nas-stack-janitorr", "status": "running", "image": "ghcr.io/schaka/janitorr:jvm-v2.1.1",
         "project": "nas-stack", "service": "janitorr", "health": "unhealthy",
-        "status_text": "Up 3 hours (unhealthy)",
+        "status_text": "Up 3 hours (unhealthy)", "link": None,
     }
 
 
 def test_a_container_outside_compose_has_empty_project_and_service():
-    row = broker_module.DockerBackend.container_row("adhoc\texited\talpine\t\t\tExited (0) 2 days ago")
+    row = broker_module.DockerBackend.container_row("adhoc\texited\talpine\t\t\tExited (0) 2 days ago" + NO_LINK)
     assert (row["project"], row["service"], row["health"]) == ("", "", None)
+
+
+def test_homepage_labels_give_the_row_a_launcher_link():
+    # The Homepage convention (gethomepage.dev): href is required, the rest optional.
+    line = "jellyfin\trunning\tjellyfin\tnas-stack\tjellyfin\tUp 4 days\tJellyfin\thttp://ultracam:8096\tMedia server\tMedia"
+    assert broker_module.DockerBackend.container_row(line)["link"] == {
+        "href": "http://ultracam:8096", "name": "Jellyfin", "description": "Media server", "group": "Media"}
+
+
+def test_labels_without_an_href_give_no_link():
+    line = "radarr\trunning\tradarr\tnas-stack\tradarr\tUp 4 days\tRadarr\t\tMovies\tMedia"
+    assert broker_module.DockerBackend.container_row(line)["link"] is None
+
+
+def test_a_tab_inside_a_label_drops_only_the_link_not_the_container():
+    line = "odd\trunning\timg\tp\ts\tUp 1 hour\tOdd\thttp://x\ta\tb\tGroup"
+    row = broker_module.DockerBackend.container_row(line)
+    assert row["name"] == "odd" and row["link"] is None
+
+
+def test_compose_labels_read_either_form():
+    assert broker_module.compose_labels({"labels": {"homepage.href": "http://x"}}) == {"homepage.href": "http://x"}
+    assert broker_module.compose_labels({"labels": ["homepage.href=http://x=y", "flag"]}) == {"homepage.href": "http://x=y"}
+    assert broker_module.compose_labels({}) == {}
 
 
 def test_a_malformed_ps_line_is_skipped():

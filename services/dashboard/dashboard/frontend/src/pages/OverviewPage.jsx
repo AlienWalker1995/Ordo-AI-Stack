@@ -352,6 +352,50 @@ function ActivityFeed({ items, expanded, onShowMore }) {
   )
 }
 
+const APP_STATUS = {
+  up: { tone: 'ok', label: 'up' },
+  down: { tone: 'critical', label: 'down' },
+  unknown: { tone: 'unknown', label: 'status unknown' },
+}
+
+// The launcher: every web UI there is to open, grouped, one click each. The list is the
+// overview's `apps` (catalog cards with an Open link, and containers labelled the Homepage way).
+function AppLauncher({ apps }) {
+  if (!apps.length) return null
+  const groups = []
+  for (const app of apps) {
+    const last = groups[groups.length - 1]
+    if (last && last.name === app.group) last.apps.push(app)
+    else groups.push({ name: app.group, apps: [app] })
+  }
+  return (
+    <div className="grid gap-4">
+      {groups.map((g) => (
+        <section key={g.name} aria-labelledby={`apps-${g.name}`} className="grid gap-2">
+          <h3 id={`apps-${g.name}`} className="text-label text-muted">{g.name}</h3>
+          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {g.apps.map((a) => {
+              const status = APP_STATUS[a.status] || APP_STATUS.unknown
+              return (
+                <li key={a.url} className="min-w-0">
+                  <a href={a.url} target="_blank" rel="noreferrer"
+                     className="grid h-full min-w-0 grid-cols-[auto_1fr] items-baseline gap-x-2.5 gap-y-0.5 rounded-sm border border-border-subtle bg-bg px-3 py-2.5 no-underline transition-colors hover:border-accent/40 hover:bg-surface-hover">
+                    <Dot tone={status.tone} />
+                    <span className="truncate text-body font-semibold text-fg">
+                      {a.name}<span className="sr-only">, {status.label}</span>
+                    </span>
+                    {a.description && <span className="col-start-2 truncate text-caption text-muted" title={a.description}>{a.description}</span>}
+                  </a>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  )
+}
+
 export default function OverviewPage() {
   const overview = usePolling(() => api.get('/api/overview'), 5000)
   // The feed starts at the endpoint's default (25 items); "Show more" widens it to the cap (100)
@@ -385,6 +429,11 @@ export default function OverviewPage() {
       <AttentionStrip items={o.attention} />
       <Drift drift={drift.data} />
       <KpiBand tiles={kpiTiles(o, series.data)} />
+      {(o.apps || []).length > 0 && (
+        <Panel title="Apps">
+          <AppLauncher apps={o.apps} />
+        </Panel>
+      )}
       <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <Panel title="Model usage">
           <ModelUsage chat={o.chat} series={series.data} models={models.data} modelsError={!!models.error} />

@@ -326,6 +326,30 @@ def container_name_argument(name: str) -> str:
     return name
 
 
+# A container's launcher link, read from the Homepage label convention (gethomepage.dev) so a
+# container already labelled for Homepage needs nothing new: `homepage.href` is required, and
+# `homepage.name`, `homepage.description` and `homepage.group` are optional.
+LINK_LABELS = ("homepage.name", "homepage.href", "homepage.description", "homepage.group")
+
+
+def link_from_labels(labels: dict[str, str]) -> dict | None:
+    """The /containers row's `link` from a container's labels, or None without `homepage.href`."""
+    href = (labels.get("homepage.href") or "").strip()
+    if not href:
+        return None
+    return {"href": href, "name": (labels.get("homepage.name") or "").strip(),
+            "description": (labels.get("homepage.description") or "").strip(),
+            "group": (labels.get("homepage.group") or "").strip()}
+
+
+def compose_labels(spec: dict) -> dict[str, str]:
+    """A compose service's `labels:` in either form compose accepts (a map, or KEY=VALUE strings)."""
+    labels = spec.get("labels") or {}
+    if isinstance(labels, dict):
+        return {str(k): str(v) for k, v in labels.items()}
+    return dict(str(item).split("=", 1) for item in labels if "=" in str(item))
+
+
 @dataclasses.dataclass
 class _FakeContainer:
     """One container of MockBackend's project: what `docker ps` and `docker inspect` report."""
@@ -344,6 +368,7 @@ class _FakeContainer:
     # IMMUTABLE_PATHS_LABEL's roots (none: the image declares none) and the files under them changed
     # since the container was created
     immutable_roots: tuple[str, ...] = ()
+    link: dict | None = None      # link_from_labels of its compose labels
     immutable_changes: list[str] = dataclasses.field(default_factory=list)
     netns: int = 0                # an owner's network namespace: a new one on every start
     joined_netns: int = 0         # a member's: the owner namespace it joined when it last started
@@ -459,7 +484,8 @@ class MockBackend:
             container_id=f"fake{next(self._container_ids):060d}", image=str(spec.get("image") or ""),
             config_hash=self._config_hash(service), one_shot=str(spec.get("restart")) == "no",
             has_healthcheck=bool(healthcheck) and not healthcheck.get("disable"),
-            owner=owner, owner_container_id=owner_container.container_id if owner_container else "")
+            owner=owner, owner_container_id=owner_container.container_id if owner_container else "",
+            link=link_from_labels(compose_labels(spec)))
         self.project_containers[service] = container
         self._boot(container)
 
@@ -632,7 +658,7 @@ class MockBackend:
         # `docker ps` shows a digest-pinned image by its tag alone.
         return [{"name": c.name, "status": c.state, "image": c.image.split("@", 1)[0], "project": self.project,
                  "service": c.service, "health": DockerBackend._health_from_status(self._status(c)),
-                 "status_text": self._status(c)}
+                 "status_text": self._status(c), "link": c.link}
                 for c in self.project_containers.values()]
 
     def container_logs(self, name: str, tail: int = 100) -> str:
@@ -1169,20 +1195,27 @@ class DockerBackend:
 
     # `docker ps` columns for list_containers, in the order container_row reads them.
     CONTAINER_PS_FORMAT = ("{{.Names}}\t{{.State}}\t{{.Image}}\t{{.Label \"com.docker.compose.project\"}}"
-                           "\t{{.Label \"com.docker.compose.service\"}}\t{{.Status}}")
+                           "\t{{.Label \"com.docker.compose.service\"}}\t{{.Status}}"
+                           + "".join(f'\t{{{{.Label "{label}"}}}}' for label in LINK_LABELS))
 
     @classmethod
     def container_row(cls, line: str) -> dict | None:
         """One CONTAINER_PS_FORMAT line as a /containers row, or None for a malformed line.
+        `link` is the container's launcher link from its Homepage labels (link_from_labels), or None.
         `status` keeps its ops-api meaning (docker's State) and `status_text` is docker's Status
         (the uptime and the exit code); project and service are empty for a container compose did
         not create; health is None without a healthcheck."""
         parts = line.split("\t")
-        if len(parts) != 6:
+        if len(parts) < 6:
             return None
-        name, state, image, project, service, status = parts
+        name, state, image, project, service, status = parts[:6]
+        # The link labels come last. A tab inside one of their values shifts the columns; the
+        # container still lists, without a link, rather than vanishing over a label typo.
+        link_values = parts[6:]
+        link = (link_from_labels(dict(zip(LINK_LABELS, link_values, strict=True)))
+                if len(link_values) == len(LINK_LABELS) else None)
         return {"name": name, "status": state, "image": image, "project": project, "service": service,
-                "health": cls._health_from_status(status), "status_text": status}
+                "health": cls._health_from_status(status), "status_text": status, "link": link}
 
     def _container_guard(self, name: str) -> str:
         """Container routes take a RAW container name, not a service name, so `_guard` does not

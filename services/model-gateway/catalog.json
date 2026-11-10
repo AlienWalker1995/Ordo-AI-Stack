@@ -3,6 +3,7 @@
     {
       "id": "model-gateway",
       "name": "Model Gateway",
+      "description": "Model routing, keys and spend",
       "order": 20,
       "port": 11435,
       "url": "http://localhost:11435",

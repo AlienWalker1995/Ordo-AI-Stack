@@ -660,6 +660,51 @@ def build_service_table(cards: list[dict], containers_by_id: dict,
     return rows
 
 
+# ---------------------------------------------------------------------------------------------
+# apps (the Overview's launcher)
+# ---------------------------------------------------------------------------------------------
+
+# The group Ordo's own service UIs list under; a labelled container names its own.
+ORDO_APPS_GROUP = "Ordo"
+
+
+def _app_status(row: dict) -> str:
+    """up, down or unknown for a labelled container, from the same verdict the Services table uses."""
+    verdict = classify_container(row.get("status"), row.get("health"), row.get("status_text"))
+    if verdict == "up":
+        return "up"
+    if verdict in ("failed", "unhealthy", "stopped"):
+        return "down"
+    return "unknown"
+
+
+def launcher_apps(cards: list[dict], host_containers: list[dict] | None) -> list[dict]:
+    """Every web UI a person can open, for the Overview's launcher and the command palette.
+
+    Two sources, no list kept in code: each catalog card with an Open link (its plugin's
+    catalog.json), and each host container labelled the Homepage way (`homepage.href`, plus
+    optional name, description and group; ops-controller passes them through as `link`). Ordo's
+    own group comes first, then the others by name; within a group, apps sort by name."""
+    apps = []
+    for card in cards or []:
+        if not card.get("open_url") or card.get("background"):
+            continue
+        ok = card.get("ok")
+        apps.append({"name": card.get("name") or card.get("id"), "url": card["open_url"],
+                     "description": card.get("description") or "", "group": ORDO_APPS_GROUP,
+                     "status": "up" if ok else "down" if ok is False else "unknown"})
+    for row in host_containers or []:
+        link = row.get("link")
+        if not link or not link.get("href"):
+            continue
+        apps.append({"name": link.get("name") or row.get("name"), "url": link["href"],
+                     "description": link.get("description") or "",
+                     "group": link.get("group") or row.get("project") or "Other",
+                     "status": _app_status(row)})
+    apps.sort(key=lambda a: (a["group"] != ORDO_APPS_GROUP, a["group"].lower(), a["name"].lower()))
+    return apps
+
+
 def service_counts(rows: list[dict]) -> dict:
     """The Overview's container counts from the Services table's rows: every container on the
     host, in total and per project. A finished one-shot job ('done') is not a service that
