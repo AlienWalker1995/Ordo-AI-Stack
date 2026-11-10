@@ -81,4 +81,22 @@ describe('the colour theme', () => {
     expect(frame.getAttribute('src')).toContain('theme=light')
     expect(frame.getAttribute('src')).not.toContain('theme=dark')
   })
+
+  it('keeps a one-argument setChoice on the default context, read before the provider mounts', () => {
+    // Before any ThemeProvider mounts, consumers read this default value instead of the
+    // provider's value. Its setChoice keeps the same one-argument shape as the provider's,
+    // so setChoice(e.target.value) both runs and type-checks; a zero-arity stub still runs
+    // but loses the argument in the inferred type, which is what broke the tsc gate.
+    let ctx
+    function Probe() {
+      ctx = useTheme()
+      return null
+    }
+    render(<Probe />)
+    expect(ctx.choice).toBe('auto')
+    expect(ctx.resolved).toBe('dark')
+    expect(typeof ctx.setChoice).toBe('function')
+    expect(ctx.setChoice.length).toBe(1)
+    expect(() => ctx.setChoice('light')).not.toThrow()
+  })
 })

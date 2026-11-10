@@ -11,7 +11,7 @@
 
 @layer base {
   /* The palettes. Values are RGB channels for the tokens in tailwind.config.js. The resolved theme
-     is always written to <html data-theme> (src/lib/theme.js), so there is no third "auto" copy.
+     is always written to <html data-theme> (src/lib/theme.jsx), so there is no third "auto" copy.
      Dark: neutral graphite, a hair warm; elevation reads through tone, not hue. One disciplined
      cyan accent; the semantic colours carry state only. */
   :root,

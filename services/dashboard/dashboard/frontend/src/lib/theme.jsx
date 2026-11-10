@@ -45,7 +45,7 @@ export function applyThemeChoice(choice) {
   document.documentElement.dataset.theme = resolveTheme(choice)
 }
 
-const ThemeContext = createContext({ choice: 'auto', resolved: 'dark', setChoice: () => {} })
+const ThemeContext = createContext({ choice: 'auto', resolved: 'dark', setChoice: (_choice) => {} /* eslint-disable-line no-unused-vars */ })
 
 export function ThemeProvider({ children }) {
   const [choice, setChoiceState] = useState(readThemeChoice)

@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 // The "Ordo Nexus" theme as Tailwind design tokens: a dark and a light palette, chosen per viewer
-// (src/lib/theme.js). Components now style with utilities that reference these
+// (src/lib/theme.jsx). Components now style with utilities that reference these
 // (bg-bg, text-fg, border-border, text-accent, …); a small @layer in src/index.css keeps
 // only the keyframe/pseudo-element effects that are awkward as inline utilities.
 export default {
