@@ -218,17 +218,20 @@ def _status_line(status_gpu: dict | None, attention: list[dict], host_containers
 
 async def _engine_rates() -> dict[str, dict] | None:
     """engine -> {output_tps, generation_tps, prompt_tps, cache_reuse, waiting}, from Prometheus.
-    None when Prometheus cannot be read (the monitoring profile is off, or it is down); a figure
-    with no samples yet (an engine idle for the window) is absent from its engine's dict."""
+    None when Prometheus cannot be read at all (the monitoring profile is off, or it is down); a
+    figure whose own query failed, or that has no samples yet (an engine idle for the window), is
+    absent from its engine's dict."""
     names = list(_ENGINE_RATE_QUERIES)
     answers = await asyncio.gather(*(
         _get_json(f"{PROMETHEUS_URL}/api/v1/query?{urlencode({'query': _ENGINE_RATE_QUERIES[n]})}",
                   timeout=10.0, dep="PROMETHEUS")
         for n in names))
-    if any(not a or a.get("status") != "success" for a in answers):
+    answered = [(n, a) for n, a in zip(names, answers, strict=True) if a and a.get("status") == "success"]
+    if not answered:
         return None
+    # A figure whose query failed is left out of every engine; the others still show.
     rates: dict[str, dict] = {}
-    for name, answer in zip(names, answers, strict=True):
+    for name, answer in answered:
         for result in answer.get("data", {}).get("result", []):
             engine = result.get("metric", {}).get("engine")
             try:
@@ -416,13 +419,16 @@ async def drift() -> dict:
 
 @router.get("/activity")
 async def activity(limit: int = Query(25, ge=1, le=100)) -> dict:
-    history, audit, renders, cards = await asyncio.gather(
+    history, audit, renders = await asyncio.gather(
         _ops_json("/jobs/history"), _ops_json("/audit?limit=100"), _comfy_json("/history?max_items=40"),
-        _service_cards(),
     )
+    # Card names come from the static catalog: this polls every 15 s, and probing every service's
+    # health only to name a lease holder would cost a request per service per poll.
+    from dashboard.services_catalog import visible_services
+
     items = console.merge_activity(
         (history or {}).get("history", []), (audit or {}).get("entries", []),
-        console.summarise_renders(renders or {}, 40), limit, names=console.service_names(cards),
+        console.summarise_renders(renders or {}, 40), limit, names=console.service_names(visible_services()),
     )
     return {"items": items}
 

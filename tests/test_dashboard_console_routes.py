@@ -1089,3 +1089,23 @@ def test_a_ninfer_artifact_can_be_deleted_but_other_files_cannot(live, tmp_path)
         refused = live.post("/api/models/delete", json={"file": "old.bin"})
     assert r.status_code == 200, r.text
     assert refused.status_code == 400
+
+
+def test_engine_rates_keep_the_figures_whose_queries_answered():
+    def answer(url, **kw):
+        if "prompt_tokens_cached" in url:
+            return None   # the cache-reuse query failed
+        return {"status": "success", "data": {"result": [
+            {"metric": {"engine": "inference-engine-gpu"}, "value": [1, "12.5"]}]}}
+
+    with patch.object(routes_console, "_get_json", new=AsyncMock(side_effect=answer)):
+        rates = asyncio.run(routes_console._engine_rates())
+    gpu = rates["inference-engine-gpu"]
+    assert "cache_reuse" not in gpu and gpu["generation_tps"] == 12.5
+
+
+def test_activity_names_lease_holders_without_probing_services(live):
+    probe = AsyncMock(side_effect=AssertionError("/activity must not probe every service"))
+    with patch.object(routes_console, "_service_cards", new=probe):
+        assert live.get("/api/activity").status_code == 200
+    probe.assert_not_called()

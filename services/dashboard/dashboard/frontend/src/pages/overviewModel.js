@@ -198,9 +198,13 @@ function tps(value) {
   return value >= 100 ? Math.round(value).toLocaleString() : value.toFixed(1)
 }
 
-// The model every chat consumer calls: the chat engine that stands in for nothing.
-/** @param {Array<object> | undefined} engines */
-export function primaryChatModel(engines) {
+// The model every chat consumer calls, as the backend decided it (overview.chat): the engine
+// answering, or the one a stand-in answers for. Only when nobody answers does it fall back to the
+// first chat engine that stands in for nothing.
+/** @param {{ model?: { model?: string, fallback_for?: string | null } | null } | undefined} chat @param {Array<object> | undefined} engines */
+export function primaryChatModel(chat, engines) {
+  const answering = chat?.model
+  if (answering?.model) return answering.fallback_for || answering.model
   return (engines || []).find((e) => e.kind === 'chat' && !e.fallback_for)?.model
 }
 
@@ -266,7 +270,7 @@ export function kpiTiles(overview, perf) {
       title: 'integrated /api/perf/series samples, every engine',
     })
   }
-  const vram = vramFacts(overview?.gpus, primaryChatModel(overview?.engines))
+  const vram = vramFacts(overview?.gpus, primaryChatModel(overview?.chat, overview?.engines))
   if (vram) {
     // The GB figure leads so it survives truncation on a phone; the holders part is omitted
     // when the GPU has neither tenants nor borrowers, or the line would end in a dangling colon.

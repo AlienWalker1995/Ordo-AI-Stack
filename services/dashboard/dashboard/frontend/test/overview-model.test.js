@@ -97,8 +97,13 @@ describe('engines', () => {
   })
 
   it('finds the chat model every consumer calls: the chat engine that stands in for nothing', () => {
-    expect(primaryChatModel(ENGINES)).toBe('local-chat')
-    expect(primaryChatModel([])).toBeUndefined()
+    // Nobody answering: the first chat engine that stands in for nothing.
+    expect(primaryChatModel(undefined, ENGINES)).toBe('local-chat')
+    expect(primaryChatModel(undefined, [])).toBeUndefined()
+    // The backend's answer wins over list order, and a stand-in points at the model it answers for.
+    const plugin = { model: 'alpha-chat', kind: 'chat', fallback_for: null }
+    expect(primaryChatModel({ model: GPU_ENGINE }, [plugin, ...ENGINES])).toBe('local-chat')
+    expect(primaryChatModel({ model: CPU_ENGINE }, ENGINES)).toBe('local-chat')
   })
 })
 
