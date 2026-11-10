@@ -110,6 +110,7 @@ PROMETHEUS_RANGE = {"status": "success", "data": {"resultType": "matrix", "resul
 STATS_SERVICES = {"gpu": {"total_gb": 34.2, "used_gb": 29.6, "utilization_pct": 97},
                   "services": {"open-webui": {"cpu_pct": 1.5, "mem_gb": 0.6, "mem_pct": 0.5, "vram_gb": 0.0,
                                               "vram_pct": 0.0, "running": True}},
+                  "containers": {"media-server": {"cpu_pct": 4.2, "mem_gb": 1.1, "mem_pct": 1.0}},
                   "vram_aggregate_unavailable": False}
 # ControlPlane.apply_render's answer, which the switch passes on.
 APPLIED = {"dry_run": False, "recreated": ["inference-engine-gpu", "inference-engine-cpu", "model-gateway"], "stopped": [],

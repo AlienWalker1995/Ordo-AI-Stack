@@ -82,6 +82,20 @@
       "reason": null
     }
   ],
+  "containers": [
+    {
+      "name": "media-server",
+      "cpu_pct": 4.2,
+      "mem_gb": 1.1,
+      "mem_pct": 1.0
+    },
+    {
+      "name": "web-site-web-1",
+      "cpu_pct": 0.1,
+      "mem_gb": 0.02,
+      "mem_pct": 0.0
+    }
+  ],
   "vram_aggregate_unavailable": false,
   "unavailable": false,
   "reason": null

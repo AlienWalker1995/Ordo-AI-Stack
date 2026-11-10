@@ -127,3 +127,25 @@ def test_service_pressure_unparseable_200_body_is_unavailable(monkeypatch):
     assert d["vram_aggregate_unavailable"] is True
     assert d["unavailable"] is True and d["reason"] == "ops-controller returned an unparseable stats payload"
     assert all(_numbers(s) == _UNMEASURED and s["reason"] == "source unavailable" for s in d["services"])
+
+
+def test_service_pressure_passes_every_running_containers_reading_by_name(monkeypatch):
+    d = _pressure(monkeypatch, response=_mk_httpx_response({
+        "gpu": None, "services": {},
+        "containers": {"radarr": {"cpu_pct": 0.4, "mem_gb": 0.21, "mem_pct": 0.2},
+                       "jellyfin": {"cpu_pct": 12.0, "mem_gb": 1.5, "mem_pct": 1.4}},
+        "vram_aggregate_unavailable": True,
+    })).json()
+    assert d["containers"] == [{"name": "jellyfin", "cpu_pct": 12.0, "mem_gb": 1.5, "mem_pct": 1.4},
+                               {"name": "radarr", "cpu_pct": 0.4, "mem_gb": 0.21, "mem_pct": 0.2}]
+
+
+def test_service_pressure_from_an_older_control_plane_has_no_container_readings(monkeypatch):
+    d = _pressure(monkeypatch, response=_mk_httpx_response({
+        "gpu": None, "services": {}, "vram_aggregate_unavailable": True})).json()
+    assert d["containers"] == [] and d["unavailable"] is False
+
+
+def test_service_pressure_unavailable_has_no_container_readings(monkeypatch):
+    d = _pressure(monkeypatch, raises=httpx.ConnectError("refused")).json()
+    assert d["unavailable"] is True and d["containers"] == []

@@ -1152,8 +1152,8 @@ async def service_pressure():
 
     def _unavailable_payload(reason: str):
         services_out = [_row(s["id"], s, s["id"], running=None, reason="source unavailable") for s in SERVICES]
-        return {"gpu": None, "host": host_info, "services": services_out, "vram_aggregate_unavailable": True,
-                "unavailable": True, "reason": reason}
+        return {"gpu": None, "host": host_info, "services": services_out, "containers": [],
+                "vram_aggregate_unavailable": True, "unavailable": True, "reason": reason}
 
     # Through _ops_request (the shared client, X-Actor and X-Request-ID, DEP-OPS-* codes). Its own
     # failures come back as a 503 with a `detail`, which reads as "not answering"; a real answer
@@ -1200,6 +1200,13 @@ async def service_pressure():
         "gpu": raw.get("gpu"),
         "host": host_info,
         "services": services_out,
+        # Every running container on the host, by name: the Services page reads other compose
+        # projects' containers from it. An ops-controller that predates the field sends none.
+        "containers": [
+            {"name": name, "cpu_pct": _measured(row.get("cpu_pct")), "mem_gb": _measured(row.get("mem_gb")),
+             "mem_pct": _measured(row.get("mem_pct"))}
+            for name, row in sorted((raw.get("containers") or {}).items()) if isinstance(row, dict)
+        ],
         "vram_aggregate_unavailable": bool(raw.get("vram_aggregate_unavailable", False)),
         "unavailable": False,
         "reason": None,
