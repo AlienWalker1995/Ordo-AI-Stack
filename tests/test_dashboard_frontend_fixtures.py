@@ -33,9 +33,10 @@ BIG, SMALL = "GPU-big", "GPU-small"
 
 # What the control plane answers, in the live shapes (ordo/control/api.py).
 OPS = {
-    # Idle, so the model switch below is allowed.
+    # Idle, so the model switch below is allowed. Rejected jobs are bare ids: the scheduler appends
+    # head.id to _rejected (ordo/control/scheduler.py), and ops /status passes it through as-is.
     "/status": {"gpu": {"state": "idle", "running": [], "queued": [], "evicted_residents": {},
-                        "rejected": [{"id": "train-lora", "reason": "needs 30 GB, 4 GB free"}]}},
+                        "rejected": ["train-lora"]}},
     "/services": {"services": [
         {"id": "inference-engine-gpu", "name": "ordo-inference-engine-gpu-1", "state": "exited", "health": None,
          "status": "Exited (137) 1 minute ago"},

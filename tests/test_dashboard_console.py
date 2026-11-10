@@ -177,9 +177,11 @@ def test_a_disk_below_the_threshold_is_not_an_alert():
 
 
 def test_a_rejected_gpu_job_is_an_alert():
-    status = {**IDLE, "rejected": [{"id": "big-render", "reason": "needs 40 GB"}]}
+    # The scheduler reports rejected jobs as bare ids (ordo/control/scheduler.py `_rejected`).
+    status = {**IDLE, "rejected": ["big-render"]}
     items = console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, status)
-    assert items and "big-render" in items[0]["title"]
+    assert items == [{"severity": "warning", "title": "GPU job big-render was rejected",
+                      "detail": "it needs more VRAM than the GPU has", "service": None}]
 
 
 def test_a_model_evicted_for_a_render_is_not_an_alert():
