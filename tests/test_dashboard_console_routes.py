@@ -141,7 +141,6 @@ def live(dashboard_operator_headers):
          patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=CARDS)), \
          patch.object(routes_console, "_rag", new=AsyncMock(return_value={"ok": True, "points_count": 2483})), \
          patch.object(routes_console, "_engine_rates", new=AsyncMock(return_value=RATES)), \
-         patch.object(routes_console, "_throughput", new=AsyncMock(return_value=THROUGHPUT)), \
          patch.object(routes_console, "_served", new=AsyncMock(return_value=SERVED)), \
          patch.object(routes_console, "_disk_files", new=AsyncMock(return_value=DISK)), \
          patch.object(routes_console, "_comfy_json", new=AsyncMock(side_effect=lambda path: (
@@ -404,7 +403,6 @@ def test_overview_without_the_host_list_says_so_instead_of_all_normal():
          patch.object(routes_console, "_hardware", new=AsyncMock(return_value=calm_hardware)), \
          patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=calm_cards)), \
          patch.object(routes_console, "_rag", new=AsyncMock(return_value={"ok": True, "points_count": 1})), \
-         patch.object(routes_console, "_throughput", new=AsyncMock(return_value={})), \
          patch.object(routes_console, "_served", new=AsyncMock(return_value={})), \
          patch.object(routes_console, "_disk_files", new=AsyncMock(return_value=[])):
         body = TestClient(app).get("/api/overview").json()
@@ -701,9 +699,11 @@ def test_logs_refuse_a_bad_tail_or_since_without_calling_ops(
 
 # --- models ---
 
-def test_models_page_lists_slots_catalog_and_files(live):
+def test_models_page_lists_engines_catalog_and_files(live):
     body = live.get("/api/models").json()
-    assert body["cpu"]["file"] == CPU_FILE
+    # The registry's engines, as on the Overview, without speeds (the Overview carries those).
+    engines = {e["model"]: e for e in body["engines"]}
+    assert "local-chat" in engines and all("speeds" not in e or e["speeds"] is None for e in body["engines"])
     catalog = {c["id"]: c for c in body["catalog"]}
     assert catalog["turbo"]["installed"] and not catalog["absent"]["installed"]
     files = {f["name"]: f["in_use"] for f in body["files"]}

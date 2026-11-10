@@ -155,12 +155,6 @@ async def _rag() -> dict:
     return await rag_status()
 
 
-async def _throughput() -> dict:
-    from dashboard.app import throughput_stats
-
-    return await throughput_stats()
-
-
 async def _disk_files() -> list[dict]:
     from dashboard.app import _scan_gguf_models
 
@@ -458,12 +452,20 @@ async def services_table() -> dict:
 
 @router.get("/models")
 async def models() -> dict:
-    model_config, served, disk, throughput = await asyncio.gather(
-        _ops_json("/model-config"), _served(), _disk_files(), _throughput(),
+    """The engines (the registry's, as on the Overview, without speeds: the Overview carries
+    those), the catalog and the model files on disk."""
+    model_config, served, disk, registry, services, status = await asyncio.gather(
+        _ops_json("/model-config"), _served(), _disk_files(), _ops_json("/registry/models"),
+        _ops_json("/services"), _ops_json("/status"),
     )
     if model_config is None:
         raise HTTPException(status_code=503, detail="The control plane is not answering")
-    return console.model_slots(model_config, served, disk, throughput)
+    status_gpu = (status or {}).get("gpu") if status else None
+    from dashboard.services_catalog import visible_services
+
+    engines = console.model_engines(_registry(registry), _containers(services), status_gpu, None,
+                                    console.service_names(visible_services()))
+    return {"engines": engines, **console.model_files(model_config, served, disk)}
 
 
 class SwitchBody(BaseModel):

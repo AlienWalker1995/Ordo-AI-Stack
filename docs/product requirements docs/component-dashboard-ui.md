@@ -29,7 +29,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/ops/services/{id}/logs` | GET | Y | Tail service logs |
 | `/api/ops/projects/{project}/containers/{name}/restart` | POST | Y | Restart a managed project's container (ops-controller, `managed_projects:`) |
 | `/api/ops/projects/{project}/containers/{name}/logs` | GET | Y | Tail a managed project's container logs |
-| `/api/models` | GET | None | Chat server slots (gpu, cpu, embed), catalog, GGUF files on disk (Models page) |
+| `/api/models` | GET | None | `engines` (the registry's, as on the Overview, without speeds), `active_model` (the catalog id the GPU runs), catalog, model files on disk (Models page) |
 | `/api/models/switch` | POST | Y | Switch the GPU model: catalog id -> ops-controller `POST /model-config` (renders and recreates what the render changed; `restart_required_on_host` + `host_command` for what only the host can restart); refused while a GPU render lease is held |
 | `/api/models/delete` | POST | Y | Delete a GGUF file; refuses a file any server depends on |
 | `/api/throughput/record` | POST | `X-Throughput-Token` when `THROUGHPUT_RECORD_TOKEN` is set | Record a model call (called by model-gateway) |
