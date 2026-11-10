@@ -15,9 +15,9 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
-from dashboard import console
+from dashboard import attention_store, console, diagnostics
 from dashboard.services_catalog import load_service_groups
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,6 @@ async def _get_json(url: str, timeout: float = 10.0, *, dep: str) -> dict | None
     dependency answered — it is up, so it marks ok and still returns None. The dep must be
     named: PROBE keeps its status per target, so a bare "PROBE" would raise from
     diagnostics._status_key on the success path instead of degrading."""
-    from dashboard import diagnostics
     from dashboard.app import _get_http_client
 
     target = urlsplit(url).path or url
@@ -211,11 +210,11 @@ def _status_line(status_gpu: dict | None, attention: list[dict], host_containers
 
 @router.get("/overview")
 async def overview() -> dict:
-    status, services, registry, hardware, cards, rag, throughput, served, host_containers, managed = \
-        await asyncio.gather(
+    status, services, registry, hardware, cards, rag, throughput, served, host_containers, managed, \
+        history = await asyncio.gather(
             _ops_json("/status"), _ops_json("/services"), _ops_json("/registry/models"),
             _hardware(), _service_cards(), _rag(), _throughput(), _served(),
-            _host_containers(), _ops_json("/projects"),
+            _host_containers(), _ops_json("/projects"), _ops_json("/jobs/history"),
         )
     status_gpu = (status or {}).get("gpu") if status else None
     containers = _containers(services)
@@ -225,7 +224,11 @@ async def overview() -> dict:
                                        control_plane_up=services is not None,
                                        host_containers=host_containers, managed=managed)
     host_rows = [r for r in rows if r["project"] != console.ORDO_PROJECT]
-    attention = console.build_attention(cards, containers, hardware, status_gpu, host_rows=host_rows)
+    every_item = console.build_attention(cards, containers, hardware, status_gpu, host_rows=host_rows,
+                                         leases=(history or {}).get("history"))
+    attention, dismissed = await _apply_dismissals(every_item, _sources_read(
+        cards=cards, services=services, host_containers=host_containers, managed=managed,
+        hardware=hardware, history=history))
     engine = console.chat_engine(status_gpu, containers)
     medians = console.chat_medians(throughput, served, _registry(registry))
     return {
@@ -237,6 +240,8 @@ async def overview() -> dict:
         "gpus": console.gpu_cards((hardware or {}).get("gpus") or [], _registry(registry), status_gpu),
         "chat": {**engine, **medians},
         "attention": attention,
+        # Items a person dismissed; each comes back on its own once its condition clears.
+        "attention_dismissed": dismissed,
         "host": {k: (hardware or {}).get(k) for k in
                  ("cpu_pct", "ram_used_gb", "ram_total_gb", "ram_pct",
                   "disk_used_gb", "disk_total_gb", "disk_pct")},
@@ -245,6 +250,125 @@ async def overview() -> dict:
         "apps": console.launcher_apps(cards, host_containers),
         "generated_at": time.time(),
     }
+
+
+# ---------------------------------------------------------------------------------------------
+# attention dismissals
+# ---------------------------------------------------------------------------------------------
+
+def _dismissals_path() -> Path:
+    from dashboard.app import DASHBOARD_DATA_PATH
+
+    return DASHBOARD_DATA_PATH / attention_store.FILE_NAME
+
+
+# Serialises the read-modify-write of the dismissals file between overview polls and clicks.
+_dismissals_lock = asyncio.Lock()
+
+
+def _sources_read(*, cards, services, host_containers, managed, hardware, history) -> set[str]:
+    """The attention sources (console.ATTENTION_SOURCES) this poll actually read. A source that
+    failed reports none of its conditions, which must not read as every one of them clearing."""
+    hardware = hardware or {}
+    read = {
+        "cards": bool(cards),
+        "services": services is not None,
+        # A foreign container's verdict comes from the host list, or the managed project's own row.
+        "host": host_containers is not None and managed is not None,
+        # hardware_stats always answers, with None for a metric it could not read.
+        "disk": hardware.get("disk_pct") is not None,
+        "memory": hardware.get("ram_pct") is not None,
+        "history": history is not None,
+    }
+    return {source for source, ok in read.items() if ok}
+
+
+def _load_and_prune(items: list[dict], read: set[str]) -> dict:
+    path = _dismissals_path()
+    dismissed = attention_store.load(path)
+    kept = console.prune_dismissals(dismissed, items, read)
+    if kept != dismissed:
+        try:
+            attention_store.save(path, kept)
+            diagnostics.mark_ok("FS")
+        except OSError as e:
+            # Degrade, don't 500: this poll's answer is still right, and the next one prunes again.
+            diagnostics.record_failure("FS", "UNWRITABLE", f"{type(e).__name__}: {e.strerror or e}",
+                                       target=attention_store.FILE_NAME, elapsed_ms=0)
+    return kept
+
+
+def _dismiss(item_id: str) -> None:
+    path = _dismissals_path()
+    dismissed = attention_store.load(path)
+    dismissed[item_id] = time.time()
+    try:
+        attention_store.save(path, dismissed)
+        # A write that lands means the volume answers again: clear the recorded failure the
+        # way the polls' pruning does.
+        diagnostics.mark_ok("FS")
+    except OSError as e:
+        # A failed write on a click surfaces to the person who clicked: answer it like the
+        # other dependency failures in this file (503 + clear detail), and record it in
+        # diagnostics so an unwritable volume is visible even when the polls' pruning
+        # removes nothing.
+        diagnostics.record_failure("FS", "UNWRITABLE", f"{type(e).__name__}: {e.strerror or e}",
+                                   target=attention_store.FILE_NAME, elapsed_ms=0)
+        raise HTTPException(status_code=503, detail="The data volume could not be written, so the item is still listed")
+
+
+def _restore(item_id: str) -> None:
+    path = _dismissals_path()
+    dismissed = attention_store.load(path)
+    if dismissed.pop(item_id, None) is not None:
+        try:
+            attention_store.save(path, dismissed)
+            # A write that lands means the volume answers again: clear the recorded failure
+            # the way the polls' pruning does.
+            diagnostics.mark_ok("FS")
+        except OSError as e:
+            # Same as _dismiss: 503 + clear detail, and the failure lands in diagnostics.
+            diagnostics.record_failure("FS", "UNWRITABLE", f"{type(e).__name__}: {e.strerror or e}",
+                                       target=attention_store.FILE_NAME, elapsed_ms=0)
+            raise HTTPException(status_code=503, detail="The data volume could not be written, so the item is still dismissed")
+
+
+async def _apply_dismissals(items: list[dict], read: set[str]) -> tuple[list[dict], list[dict]]:
+    # File I/O runs off the event loop: this is on every overview poll.
+    async with _dismissals_lock:
+        dismissed = await asyncio.to_thread(_load_and_prune, items, read)
+    return console.split_dismissed(items, dismissed)
+
+
+class AttentionBody(BaseModel):
+    id: str = Field(min_length=1, max_length=300)
+
+    @field_validator("id")
+    @classmethod
+    def _names_a_known_kind(cls, value: str) -> str:
+        # Only ids build_attention can produce: a junk or mistyped id would never be pruned (its
+        # source is unknown), so the dismissals file would keep it for good.
+        kind = value.split(":", 1)[0]
+        if kind not in console.ATTENTION_SOURCES:
+            raise ValueError(f"not an attention item id: its kind {kind!r} is not one of "
+                             f"{sorted(console.ATTENTION_SOURCES)}")
+        return value
+
+
+@router.post("/attention/dismiss")
+async def dismiss_attention(body: AttentionBody) -> dict:
+    """Hide one attention item until its condition clears."""
+    async with _dismissals_lock:
+        await asyncio.to_thread(_dismiss, body.id)
+    return {"ok": True}
+
+
+@router.post("/attention/restore")
+async def restore_attention(body: AttentionBody) -> dict:
+    """List a dismissed item again."""
+    async with _dismissals_lock:
+        await asyncio.to_thread(_restore, body.id)
+    return {"ok": True}
 
 
 @router.get("/drift")

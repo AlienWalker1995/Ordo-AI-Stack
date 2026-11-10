@@ -78,16 +78,27 @@
   },
   "attention": [
     {
+      "id": "host-failed:media-server",
       "severity": "critical",
       "title": "media-server exited with an error",
       "detail": "media-stack: Exited (1) 2 days ago",
       "service": "media-server"
     },
     {
+      "id": "disk:warning",
       "severity": "warning",
       "title": "Disk 82% full",
       "detail": "1,640.3 of 1,999.8 GB",
       "service": null
+    }
+  ],
+  "attention_dismissed": [
+    {
+      "id": "host-failed:web-dev-1",
+      "severity": "critical",
+      "title": "web-dev-1 exited with an error",
+      "detail": "web-site: Exited (255) 3 weeks ago",
+      "service": "web-dev-1"
     }
   ],
   "host": {

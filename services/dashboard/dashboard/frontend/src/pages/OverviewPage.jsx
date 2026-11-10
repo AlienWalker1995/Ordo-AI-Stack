@@ -7,6 +7,7 @@
 import { useRef, useState } from 'react'
 import { usePolling } from '../api.js'
 import { api } from '../api.js'
+import { errorMeta, useToast } from '../components/Toast.jsx'
 import { Banner, BTN, Chip, Dot, Median, Meter, Panel, Skeleton, Sparkline, StatTile, Unavailable } from '../components/ui.jsx'
 import { clock, formatDuration, formatGb, pct, timeAgo } from '../lib/format.js'
 import { ACTIVITY_CATEGORIES, activityDaySummary, filterActivity, groupActivity, kpiTiles } from './overviewModel.js'
@@ -244,26 +245,79 @@ function Capacity({ gpus, host, knowledge }) {
 const SEVERITY_TONE = { critical: 'critical', warning: 'warning' }
 
 // Promoted to full width directly under the status line: what needs a person, most severe first.
-// Rendered only when non-empty; when nothing needs attention the status line already says so.
+// Each item can be dismissed: it leaves the list and the status line's count until its condition
+// clears, then the backend forgets the dismissal so a recurrence is listed again. Dismissed items
+// stay one click away under the list. Rendered only when there is something to show; when nothing
+// needs attention the status line already says so.
 // A container item links to #services, which applies no project filter yet; the filter arrives
 // with the Services filters slice.
-function AttentionStrip({ items }) {
-  if (!items.length) return null
+const LINK_BUTTON = 'shrink-0 rounded-sm text-caption font-semibold'
+
+function AttentionRow({ item, action }) {
+  return (
+    <li className="grid grid-cols-[auto_1fr] items-baseline gap-x-2.5 gap-y-1 sm:grid-cols-[auto_1fr_auto]">
+      <Dot tone={SEVERITY_TONE[item.severity] || 'warning'} label={item.severity} />
+      <span className="min-w-0 break-words text-body text-fg">
+        {item.title}
+        {item.detail && <span className="ml-2 text-caption text-muted">{item.detail}</span>}
+      </span>
+      <span className="col-start-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 sm:col-start-auto sm:justify-end">
+        {item.service && (
+          <a href="#services" className={LINK_BUTTON + ' text-accent-soft hover:text-accent'}>View in Services</a>
+        )}
+        {action}
+      </span>
+    </li>
+  )
+}
+
+function AttentionStrip({ items, dismissed = [], onChanged }) {
+  const toast = useToast()
+  const [showDismissed, setShowDismissed] = useState(false)
+  const [pending, setPending] = useState(null)
+  if (!items.length && !dismissed.length) return null
+
+  const act = async (verb, item) => {
+    setPending(item.id)
+    try {
+      await api.post(`/api/attention/${verb}`, { id: item.id })
+      await onChanged()
+    } catch (e) {
+      toast(`Could not ${verb} "${item.title}": ${e.message}`, 'error', errorMeta(e))
+    } finally {
+      setPending(null)
+    }
+  }
+  const button = (verb, label, item) => (
+    <button type="button" disabled={pending === item.id} onClick={() => act(verb, item)}
+            aria-label={`${label} ${item.title}`}
+            className={LINK_BUTTON + ' text-muted hover:text-fg disabled:opacity-40'}>
+      {label}
+    </button>
+  )
+
   return (
     <section aria-labelledby="attention-heading" className="grid gap-2 rounded-md border border-border-subtle bg-bg-elevated p-4">
       <h2 id="attention-heading" className="sr-only">Needs attention</h2>
-      {items.map((a) => (
-        <div key={a.title} className="grid grid-cols-[auto_1fr_auto] items-baseline gap-x-2.5">
-          <Dot tone={SEVERITY_TONE[a.severity] || 'warning'} label={a.severity} />
-          <span className="min-w-0 break-words text-body text-fg">
-            {a.title}
-            {a.detail && <span className="ml-2 text-caption text-muted">{a.detail}</span>}
-          </span>
-          {a.service && (
-            <a href="#services" className="shrink-0 text-caption font-semibold text-accent-soft hover:text-accent">View in Services</a>
+      {items.length > 0 && (
+        <ul className="grid gap-2">
+          {items.map((a) => <AttentionRow key={a.id} item={a} action={button('dismiss', 'Dismiss', a)} />)}
+        </ul>
+      )}
+      {dismissed.length > 0 && (
+        <div className={'grid gap-2' + (items.length ? ' border-t border-border-subtle pt-2' : '')}>
+          <button type="button" aria-expanded={showDismissed} aria-controls="attention-dismissed"
+                  onClick={() => setShowDismissed((v) => !v)}
+                  className={LINK_BUTTON + ' justify-self-start text-muted hover:text-fg'}>
+            {dismissed.length} dismissed {showDismissed ? '(hide)' : '(show)'}
+          </button>
+          {showDismissed && (
+            <ul id="attention-dismissed" className="grid gap-2 opacity-70">
+              {dismissed.map((a) => <AttentionRow key={a.id} item={a} action={button('restore', 'Restore', a)} />)}
+            </ul>
           )}
         </div>
-      ))}
+      )}
     </section>
   )
 }
@@ -426,7 +480,7 @@ export default function OverviewPage() {
   return (
     <div className="grid gap-4 [&>*]:min-w-0">
       <StatusLine overview={o} driftCount={driftCount} lastUpdated={overview.lastUpdated} />
-      <AttentionStrip items={o.attention} />
+      <AttentionStrip items={o.attention} dismissed={o.attention_dismissed} onChanged={overview.refresh} />
       <Drift drift={drift.data} />
       <KpiBand tiles={kpiTiles(o, series.data)} />
       {(o.apps || []).length > 0 && (

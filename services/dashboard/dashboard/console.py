@@ -10,6 +10,7 @@ in-use model file cannot be deleted) be tested without a running stack.
 from __future__ import annotations
 
 import re
+import time
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
 
@@ -69,6 +70,10 @@ _MEDIA_BY_SUFFIX = {
 _DISK_WARN_PCT = 80
 _DISK_CRITICAL_PCT = 90
 _RAM_WARN_PCT = 90
+# A rejected GPU job is an event, not a standing condition: it asks for attention for this long
+# after the rejection, then lives on only in the Activity timeline. "Up to": the control plane's
+# /jobs/history serves its newest 100 jobs, so on a busy day a rejection can scroll out sooner.
+REJECTION_ALERT_WINDOW_S = 24 * 3600
 
 # A median of fewer than this many samples is provisional: the page shows the count and marks
 # it, never a bare number (one slow turn must not read as the model's speed).
@@ -231,26 +236,32 @@ def chat_medians(throughput: dict, served: dict, registry: dict) -> dict:
 # ---------------------------------------------------------------------------------------------
 
 def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
-                    status_gpu: dict | None, host_rows: list[dict] | None = None) -> list[dict]:
+                    status_gpu: dict | None, host_rows: list[dict] | None = None,
+                    leases: list[dict] | None = None, now: float | None = None) -> list[dict]:
     """What needs a person, most severe first. Finished jobs and stopped services are not
     problems; a failing health probe, an unhealthy or crashed container, a nearly full disk and
     a rejected GPU job are. A chat model evicted so a render can borrow its GPU is stopped on
     purpose, so its failing probe is not a problem either. `host_rows` are the Services table's
     rows outside the ordo project: a crashed one is critical and an unhealthy one a warning,
-    each naming its project; stopping or finishing one is a choice, not a problem."""
+    each naming its project; stopping or finishing one is a choice, not a problem.
+
+    Every item carries a stable `id` naming the condition, so a person can dismiss it until the
+    condition clears (split_dismissed). `leases` is the control plane's lease history: a job it
+    rejected is listed for REJECTION_ALERT_WINDOW_S after the rejection."""
     items: list[dict] = []
     evicted = set((status_gpu or {}).get("evicted_residents") or {})
     for card in cards or []:
         if card.get("ok") is False and (card.get("ops_service") or card.get("id")) not in evicted:
-            items.append({"severity": "critical", "title": f"{card.get('name')} is not responding",
+            items.append({"id": f"probe-down:{card.get('id')}", "severity": "critical",
+                          "title": f"{card.get('name')} is not responding",
                           "detail": card.get("error") or "", "service": card.get("id")})
     for sid, row in sorted((containers_by_id or {}).items()):
         verdict = _verdict(row)
         if verdict == "unhealthy":
-            items.append({"severity": "critical", "title": f"{sid} is unhealthy",
+            items.append({"id": f"unhealthy:{sid}", "severity": "critical", "title": f"{sid} is unhealthy",
                           "detail": row.get("status", ""), "service": sid})
         elif verdict == "failed":
-            items.append({"severity": "critical", "title": f"{sid} exited with an error",
+            items.append({"id": f"failed:{sid}", "severity": "critical", "title": f"{sid} exited with an error",
                           "detail": row.get("status", ""), "service": sid})
     for row in sorted(host_rows or [], key=lambda r: str(r.get("name") or "").lower()):
         verdict = row.get("verdict")
@@ -258,29 +269,71 @@ def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
             continue
         detail = f"{row.get('project') or 'no project'}: {row.get('status') or ''}"
         if verdict == "failed":
-            items.append({"severity": "critical", "title": f"{row.get('name')} exited with an error",
+            items.append({"id": f"host-failed:{row.get('name')}", "severity": "critical",
+                          "title": f"{row.get('name')} exited with an error",
                           "detail": detail, "service": row.get("name")})
         else:
-            items.append({"severity": "warning", "title": f"{row.get('name')} is unhealthy",
+            items.append({"id": f"host-unhealthy:{row.get('name')}", "severity": "warning",
+                          "title": f"{row.get('name')} is unhealthy",
                           "detail": detail, "service": row.get("name")})
     disk = (hardware or {}).get("disk_pct")
     if isinstance(disk, int | float) and disk >= _DISK_WARN_PCT:
         detail = ""
         if hardware.get("disk_used_gb") is not None and hardware.get("disk_total_gb") is not None:
             detail = f"{hardware['disk_used_gb']:,.1f} of {hardware['disk_total_gb']:,.1f} GB"
-        items.append({"severity": "critical" if disk >= _DISK_CRITICAL_PCT else "warning",
+        severity = "critical" if disk >= _DISK_CRITICAL_PCT else "warning"
+        # The severity is part of the id: dismissing the warning must not hide the escalation.
+        items.append({"id": f"disk:{severity}", "severity": severity,
                       "title": f"Disk {round(disk)}% full", "detail": detail, "service": None})
     ram = (hardware or {}).get("ram_pct")
     if isinstance(ram, int | float) and ram >= _RAM_WARN_PCT:
-        items.append({"severity": "warning", "title": f"Memory {round(ram)}% used", "detail": "",
+        items.append({"id": "memory", "severity": "warning", "title": f"Memory {round(ram)}% used", "detail": "",
                       "service": None})
-    # The scheduler lists rejected jobs by id: a job is rejected only when it asks for more VRAM
-    # than the card has (ordo/control/scheduler.py).
-    for job_id in (status_gpu or {}).get("rejected", []) or []:
-        items.append({"severity": "warning", "title": f"GPU job {job_id} was rejected",
+    # A job is rejected only when it asks for more VRAM than the card has
+    # (ordo/control/scheduler.py). The history stamps the rejection, so an old one ages out
+    # instead of standing in the list for the life of the scheduler's snapshot.
+    now = time.time() if now is None else now
+    for lease in leases or []:
+        ended = lease.get("ended")
+        if lease.get("outcome") != "rejected" or not isinstance(ended, int | float):
+            continue
+        if now - ended > REJECTION_ALERT_WINDOW_S:
+            continue
+        job_id = lease.get("id", "")
+        items.append({"id": f"gpu-rejected:{job_id}:{int(ended)}", "severity": "warning",
+                      "title": f"GPU job {job_id} was rejected",
                       "detail": "it needs more VRAM than the GPU has", "service": None})
     items.sort(key=lambda i: 0 if i["severity"] == "critical" else 1)
     return items
+
+
+def split_dismissed(items: list[dict], dismissed: dict) -> tuple[list[dict], list[dict]]:
+    """(still shown, dismissed) for the attention items: a dismissed item stays out of the list
+    and the status line until its condition clears (prune_dismissals forgets it then)."""
+    shown = [i for i in items if i["id"] not in dismissed]
+    hidden = [i for i in items if i["id"] in dismissed]
+    return shown, hidden
+
+
+# The source each attention id's condition is read from, by the id's prefix. A dismissal is
+# forgotten only when its own source was read and no longer reports the condition.
+ATTENTION_SOURCES = {
+    "probe-down": "cards", "failed": "services", "unhealthy": "services",
+    "host-failed": "host", "host-unhealthy": "host",
+    "disk": "disk", "memory": "memory", "gpu-rejected": "history",
+}
+
+
+def prune_dismissals(dismissed: dict, items: list[dict], read: set[str]) -> dict:
+    """Keep only the dismissals whose condition still holds. Forgetting the rest is what makes a
+    dismissal last "until it clears": if the same container fails again later, it is listed again.
+
+    `read` names the sources (ATTENTION_SOURCES values) this poll actually read. A condition whose
+    source failed is not seen this poll, which is not the same as cleared, so its dismissal is
+    kept; so is one whose id has no known source."""
+    current = {i["id"] for i in items}
+    return {k: v for k, v in dismissed.items()
+            if k in current or ATTENTION_SOURCES.get(k.split(":", 1)[0]) not in read}
 
 
 def drift(doctor: dict | None) -> dict:

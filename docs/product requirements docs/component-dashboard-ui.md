@@ -18,7 +18,9 @@ A web-based control plane that provides a single pane of glass for:
 |----------|--------|------|-------------|
 | `/api/health` | GET | None | Dashboard + upstream service health (container healthcheck) |
 | `/api/hardware/service-pressure` | GET | None | Per-container CPU/RAM; VRAM null until ops-controller measures it; unmeasured values are null with a `reason`; plus `containers`: every running container on the host by name (read from ops-controller `/stats/services`: how the Services page shows other managed projects' containers), empty when the source is unavailable |
-| `/api/overview` | GET | None | Status line, GPUs and who holds them, chat engine, attention items, host, and `apps`: every web UI to open, from catalog cards with an Open link (their `description` included) and host containers labelled the Homepage way (`homepage.href`, optional `homepage.name`, `homepage.description`, `homepage.group`) (Overview page) |
+| `/api/overview` | GET | None | Status line, GPUs and who holds them, chat engine, attention items (`attention`) and the ones a person dismissed (`attention_dismissed`), host, and `apps`: every web UI to open, from catalog cards with an Open link (their `description` included) and host containers labelled the Homepage way (`homepage.href`, optional `homepage.name`, `homepage.description`, `homepage.group`) (Overview page) |
+| `/api/attention/dismiss` | POST | Y | `{id}`: hide an attention item until its condition clears (kept in `DASHBOARD_DATA_PATH/attention_dismissed.json`); an id whose kind (the part before `:`) is not one the Overview produces is 422 |
+| `/api/attention/restore` | POST | Y | `{id}`: list a dismissed attention item again |
 | `/api/activity` | GET | None | Renders, GPU leases and operator actions, newest first |
 | `/api/services/table` | GET | None | Every container on the host: verdict, control kind (`ordo`, `managed`, `host`, `link`, `group`, `none`) and allowed actions; a service's containers nest under its row (`parent` names it), which carries `group_verdict`, the worst state across the group (Services page) |
 | `/api/ops/services/{id}/start` | POST | Y | Start service (via ops-controller) |
@@ -81,9 +83,9 @@ Codes are `DEP-<DEP>-<KIND>`. The DEP part names the dependency:
 | `QDRANT` | Qdrant |
 | `EDGE` | the Caddy SSO edge: each card's edge check, and the edge proxy's DNS name (per target) |
 | `PROBE` | a hub card's liveness check (per card) |
-| `FS` | the filesystem (state files, model dir), reserved |
+| `FS` | the dashboard's own state files on its data volume (the Overview's dismissals) |
 
-Every dependency is instrumented except `FS`, which reads `unknown` until something records it.
+Every dependency is instrumented. `FS` reads `unknown` until a state file is first written.
 
 The KIND part names how it failed:
 
@@ -95,6 +97,7 @@ The KIND part names how it failed:
 | `BADPAYLOAD` | the response body could not be parsed as JSON |
 | `AUTH` | the dependency rejected the credentials (HTTP 401/403) |
 | `NOTCONFIGURED` | the dependency's URL or token is not set |
+| `UNWRITABLE` | a state file could not be written (volume full or read-only) |
 
 A 4xx other than AUTH is not a failure kind: the dependency answered, so the central helpers mark
 it ok instead of recording it, and no `DEP-*-HTTP4XX` code exists.

@@ -8,6 +8,7 @@ dependency reads as unavailable, never as zeros.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from unittest.mock import AsyncMock, patch
@@ -111,6 +112,14 @@ def gpu_idle():
     return patch.object(routes_console, "_ops_json", side_effect=ops_json)
 
 
+@pytest.fixture(autouse=True)
+def dismissals_file(tmp_path):
+    """Each test gets its own dismissals file instead of the dashboard's data directory."""
+    path = tmp_path / "attention_dismissed.json"
+    with patch.object(routes_console, "_dismissals_path", return_value=path):
+        yield path
+
+
 @pytest.fixture
 def live(dashboard_operator_headers):
     """Every fetcher patched with the payloads above."""
@@ -152,6 +161,123 @@ def test_overview_status_counts_what_needs_attention(live):
     assert not any("evals" in t for t in titles)
     assert body["status"]["level"] == "critical"
     assert body["status"]["text"] == "2 things need you"
+
+
+def test_a_dismissed_item_leaves_the_list_and_the_count_until_restored(live):
+    assert live.post("/api/attention/dismiss", json={"id": "probe-down:codebase-memory"}).json() == {"ok": True}
+    body = live.get("/api/overview").json()
+    assert [a["id"] for a in body["attention"]] == ["disk:warning"]
+    assert [a["id"] for a in body["attention_dismissed"]] == ["probe-down:codebase-memory"]
+    assert body["status"]["text"] == "1 thing needs you"
+    assert body["status"]["level"] == "warning"
+
+    live.post("/api/attention/restore", json={"id": "probe-down:codebase-memory"})
+    body = live.get("/api/overview").json()
+    assert len(body["attention"]) == 2 and body["attention_dismissed"] == []
+
+
+def test_a_dismissal_is_forgotten_once_its_condition_clears(live, dismissals_file):
+    live.post("/api/attention/dismiss", json={"id": "host-failed:gone-container"})
+    live.get("/api/overview")
+    assert "host-failed:gone-container" not in json.loads(dismissals_file.read_text())
+
+
+@pytest.mark.parametrize("failure", ["host list", "managed projects", "disk metric", "lease history"])
+def test_a_poll_that_misses_a_source_keeps_its_dismissals(live, dismissals_file, failure):
+    # A source that failed reports none of its conditions; that is not them clearing.
+    dismissed = {"host-failed:gone-container": 1.0, "disk": 2.0, "gpu-rejected:big:9": 3.0}
+    dismissals_file.write_text(json.dumps(dismissed))
+
+    async def ops_json(path, timeout=None):
+        if (failure, path) in {("managed projects", "/projects"), ("lease history", "/jobs/history")}:
+            return None
+        return OPS.get(path)
+
+    hardware = {**HARDWARE, "disk_pct": 10.0}  # calm, so only the metric's absence matters below
+    if failure == "disk metric":
+        hardware = {**HARDWARE, "disk_pct": None}
+    host = None if failure == "host list" else HOST_CONTAINERS
+    with patch.object(routes_console, "_ops_json", side_effect=ops_json),          patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=host)),          patch.object(routes_console, "_hardware", new=AsyncMock(return_value=hardware)):
+        live.get("/api/overview")
+    kept = json.loads(dismissals_file.read_text())
+    lost = {"host list": "host-failed:gone-container", "managed projects": "host-failed:gone-container",
+            "disk metric": "disk", "lease history": "gpu-rejected:big:9"}[failure]
+    assert lost in kept
+
+
+@pytest.mark.parametrize("failure", ["services", "cards"])
+def test_a_poll_without_services_or_cards_keeps_their_dismissals(live, dismissals_file, failure):
+    dismissed = {"failed:gone": 1.0, "probe-down:gone": 2.0}
+    dismissals_file.write_text(json.dumps(dismissed))
+
+    async def ops_json(path, timeout=None):
+        return None if (failure, path) == ("services", "/services") else OPS.get(path)
+
+    cards = [] if failure == "cards" else CARDS
+    with patch.object(routes_console, "_ops_json", side_effect=ops_json),          patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=cards)):
+        live.get("/api/overview")
+    kept = json.loads(dismissals_file.read_text())
+    assert {"services": "failed:gone", "cards": "probe-down:gone"}[failure] in kept
+
+
+def test_an_unwritable_dismissals_file_degrades_instead_of_failing_the_overview(live, dismissals_file):
+    from dashboard import diagnostics
+
+    dismissals_file.write_text(json.dumps({"host-failed:gone-container": 1.0}))
+    with patch.object(routes_console.attention_store, "save", side_effect=OSError(28, "No space left on device")):
+        response = live.get("/api/overview")
+    assert response.status_code == 200
+    assert response.json()["attention_dismissed"] == []
+    assert diagnostics._failures[-1]["code"] == "DEP-FS-UNWRITABLE"
+
+
+@pytest.mark.parametrize("verb, body, detail", [
+    ("dismiss", {"id": "disk"}, "The data volume could not be written, so the item is still listed"),
+    ("restore", {"id": "disk"}, "The data volume could not be written, so the item is still dismissed"),
+])
+def test_a_click_on_an_unwritable_volume_answers_503_and_records_the_failure(live, dismissals_file,
+                                                                             verb, body, detail):
+    """A click that cannot persist its change answers like the file's other dependency failures:
+    503 with a clear detail (the toast shows it), and DEP-FS-UNWRITABLE in diagnostics even when
+    the polls' pruning has nothing to remove. A later successful click writes and clears the
+    recorded failure again."""
+    from dashboard import diagnostics
+
+    # restore only saves once it actually removed an entry; seed one so save runs.
+    if verb == "restore":
+        dismissals_file.write_text(json.dumps({"disk": 1.0}))
+    with patch.object(routes_console.attention_store, "save", side_effect=OSError(28, "No space left on device")):
+        response = live.post(f"/api/attention/{verb}", json=body)
+    assert response.status_code == 503
+    assert response.json()["detail"] == detail
+    assert diagnostics._failures[-1]["code"] == "DEP-FS-UNWRITABLE"
+    # Nothing persisted: the dismiss never wrote, and the restore left its entry in place.
+    if verb == "dismiss":
+        assert not dismissals_file.exists()
+    else:
+        assert json.loads(dismissals_file.read_text()) == {"disk": 1.0}
+
+    # The volume answers again: the successful write clears the recorded failure.
+    assert live.post(f"/api/attention/{verb}", json=body).json() == {"ok": True}
+    fs_status = diagnostics._dep_status[("FS", None)]
+    assert fs_status["consecutive_failures"] == 0 and fs_status["last_ok"] is not None
+
+
+def test_restoring_an_id_that_is_not_dismissed_changes_nothing(live, dismissals_file):
+    dismissals_file.write_text(json.dumps({"disk": 1.0}))
+    assert live.post("/api/attention/restore", json={"id": "failed:never-dismissed"}).json() == {"ok": True}
+    assert json.loads(dismissals_file.read_text()) == {"disk": 1.0}
+
+
+@pytest.mark.parametrize("item_id", ["foo", "faied:web", ":web", "disk-ish"])
+def test_a_dismissal_of_an_id_build_attention_cannot_produce_is_refused(live, dismissals_file, item_id):
+    response = live.post("/api/attention/dismiss", json={"id": item_id})
+    assert response.status_code == 422
+    assert not dismissals_file.exists()
+
+
+def test_a_dismissal_needs_an_id(live):
+    assert live.post("/api/attention/dismiss", json={"id": ""}).status_code == 422
 
 
 def test_overview_service_count_covers_every_project_and_leaves_out_finished_jobs(live):
