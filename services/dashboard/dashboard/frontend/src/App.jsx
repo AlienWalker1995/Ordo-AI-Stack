@@ -7,6 +7,7 @@ import { HostStepBanners } from './components/HostSteps.jsx'
 import LocalSignIn from './components/LocalSignIn.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 import { BTN } from './components/ui.jsx'
+import { THEME_CHOICES, useTheme } from './lib/theme.jsx'
 
 // One render error stays in the top-level region it happened in (page, command palette, banners):
 // the rest of the shell keeps working, and the card names a recovery action instead of leaving
@@ -63,6 +64,20 @@ function pageFromHash() {
 }
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+
+// The viewer's colour theme: follow the OS, or pin light or dark (src/lib/theme.jsx).
+function ThemeSelect() {
+  const { choice, setChoice } = useTheme()
+  return (
+    <>
+      <label htmlFor="theme-select" className="sr-only">Colour theme</label>
+      <select id="theme-select" value={choice} onChange={(e) => setChoice(e.target.value)}
+              className="h-8 rounded-sm border border-border bg-bg px-2 text-label text-fg-muted transition-colors hover:border-accent/40 hover:text-fg">
+        {THEME_CHOICES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+      </select>
+    </>
+  )
+}
 
 export default function App() {
   const [active, setActive] = useState(pageFromHash)
@@ -138,6 +153,7 @@ export default function App() {
             })}
           </nav>
           <div className="ml-auto flex items-center gap-2">
+            <ThemeSelect />
             <button type="button" onClick={() => setPaletteOpen(true)}
                     className="inline-flex h-8 items-center gap-2 rounded-sm border border-border px-3 text-label text-fg-muted transition-colors hover:border-accent/40 hover:text-fg"
                     aria-keyshortcuts={isMac ? 'Meta+K' : 'Control+K'}>

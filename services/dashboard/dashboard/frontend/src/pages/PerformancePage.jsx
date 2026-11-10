@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { api, useFetch } from '../api.js'
 import { Skeleton, Unavailable } from '../components/ui.jsx'
+import { useTheme } from '../lib/theme.jsx'
 
 const RANGES = [
   { id: '30m', label: '30 min' },
@@ -16,6 +17,7 @@ const RANGES = [
 export default function PerformancePage() {
   const grafana = useFetch(() => api.get('/api/perf/grafana'), [])
   const [range, setRange] = useState('3h')
+  const { resolved: theme } = useTheme()
 
   if (!grafana.data) {
     return grafana.error
@@ -31,7 +33,8 @@ export default function PerformancePage() {
     )
   }
 
-  const embed = `${grafana.data.path}&from=now-${range}&to=now`
+  // The backend's embed path asks for the dark theme; the embed follows the viewer's instead.
+  const embed = `${grafana.data.path.replace(/theme=dark/, `theme=${theme}`)}&from=now-${range}&to=now`
   const full = grafana.data.path.replace(/&kiosk/, '').replace(/&theme=dark/, '')
 
   return (

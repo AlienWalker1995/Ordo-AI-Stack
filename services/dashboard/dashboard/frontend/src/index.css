@@ -10,6 +10,57 @@
 @tailwind utilities;
 
 @layer base {
+  /* The palettes. Values are RGB channels for the tokens in tailwind.config.js. The resolved theme
+     is always written to <html data-theme> (src/lib/theme.jsx), so there is no third "auto" copy.
+     Dark: neutral graphite, a hair warm; elevation reads through tone, not hue. One disciplined
+     cyan accent; the semantic colours carry state only. */
+  :root,
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --c-bg: 10 10 11;
+    --c-bg-elevated: 17 17 19;
+    --c-surface: 22 22 24;
+    --c-surface-hover: 30 30 33;
+    --c-card: 22 22 24;
+    --c-border: 43 43 48;
+    --c-border-subtle: 31 31 35;
+    --c-fg: 234 234 236;
+    --c-fg-muted: 154 154 163;
+    --c-muted: 154 154 163;
+    --c-accent: 43 184 230;
+    --c-accent-soft: 99 205 238;
+    --c-success: 43 182 115;
+    --c-warning: 224 165 46;
+    --c-danger: 229 73 95;
+    --c-info: 90 114 144;
+    /* The backdrop's top-down lift: light on dark. */
+    --c-wash: 255 255 255;
+  }
+  /* Light: paper and ink with the same structure. The accent and the semantic colours are
+     darkened so text in them keeps at least 4.5:1 on the light surfaces. */
+  :root[data-theme='light'] {
+    color-scheme: light;
+    --c-bg: 246 246 248;
+    --c-bg-elevated: 255 255 255;
+    --c-surface: 240 240 243;
+    --c-surface-hover: 231 231 235;
+    --c-card: 240 240 243;
+    --c-border: 210 210 216;
+    --c-border-subtle: 226 226 231;
+    --c-fg: 24 24 27;
+    --c-fg-muted: 88 88 98;
+    --c-muted: 88 88 98;
+    --c-accent: 3 118 158;
+    --c-accent-soft: 3 105 141;
+    --c-success: 21 128 61;
+    --c-warning: 161 98 7;
+    --c-danger: 200 30 58;
+    --c-info: 71 92 120;
+    --c-wash: 0 0 0;
+  }
+}
+
+@layer base {
   html {
     scroll-behavior: smooth;
   }
@@ -29,7 +80,7 @@
     inset: 0;
     z-index: -1;
     pointer-events: none;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 34%);
+    background: linear-gradient(180deg, rgb(var(--c-wash) / 0.022), transparent 34%);
   }
   :focus-visible {
     outline: 1.5px solid theme('colors.accent');
@@ -37,7 +88,7 @@
   }
   a {
     color: theme('colors.accent');
-    text-decoration-color: rgba(0, 201, 255, 0.4);
+    text-decoration-color: rgb(var(--c-accent) / 0.4);
   }
   a:hover {
     text-decoration-color: theme('colors.accent');
