@@ -59,7 +59,7 @@ function SwitchModel({ data, onSwitched }) {
   }
 
   return (
-    <div className="grid gap-2">
+    <div className="grid gap-2 [&>*]:min-w-0">
       <label htmlFor="model-switch" className="text-label text-muted">Switch the GPU model</label>
       <div className="flex flex-wrap gap-2">
         <select id="model-switch" className={INPUT + ' min-w-0 flex-1 basis-64'} value={choice} disabled={busy}
@@ -218,7 +218,7 @@ export default function ModelsPage() {
             <span className="text-caption text-muted">Indexes documents for search.</span>
           </Slot>
         </div>
-        <div className="mt-4 grid gap-4 border-t border-border-subtle pt-4">
+        <div className="mt-4 grid gap-4 border-t border-border-subtle pt-4 [&>*]:min-w-0">
           <SwitchModel data={d} onSwitched={models.refresh} />
           <Benchmark />
         </div>

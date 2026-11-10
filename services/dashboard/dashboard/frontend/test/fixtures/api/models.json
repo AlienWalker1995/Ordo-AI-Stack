@@ -45,6 +45,14 @@
       "file": "Qwen3.6-35B-A3B-UD-Q4_K_M-gpu.gguf",
       "installed": false,
       "active": false
+    },
+    {
+      "id": "qwen3.8-27b-huihui-abliterated-nvfp4-ninfer",
+      "tier": "ultra",
+      "vram_gb": 22,
+      "file": "qwen3_8_27b_huihui_abliterated_nvfp4.ninfer",
+      "installed": false,
+      "active": false
     }
   ],
   "files": [
