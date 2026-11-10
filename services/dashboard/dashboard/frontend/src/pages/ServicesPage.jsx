@@ -69,10 +69,20 @@ function formatMem(gb) {
 }
 
 // One CPU or memory reading. A container the pressure read did not list shows a bare dash; one it
-// listed without a value says on hover why it has none.
-function Reading({ usage, value, format }) {
+// listed without a value says on hover why it has none. A service's sum that left out containers
+// nobody measured reads "at least" (≥) and says how many it covers.
+function Reading({ usage, field, format }) {
   if (!usage) return '—'
+  const value = usage[field]
   if (value == null) return <span title={`not measured: ${usage.reason || 'no value reported'}`}>—</span>
+  const partial = usage.partial?.[field]
+  if (partial) {
+    return (
+      <span title={`at least: ${partial}`}>
+        <span aria-hidden="true">≥</span><span className="sr-only">at least </span>{format(value)}
+      </span>
+    )
+  }
   return format(value)
 }
 
@@ -356,8 +366,8 @@ function ServiceRow({ row, usage, onLogs, onAction, action, group, nested }) {
       </td>
       <td className="whitespace-nowrap px-2 py-2 text-caption text-fg-muted">{row.project || '—'}</td>
       <td className="whitespace-nowrap px-2 py-2 text-caption tabular-nums text-muted">{row.uptime || '—'}</td>
-      <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.cpu_pct} format={formatCpu} /></td>
-      <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.mem_gb} format={formatMem} /></td>
+      <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted"><Reading usage={usage} field="cpu_pct" format={formatCpu} /></td>
+      <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted"><Reading usage={usage} field="mem_gb" format={formatMem} /></td>
       <td className="py-2 pl-2 pr-3">
         {row.control === 'none'
           ? <NotManaged row={row} />
@@ -393,8 +403,8 @@ function ServiceCard({ row, usage, onLogs, onAction, action, group, nested }) {
           <dl className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted">
             <div className="flex gap-1"><dt>Project</dt><dd className="text-fg-muted">{row.project || '—'}</dd></div>
             <div className="flex gap-1"><dt>Up for</dt><dd className="tabular-nums text-fg-muted">{row.uptime || '—'}</dd></div>
-            <div className="flex gap-1"><dt>CPU</dt><dd className="font-mono tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.cpu_pct} format={formatCpu} /></dd></div>
-            <div className="flex gap-1"><dt>Memory</dt><dd className="font-mono tabular-nums text-fg-muted"><Reading usage={usage} value={usage?.mem_gb} format={formatMem} /></dd></div>
+            <div className="flex gap-1"><dt>CPU</dt><dd className="font-mono tabular-nums text-fg-muted"><Reading usage={usage} field="cpu_pct" format={formatCpu} /></dd></div>
+            <div className="flex gap-1"><dt>Memory</dt><dd className="font-mono tabular-nums text-fg-muted"><Reading usage={usage} field="mem_gb" format={formatMem} /></dd></div>
           </dl>
           {/* A service's own row has no controls (its containers do), so no empty line either. */}
           {row.control !== 'group' && (
@@ -632,17 +642,26 @@ export default function ServicesPage() {
     return children ? { children, expanded: isOpen(row), onToggle: () => toggleRow(row) } : null
   }
   const ownUsage = (row) => usageById[row.compose] || usageById[row.card_id]
-  // A service's CPU and memory are its containers' together.
+  // A service's CPU and memory are its containers' together. A value nobody measured is never
+  // counted as 0: a sum that leaves containers out is marked partial, and a field no container
+  // reported stays null.
   const usageFor = (row) => {
     const children = childrenOf.get(row.id)
     if (!children) return ownUsage(row)
-    const measured = [row, ...children].map(ownUsage).filter(Boolean)
-    if (!measured.length) return undefined
-    const total = (field) => {
-      const values = measured.map((usage) => usage[field]).filter((value) => value != null)
-      return values.length ? values.reduce((a, b) => a + b, 0) : null
+    // Only rows that are containers can be measured: a group's own row, or a link-only card's,
+    // has none.
+    const members = [row, ...children].filter((member) => member.container)
+    const readings = members.map(ownUsage)
+    if (!readings.some(Boolean)) return undefined
+    const sum = { partial: {}, reason: `none of its ${members.length} containers was measured` }
+    for (const field of ['cpu_pct', 'mem_gb']) {
+      const values = readings.map((usage) => usage?.[field]).filter((value) => value != null)
+      sum[field] = values.length ? values.reduce((a, b) => a + b, 0) : null
+      if (values.length && values.length < members.length) {
+        sum.partial[field] = `${values.length} of ${members.length} containers measured`
+      }
     }
-    return { cpu_pct: total('cpu_pct'), mem_gb: total('mem_gb'), reason: 'none of its containers was measured' }
+    return sum
   }
   // Each top-level row, then (while it is open) the containers listed under it.
   const shown = rows.flatMap((row) => {

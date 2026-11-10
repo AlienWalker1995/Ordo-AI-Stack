@@ -142,3 +142,48 @@ describe('Services: one row per service', () => {
     expect(rowNamed(rows, 'grafana')).toBeUndefined()
   })
 })
+
+describe('Services: the CPU and memory of a service', () => {
+  function pressureFor(entries) {
+    const pressure = fixture('/api/hardware/service-pressure')
+    const base = { name: '', mem_pct: null, vram_gb: null, vram_pct: null, has_gpu: false, running: true, reason: null }
+    pressure.services.push(...entries.map((e) => ({ ...base, ...e })))
+    return pressure
+  }
+
+  it('reads "at least" when a container went unmeasured, never passing a partial sum as the total', async () => {
+    mockApi({
+      'GET /api/services/table': groupedTable(),
+      'GET /api/hardware/service-pressure': pressureFor([
+        { id: 'langfuse-web', cpu_pct: 1.5, mem_gb: 1.2 },
+        { id: 'langfuse-db', cpu_pct: null, mem_gb: null, running: false, reason: 'container not running' },
+        { id: 'prometheus', cpu_pct: 0.5, mem_gb: 0.1 },
+        { id: 'grafana', cpu_pct: 1.0, mem_gb: 0.3 },
+      ]),
+    })
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+    const langfuse = within(rowNamed(rows, 'Langfuse'))
+    // Both CPU and memory leave the stopped database out, and each says so.
+    const partial = await langfuse.findAllByTitle('at least: 1 of 2 containers measured')
+    expect(partial.map((el) => el.textContent)).toEqual(['≥at least 1.5%', '≥at least 1.2 GB'])
+    // Every Monitoring container reported, so its sum is plain.
+    const monitoring = within(rowNamed(rows, 'Monitoring'))
+    expect(monitoring.getByText('0.4 GB')).toBeTruthy()
+    expect(monitoring.queryByTitle(/^at least/)).toBeNull()
+  })
+
+  it('says how many containers went unmeasured when none reported a field', async () => {
+    mockApi({
+      'GET /api/services/table': groupedTable(),
+      'GET /api/hardware/service-pressure': pressureFor([
+        { id: 'prometheus', cpu_pct: 0.5, mem_gb: null, reason: 'no memory stat' },
+        { id: 'grafana', cpu_pct: 1.0, mem_gb: null, reason: 'no memory stat' },
+      ]),
+    })
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+    const monitoring = within(rowNamed(rows, 'Monitoring'))
+    expect(await monitoring.findByTitle('not measured: none of its 2 containers was measured')).toBeTruthy()
+  })
+})
