@@ -191,3 +191,27 @@ describe('Services: CPU and memory of other compose projects', () => {
     expect(media.getByText('1.1 GB')).toBeTruthy()
   })
 })
+
+describe('Services: the project chips', () => {
+  it('shows one project at a time, and All again', async () => {
+    mockApi()
+    renderInShell(<ServicesPage />)
+    const group = await screen.findByRole('group', { name: 'Project' })
+    const all = within(group).getByRole('button', { name: /^All/ })
+    expect(all.getAttribute('aria-pressed')).toBe('true')
+    const before = (await tableRows()).length
+    fireEvent.click(within(group).getByRole('button', { name: /^web-site/ }))
+    const rows = await tableRows()
+    expect(rows.length).toBeLessThan(before)
+    expect(rows.every((r) => within(r).queryByText('web-site'))).toBe(true)
+    fireEvent.click(all)
+    expect((await tableRows()).length).toBe(before)
+  })
+
+  it('marks a project with a failed container', async () => {
+    mockApi()
+    renderInShell(<ServicesPage />)
+    const group = await screen.findByRole('group', { name: 'Project' })
+    expect(within(group).getByRole('button', { name: /^media-stack/ }).textContent).toContain('1 failing')
+  })
+})

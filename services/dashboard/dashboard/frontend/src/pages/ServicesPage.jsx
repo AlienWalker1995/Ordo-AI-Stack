@@ -16,6 +16,7 @@ import {
   CONFIRM_FAST_FOR_MS, CONFIRM_FAST_MS, CONFIRM_SLOW_MS, GIVE_UP_MS, isConfirmed, outcomeUnknown,
 } from './serviceActions.js'
 import { bufferNotice, bufferText, describeBuffer, POLL_MS, useLogTail } from './serviceLogs.js'
+import { projectCounts } from './servicesModel.js'
 
 const VERDICT_LABEL = {
   up: 'Running', starting: 'Starting', unhealthy: 'Unhealthy', failed: 'Failed', stopped: 'Stopped', done: 'Finished',
@@ -568,6 +569,8 @@ export default function ServicesPage() {
   const tableStale = useStale(table)
   const pressureStale = useStale(pressure, PRESSURE_STALE_MS)
   const [filter, setFilter] = useState('')
+  // One compose project at a time (null: every project), next to the text filter.
+  const [project, setProject] = useState(null)
   const filterRef = useRef(null)
   const [logsFor, setLogsFor] = useState(null)
   // The stop or restart waiting on the confirmation dialog: { row, action }.
@@ -642,7 +645,11 @@ export default function ServicesPage() {
     if (!query || matches(row, query)) return children
     return children.filter((child) => matches(child, query))
   }
-  const rows = allRows.filter((row) => !row.parent && (!query || matches(row, query) || visibleChildren(row).length > 0))
+  const projects = projectCounts(allRows)
+  // A project that has left the host (its last container removed) stops filtering.
+  const activeProject = projects.some((p) => p.project === project) ? project : null
+  const rows = allRows.filter((row) => !row.parent && (!activeProject || row.project === activeProject)
+    && (!query || matches(row, query) || visibleChildren(row).length > 0))
   // The filter opens a service that matches only through its containers. While it does, the
   // chevron records the user's explicit choice instead of flipping the shared expansion set, so
   // the first click on an auto-opened group closes it.
@@ -731,6 +738,21 @@ export default function ServicesPage() {
                value={filter} onChange={(e) => setFilter(e.target.value)} />
         {notes.map(({ id, note }) => <div key={id} id={id} className="contents">{note}</div>)}
       </div>
+      {projects.length > 1 && (
+        <div role="group" aria-label="Project" className="flex flex-wrap gap-1.5">
+          <button type="button" className={BTN} aria-pressed={!activeProject} onClick={() => setProject(null)}>
+            All <span className="tabular-nums text-muted">{projects.reduce((n, p) => n + p.count, 0)}</span>
+          </button>
+          {projects.map((p) => (
+            <button key={p.project} type="button" className={BTN} aria-pressed={activeProject === p.project}
+                    onClick={() => setProject(activeProject === p.project ? null : p.project)}>
+              {p.project}
+              <span className="tabular-nums text-muted">{p.count}</span>
+              {p.failing > 0 && <Dot tone="failed" label={`${p.failing} failing`} />}
+            </button>
+          ))}
+        </div>
+      )}
       {query && !rows.length ? (
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2.5">
           <span className="text-body text-fg-muted">No services match "{filter.trim()}"</span>

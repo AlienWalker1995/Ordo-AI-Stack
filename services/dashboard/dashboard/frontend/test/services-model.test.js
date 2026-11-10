@@ -2,7 +2,7 @@
 // and the strip counts, against the live-shaped table fixture.
 import { describe, expect, it } from 'vitest'
 import {
-  displayIdentifier, groupByProject, projectNote, sectionOrder, severity, sortRows, statusCounts,
+  displayIdentifier, groupByProject, projectCounts, projectNote, sectionOrder, severity, sortRows, statusCounts,
 } from '../src/pages/servicesModel.js'
 import { fixture } from './mockApi.js'
 
@@ -262,5 +262,23 @@ describe('statusCounts', () => {
       row({ verdict: 'failed' }),
       row({ verdict: 'up' }),
     ])).toEqual({ total: 5, running: 1, failed: 1, unhealthy: 0, stopped: 0, jobs: 0 })
+  })
+})
+
+describe('projectCounts', () => {
+  it("counts each project's top-level rows and their failures, Ordo's project first", () => {
+    const rows = [
+      { id: 'a', project: 'nas-stack', verdict: 'up', parent: null },
+      { id: 'b', project: 'nas-stack', verdict: 'failed', parent: null },
+      { id: 'g', project: 'ordo', verdict: 'up', group_verdict: 'unhealthy', parent: null },
+      { id: 'g1', project: 'ordo', verdict: 'unhealthy', parent: 'g' },
+      { id: 'c', project: 'adguard', verdict: 'up', parent: null },
+      { id: 'x', project: null, verdict: 'up', parent: null },
+    ]
+    expect(projectCounts(rows)).toEqual([
+      { project: 'ordo', count: 1, failing: 1 },
+      { project: 'adguard', count: 1, failing: 0 },
+      { project: 'nas-stack', count: 2, failing: 1 },
+    ])
   })
 })
