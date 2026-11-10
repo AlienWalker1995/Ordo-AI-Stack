@@ -10,7 +10,7 @@ import ModelEngines from '../components/ModelEngines.jsx'
 import { errorMeta, useToast } from '../components/Toast.jsx'
 import { Banner, BTN, Chip, Dot, Median, Meter, Panel, Skeleton, StatTile, Unavailable } from '../components/ui.jsx'
 import { clock, formatDuration, formatGb, pct, timeAgo } from '../lib/format.js'
-import { ACTIVITY_CATEGORIES, activityDaySummary, filterActivity, groupActivity, kpiTiles } from './overviewModel.js'
+import { ACTIVITY_CATEGORIES, activityDaySummary, filterActivity, groupActivity, kpiTiles, liveWork } from './overviewModel.js'
 
 const LEVEL_TONE = { ok: 'ok', warning: 'warning', critical: 'critical', unknown: 'unknown' }
 
@@ -365,6 +365,69 @@ function AppLauncher({ apps }) {
   )
 }
 
+const count = (n) => (n == null ? '?' : n.toLocaleString())
+
+// Live work: who has the local engines busy right now, and each caller's last few minutes, from
+// the model gateway's request events (GET /api/work). In memory on the dashboard, so it starts
+// empty after a restart, which is right for a live view.
+function LiveWork({ work, error, engines }) {
+  if (!work) {
+    return error ? <Unavailable>Live work is unavailable: {error.message}</Unavailable> : <Skeleton className="h-16 w-full" />
+  }
+  const { running, prefill, windowS, callers } = liveWork(work, engines)
+  const minutes = Math.round(windowS / 60)
+  return (
+    <div className="grid gap-4">
+      <section aria-labelledby="live-now" className="grid gap-2">
+        <h3 id="live-now" className="text-label text-muted">
+          {running.length ? `${running.length} request${running.length === 1 ? '' : 's'} running` : 'Nothing running now'}
+        </h3>
+        {running.length > 0 && (
+          <ul className="grid gap-1.5">
+            {running.map((r) => (
+              <li key={r.id} className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <Dot tone="info" label="running" />
+                <span className="text-body text-fg">{r.caller}</span>
+                <span className="min-w-0 truncate font-mono text-caption text-fg-muted">{r.where}</span>
+                {r.fallback && <Chip tone="warning" title="The chat model was busy or away, so the fallback took it">Fallback</Chip>}
+                <span className="ml-auto text-caption tabular-nums text-muted">
+                  {count(r.promptTokens)} prompt tokens · {formatDuration(r.runningS)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {prefill.map((p) => (
+          <div key={p.where} className="grid gap-1">
+            <span className="text-caption text-muted">
+              Reading the prompt on {p.where}: {count(p.done)} of {count(p.total)} tokens
+            </span>
+            <Meter value={Math.min(100, (100 * p.done) / p.total)} label={`Prompt read on ${p.where}`} />
+          </div>
+        ))}
+      </section>
+      <section aria-labelledby="live-recent" className="grid gap-2">
+        <h3 id="live-recent" className="text-label text-muted">Last {minutes} minutes, by caller</h3>
+        {callers.length ? (
+          <ul className="grid divide-y divide-border-subtle">
+            {callers.map((c) => (
+              <li key={c.caller} className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-0.5 py-1.5 first:pt-0 last:pb-0">
+                <span className="text-body text-fg">{c.caller}</span>
+                <span className="text-caption tabular-nums text-fg-muted">{count(c.requests)} request{c.requests === 1 ? '' : 's'}</span>
+                {c.errors > 0 && <span className="text-caption tabular-nums text-danger">{count(c.errors)} failed</span>}
+                <span className="text-caption tabular-nums text-muted">
+                  {count(c.prompt_tokens)} in · {count(c.completion_tokens)} out
+                </span>
+                <span className="ml-auto text-caption tabular-nums text-muted">median {c.p50_latency_s.toFixed(1)} s</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-caption text-muted">No requests in the last {minutes} minutes.</p>}
+      </section>
+    </div>
+  )
+}
+
 export default function OverviewPage() {
   const overview = usePolling(() => api.get('/api/overview'), 5000)
   // The feed starts at the endpoint's default (25 items); "Show more" widens it to the cap (100)
@@ -376,6 +439,7 @@ export default function OverviewPage() {
   const series = usePolling(() => api.get('/api/perf/series'), 60000)
   // Slower than the overview: each call runs the open-webui probe inside its container.
   const drift = usePolling(() => api.get('/api/drift'), 60000)
+  const work = usePolling(() => api.get('/api/work'), 5000)
   const o = overview.data
   const driftCount = drift.data?.available ? drift.data.findings.length : 0
 
@@ -410,6 +474,9 @@ export default function OverviewPage() {
           <Capacity gpus={o.gpus} host={o.host} knowledge={o.knowledge} />
         </Panel>
       </div>
+      <Panel title="Live work">
+        <LiveWork work={work.data} error={work.error} engines={o.engines || []} />
+      </Panel>
       <Panel title="Activity">
         {activity.data ? <ActivityFeed items={activity.data.items} expanded={activityExpanded} onShowMore={showMoreActivity} />
           : activity.error ? <Unavailable>Activity is unavailable.</Unavailable>
