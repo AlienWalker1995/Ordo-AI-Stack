@@ -65,11 +65,20 @@ function SwitchModel({ data, onSwitched }) {
         <select id="model-switch" className={INPUT + ' min-w-0 flex-1 basis-64'} value={choice} disabled={busy}
                 onChange={(e) => setChoice(e.target.value)}>
           <option value="">Choose a model from the catalog…</option>
-          {data.catalog.map((c) => (
-            <option key={c.id} value={c.id} disabled={!c.installed || c.active}>
-              {c.id}{c.active ? ' (running)' : !c.installed ? ' (not downloaded)' : ''}
-            </option>
-          ))}
+          {/* What can be switched to comes first; the rest of the catalog is listed under it so
+              its ids stay discoverable, but cannot be picked. */}
+          <optgroup label="Downloaded">
+            {data.catalog.filter((c) => c.installed).map((c) => (
+              <option key={c.id} value={c.id} disabled={c.active}>{c.id}{c.active ? ' (running)' : ''}</option>
+            ))}
+          </optgroup>
+          {data.catalog.some((c) => !c.installed) && (
+            <optgroup label="Not downloaded">
+              {data.catalog.filter((c) => !c.installed).map((c) => (
+                <option key={c.id} value={c.id} disabled>{c.id}</option>
+              ))}
+            </optgroup>
+          )}
         </select>
         <button type="button" className={BTN_PRIMARY} disabled={busy || !target} onClick={run}>
           {busy ? 'Switching…' : 'Switch'}
