@@ -67,11 +67,13 @@ function SwitchModel({ data, onSwitched }) {
           <option value="">Choose a model from the catalog…</option>
           {/* What can be switched to comes first; the rest of the catalog is listed under it so
               its ids stay discoverable, but cannot be picked. */}
-          <optgroup label="Downloaded">
-            {data.catalog.filter((c) => c.installed).map((c) => (
-              <option key={c.id} value={c.id} disabled={c.active}>{c.id}{c.active ? ' (running)' : ''}</option>
-            ))}
-          </optgroup>
+          {installed.length > 0 && (
+            <optgroup label="Downloaded">
+              {installed.map((c) => (
+                <option key={c.id} value={c.id} disabled={c.active}>{c.id}{c.active ? ' (running)' : ''}</option>
+              ))}
+            </optgroup>
+          )}
           {data.catalog.some((c) => !c.installed) && (
             <optgroup label="Not downloaded">
               {data.catalog.filter((c) => !c.installed).map((c) => (

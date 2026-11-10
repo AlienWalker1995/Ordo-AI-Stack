@@ -28,4 +28,15 @@ describe('the model picker', () => {
     const picker = await screen.findByLabelText('Switch the GPU model')
     expect(within(picker).getAllByRole('group').map((g) => g.getAttribute('label'))).toEqual(['Downloaded'])
   })
+
+  it('leaves out the first group when nothing is downloaded', async () => {
+    const models = fixture('/api/models')
+    models.catalog = models.catalog.map((c) => ({ ...c, installed: false, active: false }))
+    mockApi({ 'GET /api/models': models })
+    renderInShell(<ModelsPage />)
+    const picker = await screen.findByLabelText('Switch the GPU model')
+    const groups = within(picker).getAllByRole('group')
+    expect(groups.map((g) => g.getAttribute('label'))).toEqual(['Not downloaded'])
+    expect(within(groups[0]).getAllByRole('option').every((o) => o.disabled)).toBe(true)
+  })
 })
