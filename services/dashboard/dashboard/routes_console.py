@@ -17,7 +17,7 @@ from urllib.parse import urlencode, urlsplit
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from dashboard import attention_store, console
+from dashboard import attention_store, console, diagnostics
 from dashboard.services_catalog import load_service_groups
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,6 @@ async def _get_json(url: str, timeout: float = 10.0, *, dep: str) -> dict | None
     dependency answered — it is up, so it marks ok and still returns None. The dep must be
     named: PROBE keeps its status per target, so a bare "PROBE" would raise from
     diagnostics._status_key on the success path instead of degrading."""
-    from dashboard import diagnostics
     from dashboard.app import _get_http_client
 
     target = urlsplit(url).path or url
@@ -289,7 +288,13 @@ def _load_and_prune(items: list[dict], read: set[str]) -> dict:
     dismissed = attention_store.load(path)
     kept = console.prune_dismissals(dismissed, items, read)
     if kept != dismissed:
-        attention_store.save(path, kept)
+        try:
+            attention_store.save(path, kept)
+            diagnostics.mark_ok("FS")
+        except OSError as e:
+            # Degrade, don't 500: this poll's answer is still right, and the next one prunes again.
+            diagnostics.record_failure("FS", "UNWRITABLE", f"{type(e).__name__}: {e.strerror or e}",
+                                       target=attention_store.FILE_NAME, elapsed_ms=0)
     return kept
 
 

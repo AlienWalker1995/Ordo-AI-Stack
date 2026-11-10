@@ -205,6 +205,38 @@ def test_a_poll_that_misses_a_source_keeps_its_dismissals(live, dismissals_file,
     assert lost in kept
 
 
+@pytest.mark.parametrize("failure", ["services", "cards"])
+def test_a_poll_without_services_or_cards_keeps_their_dismissals(live, dismissals_file, failure):
+    dismissed = {"failed:gone": 1.0, "probe-down:gone": 2.0}
+    dismissals_file.write_text(json.dumps(dismissed))
+
+    async def ops_json(path, timeout=None):
+        return None if (failure, path) == ("services", "/services") else OPS.get(path)
+
+    cards = [] if failure == "cards" else CARDS
+    with patch.object(routes_console, "_ops_json", side_effect=ops_json),          patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=cards)):
+        live.get("/api/overview")
+    kept = json.loads(dismissals_file.read_text())
+    assert {"services": "failed:gone", "cards": "probe-down:gone"}[failure] in kept
+
+
+def test_an_unwritable_dismissals_file_degrades_instead_of_failing_the_overview(live, dismissals_file):
+    from dashboard import diagnostics
+
+    dismissals_file.write_text(json.dumps({"host-failed:gone-container": 1.0}))
+    with patch.object(routes_console.attention_store, "save", side_effect=OSError(28, "No space left on device")):
+        response = live.get("/api/overview")
+    assert response.status_code == 200
+    assert response.json()["attention_dismissed"] == []
+    assert diagnostics._failures[-1]["code"] == "DEP-FS-UNWRITABLE"
+
+
+def test_restoring_an_id_that_is_not_dismissed_changes_nothing(live, dismissals_file):
+    dismissals_file.write_text(json.dumps({"disk": 1.0}))
+    assert live.post("/api/attention/restore", json={"id": "failed:never-dismissed"}).json() == {"ok": True}
+    assert json.loads(dismissals_file.read_text()) == {"disk": 1.0}
+
+
 def test_a_dismissal_needs_an_id(live):
     assert live.post("/api/attention/dismiss", json={"id": ""}).status_code == 422
 

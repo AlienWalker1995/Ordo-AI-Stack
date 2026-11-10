@@ -71,7 +71,8 @@ _DISK_WARN_PCT = 80
 _DISK_CRITICAL_PCT = 90
 _RAM_WARN_PCT = 90
 # A rejected GPU job is an event, not a standing condition: it asks for attention for this long
-# after the rejection, then lives on only in the Activity timeline.
+# after the rejection, then lives on only in the Activity timeline. "Up to": the control plane's
+# /jobs/history serves its newest 100 jobs, so on a busy day a rejection can scroll out sooner.
 REJECTION_ALERT_WINDOW_S = 24 * 3600
 
 # A median of fewer than this many samples is provisional: the page shows the count and marks

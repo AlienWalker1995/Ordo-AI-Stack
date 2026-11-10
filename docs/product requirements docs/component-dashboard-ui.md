@@ -83,9 +83,9 @@ Codes are `DEP-<DEP>-<KIND>`. The DEP part names the dependency:
 | `QDRANT` | Qdrant |
 | `EDGE` | the Caddy SSO edge: each card's edge check, and the edge proxy's DNS name (per target) |
 | `PROBE` | a hub card's liveness check (per card) |
-| `FS` | the filesystem (state files, model dir), reserved |
+| `FS` | the dashboard's own state files on its data volume (the Overview's dismissals) |
 
-Every dependency is instrumented except `FS`, which reads `unknown` until something records it.
+Every dependency is instrumented. `FS` reads `unknown` until a state file is first written.
 
 The KIND part names how it failed:
 
@@ -97,6 +97,7 @@ The KIND part names how it failed:
 | `BADPAYLOAD` | the response body could not be parsed as JSON |
 | `AUTH` | the dependency rejected the credentials (HTTP 401/403) |
 | `NOTCONFIGURED` | the dependency's URL or token is not set |
+| `UNWRITABLE` | a state file could not be written (volume full or read-only) |
 
 A 4xx other than AUTH is not a failure kind: the dependency answered, so the central helpers mark
 it ok instead of recording it, and no `DEP-*-HTTP4XX` code exists.
