@@ -1,26 +1,91 @@
 {
-  "gpu": {
-    "catalog_id": "qwen3.8-27b-turbo",
-    "file": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf",
-    "loaded": true,
-    "ctx": 106496,
-    "p50": 48.6,
-    "n": 512,
-    "provisional": false,
-    "first_ts": 1760000000,
-    "last_ts": 1760086400
-  },
-  "cpu": {
-    "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
-    "p50": 9.2,
-    "n": 3,
-    "provisional": true,
-    "first_ts": 1760050000,
-    "last_ts": 1760086000
-  },
-  "embed": {
-    "file": "embeddinggemma-2-Q8_0.gguf"
-  },
+  "engines": [
+    {
+      "model": "local-chat",
+      "engine": "inference-engine-gpu",
+      "kind": "chat",
+      "device": "gpu",
+      "file": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf",
+      "ctx": 200000,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": true,
+      "standing_in": false,
+      "speeds": null
+    },
+    {
+      "model": "local-chat-cpu",
+      "engine": "inference-engine-cpu",
+      "kind": "chat",
+      "device": "cpu",
+      "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+      "ctx": 200000,
+      "fallback_for": "local-chat",
+      "state": "serving",
+      "reason": "",
+      "measured": true,
+      "standing_in": false,
+      "speeds": null
+    },
+    {
+      "model": "local-embed",
+      "engine": "inference-engine-embed",
+      "kind": "embedding",
+      "device": "cpu",
+      "file": "embeddinggemma-2-Q8_0.gguf",
+      "ctx": 8192,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": false,
+      "standing_in": false,
+      "speeds": null
+    },
+    {
+      "model": "comfyui",
+      "engine": "comfyui",
+      "kind": "image",
+      "device": "gpu",
+      "file": null,
+      "ctx": null,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": false,
+      "standing_in": false,
+      "speeds": null
+    },
+    {
+      "model": "voice-stt",
+      "engine": "stt",
+      "kind": "stt",
+      "device": "gpu",
+      "file": "Systran/faster-whisper-base.en",
+      "ctx": null,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": false,
+      "standing_in": false,
+      "speeds": null
+    },
+    {
+      "model": "voice-tts",
+      "engine": "tts",
+      "kind": "tts",
+      "device": "gpu",
+      "file": null,
+      "ctx": null,
+      "fallback_for": null,
+      "state": "serving",
+      "reason": "",
+      "measured": false,
+      "standing_in": false,
+      "speeds": null
+    }
+  ],
+  "active_model": "qwen3.8-27b-turbo",
   "catalog": [
     {
       "id": "qwen3.8-27b-turbo",

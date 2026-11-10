@@ -173,7 +173,6 @@ def client(dashboard_operator_headers, monkeypatch, tmp_path):
          patch.object(routes_console, "_hardware", new=AsyncMock(return_value=HARDWARE)), \
          patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=CARDS)), \
          patch.object(routes_console, "_rag", new=AsyncMock(return_value={"ok": True, "points_count": 2483})), \
-         patch.object(routes_console, "_throughput", new=AsyncMock(return_value=THROUGHPUT)), \
          patch.object(routes_console, "_served", new=AsyncMock(return_value=SERVED)), \
          patch.object(routes_console, "_disk_files", new=AsyncMock(return_value=DISK)), \
          patch.object(routes_console, "_comfy_json", new=AsyncMock(side_effect=_comfy_json)), \

@@ -66,9 +66,6 @@ _RAM_WARN_PCT = 90
 # /jobs/history serves its newest 100 jobs, so on a busy day a rejection can scroll out sooner.
 REJECTION_ALERT_WINDOW_S = 24 * 3600
 
-# A median of fewer than this many samples is provisional: the page shows the count and marks
-# it, never a bare number (one slow turn must not read as the model's speed).
-PROVISIONAL_SAMPLE_THRESHOLD = 10
 
 # The model-gateway alias every consumer calls for chat (the core chat engine serves it).
 CHAT_MODEL = "local-chat"
@@ -494,26 +491,15 @@ def in_use_files(served: dict, model_config: dict) -> set[str]:
     return used
 
 
-def model_slots(model_config: dict, served: dict, disk_files: list[dict], throughput: dict) -> dict:
-    stats = (throughput or {}).get("models") or {}
-
-    def slot_speed(file: str | None) -> dict:
-        """A slot's median speed with its evidence: the count and span the page needs to mark a
-        thin median provisional."""
-        s = stats.get(file) or {} if file else {}
-        n = s.get("sample_count") or 0
-        return {"p50": s.get("p50"), "n": n, "provisional": 0 < n < PROVISIONAL_SAMPLE_THRESHOLD,
-                "first_ts": s.get("first_ts"), "last_ts": s.get("last_ts")}
-
+def model_files(model_config: dict, served: dict, disk_files: list[dict]) -> dict:
+    """The Models page's catalog and files. What each engine runs is the registry's engines list
+    (model_engines), the same one the Overview shows; this adds what only this page needs: which
+    catalog model is active, which catalog models are downloaded, and which files any engine uses."""
     on_disk = {f.get("name") for f in disk_files or []}
     used = in_use_files(served, model_config)
     active_id = (model_config or {}).get("active_model")
-    gpu_file = served.get("gpu") or (model_config or {}).get("active_file")
     return {
-        "gpu": {"catalog_id": active_id, "file": gpu_file, "loaded": served.get("gpu") is not None,
-                "ctx": (model_config or {}).get("ctx_size"), **slot_speed(gpu_file)},
-        "cpu": {"file": served.get("cpu"), **slot_speed(served.get("cpu"))},
-        "embed": {"file": served.get("embed")},
+        "active_model": active_id,
         "catalog": [
             {"id": m.get("id"), "tier": m.get("tier"), "vram_gb": m.get("vram_gb"),
              "file": m.get("file"), "installed": m.get("file") in on_disk,

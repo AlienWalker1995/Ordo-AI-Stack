@@ -537,16 +537,10 @@ SERVED = {"gpu": GPU_FILE, "cpu": CPU_FILE, "embed": EMBED_FILE}
 THROUGHPUT = {"models": {GPU_FILE: {"p50": 22.2, "sample_count": 500}, CPU_FILE: {"p50": 2.7, "sample_count": 217}}}
 
 
-def test_model_slots_come_from_what_each_server_loaded():
-    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, THROUGHPUT)
-    assert m["gpu"]["file"] == GPU_FILE and m["gpu"]["catalog_id"] == "qwen3.8-27b-turbo-fable-q6"
-    assert m["gpu"]["p50"] == 22.2 and m["gpu"]["ctx"] == 106496
-    assert m["cpu"]["file"] == CPU_FILE and m["cpu"]["p50"] == 2.7
-    assert m["embed"]["file"] == EMBED_FILE
 
 
 def test_catalog_entries_without_a_file_on_disk_are_not_installed():
-    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, THROUGHPUT)
+    m = console.model_files(MODEL_CONFIG, SERVED, DISK)
     by_id = {c["id"]: c for c in m["catalog"]}
     assert by_id["qwen3.8-27b-turbo-fable-q6"]["installed"] is True
     assert by_id["qwen3.8-27b-turbo-fable-q6"]["active"] is True
@@ -554,7 +548,7 @@ def test_catalog_entries_without_a_file_on_disk_are_not_installed():
 
 
 def test_files_in_use_by_any_server_are_marked_and_the_rest_are_not():
-    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, THROUGHPUT)
+    m = console.model_files(MODEL_CONFIG, SERVED, DISK)
     used = {f["name"]: f["in_use"] for f in m["files"]}
     assert used[GPU_FILE] and used[CPU_FILE] and used[EMBED_FILE] and used[MMPROJ_FILE]
     assert used["old-experiment.gguf"] is False
@@ -581,10 +575,6 @@ def test_after_a_switch_the_new_projector_is_in_use_and_the_old_one_is_not():
     assert "new-vision.gguf" in used and MMPROJ_FILE not in used
 
 
-def test_a_server_that_did_not_answer_and_has_no_declaration_leaves_its_slot_unknown():
-    m = console.model_slots({**MODEL_CONFIG, "active_file": None},
-                            {"gpu": None, "cpu": CPU_FILE, "embed": None}, DISK, THROUGHPUT)
-    assert m["gpu"]["file"] is None and m["gpu"]["catalog_id"] == "qwen3.8-27b-turbo-fable-q6"
 
 
 def test_served_file_is_the_basename_of_what_llama_server_reports():
@@ -799,10 +789,6 @@ def test_an_evicted_gpu_models_file_is_still_in_use():
     assert GPU_FILE in console.in_use_files(served_mid_render, MODEL_CONFIG)
 
 
-def test_the_gpu_slot_falls_back_to_the_rendered_model_while_the_server_is_evicted():
-    m = console.model_slots(MODEL_CONFIG, {"gpu": None, "cpu": CPU_FILE, "embed": EMBED_FILE},
-                            DISK, THROUGHPUT)
-    assert m["gpu"]["file"] == GPU_FILE and m["gpu"]["p50"] == 22.2 and m["gpu"]["loaded"] is False
 
 
 def test_a_probe_only_card_takes_its_state_from_the_probe_and_offers_no_controls():
@@ -879,11 +865,6 @@ def test_an_unanswered_doctor_is_unavailable_not_clean(doctor):
     assert console.drift(doctor) == {"available": False, "findings": []}
 
 
-def test_slot_medians_say_whether_they_are_provisional():
-    """The threshold lives in one place: the backend decides, the page only renders the flag."""
-    tp = {"models": {"a.gguf": {"p50": 48.6, "sample_count": 512}, "b.gguf": {"p50": 9.2, "sample_count": 3}}}
-    slots = console.model_slots({"active_file": "a.gguf"}, {"gpu": "a.gguf", "cpu": "b.gguf", "embed": None}, [], tp)
-    assert slots["gpu"]["provisional"] is False and slots["cpu"]["provisional"] is True
 
 
 # ---- one row per service: a group's containers list under its main row ----
@@ -1004,3 +985,7 @@ def test_groups_differing_only_in_case_are_one_group():
     host = [_labelled("a", "http://a/", group="Media", label_name="A"),
             _labelled("b", "http://b/", group="media", label_name="B")]
     assert [a["group"] for a in console.launcher_apps([], host)] == ["Media", "Media"]
+
+
+def test_model_files_names_the_active_catalog_model():
+    assert console.model_files(MODEL_CONFIG, SERVED, DISK)["active_model"] == "qwen3.8-27b-turbo-fable-q6"
