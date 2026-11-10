@@ -619,8 +619,10 @@ export default function ServicesPage() {
 
   const closeLogs = useCallback(() => setLogsFor(null), [])
   // Clear removes the zero-match message it sits in, so focus goes back to the filter.
+  // Clear drops both filters: after it, every service shows again.
   const clearFilter = useCallback(() => {
     setFilter('')
+    setProject(null)
     filterRef.current?.focus()
   }, [])
 
@@ -738,10 +740,10 @@ export default function ServicesPage() {
                value={filter} onChange={(e) => setFilter(e.target.value)} />
         {notes.map(({ id, note }) => <div key={id} id={id} className="contents">{note}</div>)}
       </div>
-      {projects.length > 1 && (
+      {(projects.length > 1 || activeProject) && (
         <div role="group" aria-label="Project" className="flex flex-wrap gap-1.5">
           <button type="button" className={BTN} aria-pressed={!activeProject} onClick={() => setProject(null)}>
-            All <span className="tabular-nums text-muted">{projects.reduce((n, p) => n + p.count, 0)}</span>
+            All <span className="tabular-nums text-muted">{allRows.filter((row) => !row.parent).length}</span>
           </button>
           {projects.map((p) => (
             <button key={p.project} type="button" className={BTN} aria-pressed={activeProject === p.project}
@@ -753,9 +755,11 @@ export default function ServicesPage() {
           ))}
         </div>
       )}
-      {query && !rows.length ? (
+      {(query || activeProject) && !rows.length ? (
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2.5">
-          <span className="text-body text-fg-muted">No services match "{filter.trim()}"</span>
+          <span className="text-body text-fg-muted">
+            No services {query ? <>match "{filter.trim()}"</> : 'listed'}{activeProject ? ` in ${activeProject}` : ''}
+          </span>
           <button type="button" className={BTN} onClick={clearFilter}>Clear</button>
         </div>
       ) : (
