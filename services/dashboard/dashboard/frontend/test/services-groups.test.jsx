@@ -156,7 +156,8 @@ describe('Services: the CPU and memory of a service', () => {
       'GET /api/services/table': groupedTable(),
       'GET /api/hardware/service-pressure': pressureFor([
         { id: 'langfuse-web', cpu_pct: 1.5, mem_gb: 1.2 },
-        { id: 'langfuse-db', cpu_pct: null, mem_gb: null, running: false, reason: 'container not running' },
+        // Running, but its stats read failed: unmeasured, unlike a stopped container.
+        { id: 'langfuse-db', cpu_pct: null, mem_gb: null, running: true, reason: 'stats unavailable' },
         { id: 'prometheus', cpu_pct: 0.5, mem_gb: 0.1 },
         { id: 'grafana', cpu_pct: 1.0, mem_gb: 0.3 },
       ]),
@@ -164,8 +165,8 @@ describe('Services: the CPU and memory of a service', () => {
     renderInShell(<ServicesPage />)
     const rows = await tableRows()
     const langfuse = within(rowNamed(rows, 'Langfuse'))
-    // Both CPU and memory leave the stopped database out, and each says so.
-    const partial = await langfuse.findAllByTitle('at least: 1 of 2 containers measured')
+    // Both CPU and memory leave the unmeasured database out, and each says so.
+    const partial = await langfuse.findAllByTitle('at least: 1 of 2 running containers measured')
     expect(partial.map((el) => el.textContent)).toEqual(['≥at least 1.5%', '≥at least 1.2 GB'])
     // Every Monitoring container reported, so its sum is plain.
     const monitoring = within(rowNamed(rows, 'Monitoring'))
@@ -184,6 +185,23 @@ describe('Services: the CPU and memory of a service', () => {
     renderInShell(<ServicesPage />)
     const rows = await tableRows()
     const monitoring = within(rowNamed(rows, 'Monitoring'))
-    expect(await monitoring.findByTitle('not measured: none of its 2 containers was measured')).toBeTruthy()
+    expect(await monitoring.findByTitle('not measured: none of its 2 running containers was measured')).toBeTruthy()
+  })
+})
+
+describe('Services: a stopped part of a service', () => {
+  it('adds nothing and leaves the sum whole: a finished job uses no CPU or memory', async () => {
+    const pressure = fixture('/api/hardware/service-pressure')
+    const base = { name: '', mem_pct: null, vram_gb: null, vram_pct: null, has_gpu: false, reason: null }
+    pressure.services.push(
+      { ...base, id: 'langfuse-web', cpu_pct: 1.5, mem_gb: 1.2, running: true },
+      { ...base, id: 'langfuse-db', cpu_pct: null, mem_gb: null, running: false, reason: 'container not running' },
+    )
+    mockApi({ 'GET /api/services/table': groupedTable(), 'GET /api/hardware/service-pressure': pressure })
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+    const langfuse = within(rowNamed(rows, 'Langfuse'))
+    expect(await langfuse.findByText('1.2 GB')).toBeTruthy()
+    expect(langfuse.queryByTitle(/^at least/)).toBeNull()
   })
 })

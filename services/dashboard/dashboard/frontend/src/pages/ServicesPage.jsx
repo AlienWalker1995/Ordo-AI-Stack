@@ -657,16 +657,18 @@ export default function ServicesPage() {
     const children = childrenOf.get(row.id)
     if (!children) return ownUsage(row)
     // Only rows that are containers can be measured: a group's own row, or a link-only card's,
-    // has none.
-    const members = [row, ...children].filter((member) => member.container)
-    const readings = members.map(ownUsage)
+    // has none. A container that is not running (a finished one-shot job, a stopped part) uses
+    // nothing: that is a reading of zero, not a gap, so it neither adds to the sum nor marks it
+    // partial. Only a running container without a value is unmeasured.
+    const readings = [row, ...children].filter((member) => member.container).map(ownUsage)
+      .filter((usage) => usage?.running !== false)
     if (!readings.some(Boolean)) return undefined
-    const sum = { partial: {}, reason: `none of its ${members.length} containers was measured` }
+    const sum = { partial: {}, reason: `none of its ${readings.length} running containers was measured` }
     for (const field of ['cpu_pct', 'mem_gb']) {
       const values = readings.map((usage) => usage?.[field]).filter((value) => value != null)
       sum[field] = values.length ? values.reduce((a, b) => a + b, 0) : null
-      if (values.length && values.length < members.length) {
-        sum.partial[field] = `${values.length} of ${members.length} containers measured`
+      if (values.length && values.length < readings.length) {
+        sum.partial[field] = `${values.length} of ${readings.length} running containers measured`
       }
     }
     return sum
