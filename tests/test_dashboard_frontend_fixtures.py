@@ -154,7 +154,7 @@ def client(dashboard_operator_headers, monkeypatch, tmp_path):
 
     # One item dismissed, so /api/overview returns an `attention_dismissed` element to compare.
     dismissals = tmp_path / "attention_dismissed.json"
-    dismissals.write_text(json.dumps({"disk": 1.0}), encoding="utf-8")
+    dismissals.write_text(json.dumps({"disk:warning": 1.0}), encoding="utf-8")
     monkeypatch.setattr(routes_console, "_dismissals_path", lambda: dismissals)
 
     # service-pressure reaches ops-controller through _ops_request, which needs the token.

@@ -85,7 +85,7 @@
       "service": "media-server"
     },
     {
-      "id": "disk",
+      "id": "disk:warning",
       "severity": "warning",
       "title": "Disk 82% full",
       "detail": "1,640.3 of 1,999.8 GB",

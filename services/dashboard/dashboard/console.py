@@ -281,7 +281,9 @@ def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
         detail = ""
         if hardware.get("disk_used_gb") is not None and hardware.get("disk_total_gb") is not None:
             detail = f"{hardware['disk_used_gb']:,.1f} of {hardware['disk_total_gb']:,.1f} GB"
-        items.append({"id": "disk", "severity": "critical" if disk >= _DISK_CRITICAL_PCT else "warning",
+        severity = "critical" if disk >= _DISK_CRITICAL_PCT else "warning"
+        # The severity is part of the id: dismissing the warning must not hide the escalation.
+        items.append({"id": f"disk:{severity}", "severity": severity,
                       "title": f"Disk {round(disk)}% full", "detail": detail, "service": None})
     ram = (hardware or {}).get("ram_pct")
     if isinstance(ram, int | float) and ram >= _RAM_WARN_PCT:

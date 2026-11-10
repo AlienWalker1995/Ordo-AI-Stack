@@ -209,7 +209,7 @@ def test_every_attention_item_has_a_stable_id_naming_its_condition():
     items = console.build_attention(cards, rows, {"disk_pct": 95, "ram_pct": 95}, IDLE, host_rows=host_rows)
     # A foreign container's ids are prefixed, so one sharing an ordo service's name never shares
     # its dismissal.
-    assert sorted(i["id"] for i in items) == ["disk", "failed:n8n", "host-failed:web-dev-1", "memory",
+    assert sorted(i["id"] for i in items) == ["disk:critical", "failed:n8n", "host-failed:web-dev-1", "memory",
                                               "probe-down:webui", "unhealthy:qdrant"]
 
 
@@ -222,6 +222,17 @@ def test_a_dismissed_item_is_split_out_until_its_condition_clears():
     every_source = set(console.ATTENTION_SOURCES.values())
     assert console.prune_dismissals({"host-failed:web-dev-1": 5.0, "disk": 6.0}, [items[0]],
                                     every_source) == {"disk": 6.0}
+
+
+def test_dismissing_the_disk_warning_does_not_hide_the_disk_going_critical():
+    warning = console.build_attention([], {}, {"disk_pct": 82, "ram_pct": 10}, IDLE)
+    assert [i["id"] for i in warning] == ["disk:warning"]
+    dismissed = {"disk:warning": 1.0}
+    critical = console.build_attention([], {}, {"disk_pct": 97, "ram_pct": 10}, IDLE)
+    shown, hidden = console.split_dismissed(critical, dismissed)
+    assert [i["id"] for i in shown] == ["disk:critical"] and hidden == []
+    # The warning's dismissal is forgotten now that its condition is gone.
+    assert console.prune_dismissals(dismissed, critical, set(console.ATTENTION_SOURCES.values())) == {}
 
 
 def test_a_dismissal_outlives_a_poll_that_could_not_read_its_source():

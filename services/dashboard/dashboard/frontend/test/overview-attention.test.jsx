@@ -16,7 +16,7 @@ describe('the attention list', () => {
     renderInShell(<OverviewPage />)
     fireEvent.click(await screen.findByRole('button', { name: 'Dismiss Disk 82% full' }))
     await waitFor(() => expect(api.sent('POST', '/api/attention/dismiss')).toHaveLength(1))
-    expect(api.sent('POST', '/api/attention/dismiss')[0].body).toEqual({ id: 'disk' })
+    expect(api.sent('POST', '/api/attention/dismiss')[0].body).toEqual({ id: 'disk:warning' })
     await waitFor(() => expect(api.sent('GET', '/api/overview').length).toBeGreaterThan(1))
   })
 

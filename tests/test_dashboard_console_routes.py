@@ -166,7 +166,7 @@ def test_overview_status_counts_what_needs_attention(live):
 def test_a_dismissed_item_leaves_the_list_and_the_count_until_restored(live):
     assert live.post("/api/attention/dismiss", json={"id": "probe-down:codebase-memory"}).json() == {"ok": True}
     body = live.get("/api/overview").json()
-    assert [a["id"] for a in body["attention"]] == ["disk"]
+    assert [a["id"] for a in body["attention"]] == ["disk:warning"]
     assert [a["id"] for a in body["attention_dismissed"]] == ["probe-down:codebase-memory"]
     assert body["status"]["text"] == "1 thing needs you"
     assert body["status"]["level"] == "warning"
