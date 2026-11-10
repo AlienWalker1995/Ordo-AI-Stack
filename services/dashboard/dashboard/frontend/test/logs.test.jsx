@@ -2,10 +2,10 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ToastProvider, useToast } from '../src/components/Toast.jsx'
 import { formatElapsed } from '../src/lib/format.js'
-import LogsPage from '../src/pages/LogsPage.jsx'
+import LogsPage, { worstFirst } from '../src/pages/LogsPage.jsx'
 import ModelsPage from '../src/pages/ModelsPage.jsx'
 import ServicesPage from '../src/pages/ServicesPage.jsx'
-import { mockApi } from './mockApi.js'
+import { fixture, mockApi } from './mockApi.js'
 import { renderInShell } from './renderInShell.jsx'
 
 const sample = {
@@ -129,5 +129,26 @@ describe('toast diagnostics', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Run a benchmark' }))
     await screen.findByRole('button', { name: 'Dismiss notification: Benchmark failed: Model gateway answered HTTP 503' })
     expect(toastTexts()[0]).toContain('DEP-GATEWAY-HTTP5XX · Trace trace77')
+  })
+})
+
+describe('the dependency list', () => {
+  it('puts failing dependencies first and keeps the order within each status', () => {
+    const rows = [
+      { dep: 'OPS', status: 'ok' }, { dep: 'GATEWAY', status: 'unknown' },
+      { dep: 'PROBE', target: 'a', status: 'failing' }, { dep: 'QDRANT', status: 'ok' },
+      { dep: 'PROBE', target: 'b', status: 'failing' },
+    ]
+    expect(worstFirst(rows).map((r) => r.target || r.dep)).toEqual(['a', 'b', 'GATEWAY', 'OPS', 'QDRANT'])
+  })
+
+  it('says how long ago, with the exact time on hover', async () => {
+    const now = Date.now() / 1000
+    mockApi({ 'GET /api/diagnostics': { ...fixture('/api/diagnostics'),
+      dependencies: [{ dep: 'OPS', target: null, status: 'ok', last_ok: now - 120, last_failure: null, consecutive_failures: 0 }] } })
+    renderInShell(<LogsPage />)
+    const [when] = await screen.findAllByText('2 min ago')
+    expect(when.tagName).toBe('TIME')
+    expect(when.getAttribute('title')).toBe(new Date((now - 120) * 1000).toLocaleString())
   })
 })

@@ -6,7 +6,7 @@
 import { useMemo, useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { Dot, INPUT, Panel, Skeleton, Unavailable } from '../components/ui.jsx'
-import { formatElapsed } from '../lib/format.js'
+import { formatElapsed, timeAgo } from '../lib/format.js'
 
 const STATUS_TONE = { ok: 'ok', failing: 'failed', unknown: 'unknown' }
 const STATUS_LABEL = { ok: 'OK', failing: 'Failing', unknown: 'Not seen yet' }
@@ -20,9 +20,24 @@ const CODE = 'font-mono text-caption text-fg'
 const MONO_MUTED = 'font-mono text-caption text-fg-muted'
 const META = 'flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted'
 
-/** A local date and time from an epoch in seconds. */
-function stamp(epochSeconds) {
-  return epochSeconds ? new Date(epochSeconds * 1000).toLocaleString() : 'Never'
+// When something happened: how long ago, which is what a person scanning for trouble reads first,
+// with the exact local date and time on hover and in the <time> element.
+function When({ at }) {
+  if (!at) return 'Never'
+  const when = new Date(at * 1000)
+  return <time dateTime={when.toISOString()} title={when.toLocaleString()}>{timeAgo(at)}</time>
+}
+
+// Failing dependencies first, then the ones not seen yet, then the healthy: a failure never sits
+// below twenty OK rows. The server's order is kept within each.
+const STATUS_ORDER = { failing: 0, unknown: 1, ok: 2 }
+
+/** @param {any[]} rows */
+export function worstFirst(rows) {
+  return rows
+    .map((row, i) => ({ row, i }))
+    .sort((a, b) => ((STATUS_ORDER[a.row.status] ?? 1) - (STATUS_ORDER[b.row.status] ?? 1)) || a.i - b.i)
+    .map(({ row }) => row)
 }
 
 function rowKey(row) {
@@ -53,7 +68,7 @@ function LastFailure({ failure }) {
   return (
     <div className="flex flex-col">
       <span className={CODE}>{failure.code}</span>
-      <span className="text-caption tabular-nums text-muted">{stamp(failure.at)}</span>
+      <span className="text-caption tabular-nums text-muted"><When at={failure.at} /></span>
     </div>
   )
 }
@@ -76,7 +91,7 @@ function DependencyTable({ rows }) {
             <tr key={rowKey(row)} className={ROW}>
               <td className="py-2 pr-2"><Status status={row.status} /></td>
               <th scope="row" className="px-2 py-2 text-left font-normal"><DependencyName row={row} /></th>
-              <td className="px-2 py-2 text-caption tabular-nums text-fg-muted">{stamp(row.last_ok)}</td>
+              <td className="px-2 py-2 text-caption tabular-nums text-fg-muted"><When at={row.last_ok} /></td>
               <td className="px-2 py-2"><LastFailure failure={row.last_failure} /></td>
               <td className="py-2 pl-2 text-right font-mono text-caption tabular-nums text-fg-muted">{row.consecutive_failures}</td>
             </tr>
@@ -97,7 +112,7 @@ function DependencyCards({ rows }) {
             <div className="shrink-0"><Status status={row.status} /></div>
           </div>
           <dl className={META}>
-            <div className="flex gap-1"><dt>Last ok</dt><dd className="tabular-nums text-fg-muted">{stamp(row.last_ok)}</dd></div>
+            <div className="flex gap-1"><dt>Last ok</dt><dd className="tabular-nums text-fg-muted"><When at={row.last_ok} /></dd></div>
             <div className="flex gap-1"><dt>Failures in a row</dt><dd className="font-mono tabular-nums text-fg-muted">{row.consecutive_failures}</dd></div>
           </dl>
           {row.last_failure && (
@@ -105,7 +120,7 @@ function DependencyCards({ rows }) {
               <div className="flex flex-wrap items-baseline gap-x-1">
                 <dt>Last failure</dt>
                 <dd className={CODE}>{row.last_failure.code}</dd>
-                <dd className="tabular-nums text-fg-muted">{stamp(row.last_failure.at)}</dd>
+                <dd className="tabular-nums text-fg-muted"><When at={row.last_failure.at} /></dd>
               </div>
             </dl>
           )}
@@ -132,7 +147,7 @@ function FailureTable({ failures }) {
         <tbody>
           {failures.map((row, i) => (
             <tr key={`${row.at}-${row.trace}-${i}`} className={ROW}>
-              <td className="py-2 pr-2 text-caption tabular-nums text-fg-muted">{stamp(row.at)}</td>
+              <td className="py-2 pr-2 text-caption tabular-nums text-fg-muted"><When at={row.at} /></td>
               <td className={'px-2 py-2 ' + CODE}>{row.code}</td>
               <td className={'break-all px-2 py-2 ' + MONO_MUTED}>{row.target}</td>
               <td className={'whitespace-nowrap px-2 py-2 text-right tabular-nums ' + MONO_MUTED}>{formatElapsed(row.elapsed_ms)}</td>
@@ -153,7 +168,7 @@ function FailureCards({ failures }) {
         <li key={`${row.at}-${row.trace}-${i}`} className={CARD}>
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <span className={CODE}>{row.code}</span>
-            <span className="text-caption tabular-nums text-fg-muted">{stamp(row.at)}</span>
+            <span className="text-caption tabular-nums text-fg-muted"><When at={row.at} /></span>
           </div>
           <dl className={META}>
             <div className="flex min-w-0 gap-1"><dt>Target</dt><dd className={'break-all ' + MONO_MUTED}>{row.target}</dd></div>
@@ -237,8 +252,8 @@ export default function LogsPage() {
     <div className="grid gap-3 [&>*]:min-w-0">
       <p className="text-caption text-muted">Dependency failures and request traces since the dashboard started. Refreshes every 10 seconds.</p>
       <Panel title="Dependency status">
-        <DependencyCards rows={data.dependencies} />
-        <DependencyTable rows={data.dependencies} />
+        <DependencyCards rows={worstFirst(data.dependencies)} />
+        <DependencyTable rows={worstFirst(data.dependencies)} />
       </Panel>
       <RecentFailures recent={data.recent || []} />
       <Legend legend={data.legend} />
