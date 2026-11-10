@@ -204,4 +204,39 @@ describe('Services: a stopped part of a service', () => {
     expect(await langfuse.findByText('1.2 GB')).toBeTruthy()
     expect(langfuse.queryByTitle(/^at least/)).toBeNull()
   })
+
+  it('reads zero, not unmeasured, when every container of the service is stopped', async () => {
+    const pressure = fixture('/api/hardware/service-pressure')
+    const base = { name: '', mem_pct: null, vram_gb: null, vram_pct: null, has_gpu: false, reason: null }
+    pressure.services.push(
+      { ...base, id: 'langfuse-web', cpu_pct: null, mem_gb: null, running: false, reason: 'container not running' },
+      { ...base, id: 'langfuse-db', cpu_pct: null, mem_gb: null, running: false, reason: 'container not running' },
+    )
+    mockApi({ 'GET /api/services/table': groupedTable(), 'GET /api/hardware/service-pressure': pressure })
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+    const langfuse = within(rowNamed(rows, 'Langfuse'))
+    // Both parts are stopped, so the service uses exactly nothing: plain zeros, no tooltip.
+    expect(await langfuse.findByText('0.0%')).toBeTruthy()
+    expect(langfuse.getByText('0.0 GB')).toBeTruthy()
+    expect(langfuse.queryByTitle(/^not measured/)).toBeNull()
+    expect(langfuse.queryByTitle(/^at least/)).toBeNull()
+  })
+
+  it('keeps the unmeasured note when a stopped part sits next to an unlisted one', async () => {
+    // langfuse-web is stopped (a known zero); langfuse-db is running but absent from the pressure
+    // pass entirely, so it is unmeasured — the row must not fall back to a bare dash.
+    const pressure = fixture('/api/hardware/service-pressure')
+    const base = { name: '', mem_pct: null, vram_gb: null, vram_pct: null, has_gpu: false, reason: null }
+    pressure.services.push(
+      { ...base, id: 'langfuse-web', cpu_pct: null, mem_gb: null, running: false, reason: 'container not running' },
+    )
+    mockApi({ 'GET /api/services/table': groupedTable(), 'GET /api/hardware/service-pressure': pressure })
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+    const langfuse = within(rowNamed(rows, 'Langfuse'))
+    // CPU and memory both say so on hover instead of falling back to a bare dash.
+    const notes = await langfuse.findAllByTitle('not measured: none of its 1 running containers was measured')
+    expect(notes.map((el) => el.textContent)).toEqual(['—', '—'])
+  })
 })

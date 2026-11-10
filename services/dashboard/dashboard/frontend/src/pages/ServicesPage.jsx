@@ -652,7 +652,8 @@ export default function ServicesPage() {
   const ownUsage = (row) => usageById[row.compose] || usageById[row.card_id]
   // A service's CPU and memory are its containers' together. A value nobody measured is never
   // counted as 0: a sum that leaves containers out is marked partial, and a field no container
-  // reported stays null.
+  // reported stays null. Stopped containers are the exception — a stopped part cannot be using
+  // anything, so a group whose containers are ALL stopped reads 0, not unmeasured.
   const usageFor = (row) => {
     const children = childrenOf.get(row.id)
     if (!children) return ownUsage(row)
@@ -660,9 +661,19 @@ export default function ServicesPage() {
     // has none. A container that is not running (a finished one-shot job, a stopped part) uses
     // nothing: that is a reading of zero, not a gap, so it neither adds to the sum nor marks it
     // partial. Only a running container without a value is unmeasured.
-    const readings = [row, ...children].filter((member) => member.container).map(ownUsage)
+    const containerMembers = [row, ...children].filter((member) => member.container)
+    const readings = containerMembers.map(ownUsage)
       .filter((usage) => usage?.running !== false)
-    if (!readings.some(Boolean)) return undefined
+    if (!containerMembers.length) return undefined
+    if (!readings.length) {
+      // Every container is stopped, so the service uses exactly nothing: plain zero, not a gap.
+      return { cpu_pct: 0, mem_gb: 0, partial: {} }
+    }
+    if (!readings.some(Boolean)) {
+      // No surviving member carries a reading: a stopped part is a known zero and was dropped
+      // above, so every one of these is unmeasured — keep the dash, but say why on hover.
+      return { cpu_pct: null, mem_gb: null, partial: {}, reason: `none of its ${readings.length} running containers was measured` }
+    }
     const sum = { partial: {}, reason: `none of its ${readings.length} running containers was measured` }
     for (const field of ['cpu_pct', 'mem_gb']) {
       const values = readings.map((usage) => usage?.[field]).filter((value) => value != null)
