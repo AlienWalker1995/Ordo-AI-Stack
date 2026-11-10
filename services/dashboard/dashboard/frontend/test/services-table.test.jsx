@@ -139,6 +139,21 @@ describe('Services: one flat list', () => {
     expect(none.queryAllByRole('button')).toEqual([])
   })
 
+  it("spells out a project's not-managed reason once, not on every one of its rows", async () => {
+    const table = fixture('/api/services/table')
+    const base = table.rows.find((r) => r.name === 'web-site-web-1')
+    const at = table.rows.indexOf(base)
+    table.rows.splice(at + 1, 0, { ...base, id: 'host:web-site-db-1', name: 'web-site-db-1', container: 'web-site-db-1' })
+    mockApi({ 'GET /api/services/table': table })
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+    expect(within(rowNamed(rows, 'web-site-web-1')).getByText('Not managed: add web-site to managed_projects in ordo.yaml')).toBeTruthy()
+    const second = within(rowNamed(rows, 'web-site-db-1')).getByText(/^Not managed/)
+    expect(second.getAttribute('title')).toBe('add web-site to managed_projects in ordo.yaml')
+    // Screen readers still hear the whole reason.
+    expect(second.textContent).toBe('Not managed: add web-site to managed_projects in ordo.yaml')
+  })
+
   it('restarts a managed container through its project route once confirmed', async () => {
     const path = '/api/ops/projects/media-stack/containers/media-server/restart'
     const api = mockApi({ [`POST ${path}`]: { ok: true, project: 'media-stack', container: 'media-server', action: 'restarted' } })

@@ -262,8 +262,16 @@ function StateActions({ row, onAction, busy }) {
 }
 
 // A read-only row says why in place of its actions: the reason names the one change that would
-// give it controls.
-function NotManaged({ row }) {
+// give it controls. The rows of one project share that reason, so only the first spells it out;
+// the rest say "Not managed" and keep the reason on hover and for screen readers.
+function NotManaged({ row, repeat }) {
+  if (repeat) {
+    return (
+      <p className="text-caption text-muted" title={row.reason}>
+        Not managed<span className="sr-only">: {row.reason}</span>
+      </p>
+    )
+  }
   return <p className="text-caption text-muted">Not managed: {row.reason}</p>
 }
 
@@ -354,7 +362,7 @@ function LogsButton({ row, onLogs }) {
   return <button type="button" className={BTN} onClick={() => onLogs(row)} aria-label={`Logs for ${rowLabel(row)}`}>Logs</button>
 }
 
-function ServiceRow({ row, usage, onLogs, onAction, action, group, nested }) {
+function ServiceRow({ row, usage, onLogs, onAction, action, group, nested, repeatReason }) {
   return (
     <tr className={'border-b border-border-subtle last:border-b-0 hover:bg-surface/60' + (nested ? ' bg-surface/30' : '')}>
       <td className="py-2 pl-3 pr-2"><ServiceStatus row={row} action={action} /></td>
@@ -370,7 +378,7 @@ function ServiceRow({ row, usage, onLogs, onAction, action, group, nested }) {
       <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted"><Reading usage={usage} field="mem_gb" format={formatMem} /></td>
       <td className="py-2 pl-2 pr-3">
         {row.control === 'none'
-          ? <NotManaged row={row} />
+          ? <NotManaged row={row} repeat={repeatReason} />
           : (
             <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
               <LogsButton row={row} onLogs={onLogs} />
@@ -386,7 +394,7 @@ function ServiceRow({ row, usage, onLogs, onAction, action, group, nested }) {
 
 // The same row as a card, for widths where the table would need a sideways scroll: status and
 // name first, then the numbers, then every action on its own line so none sits off-screen.
-function ServiceCard({ row, usage, onLogs, onAction, action, group, nested }) {
+function ServiceCard({ row, usage, onLogs, onAction, action, group, nested, repeatReason }) {
   return (
     <li className={'border-b border-border-subtle px-3 py-3 last:border-b-0' + (nested ? ' bg-surface/30' : '')}>
       {/* A service's container indents to its service's name, past the toggle. */}
@@ -410,7 +418,7 @@ function ServiceCard({ row, usage, onLogs, onAction, action, group, nested }) {
           {row.control !== 'group' && (
             <div className="flex flex-wrap items-center gap-1.5">
               {row.control === 'none'
-                ? <NotManaged row={row} />
+                ? <NotManaged row={row} repeat={repeatReason} />
                 : (
                   <>
                     <LogsButton row={row} onLogs={onLogs} />
@@ -672,6 +680,11 @@ export default function ServicesPage() {
     }
     return entries
   })
+  // A read-only row whose reason the row above already gave (rows are grouped by project).
+  shown.forEach((entry, i) => {
+    const above = shown[i - 1]?.row
+    entry.repeatReason = entry.row.control === 'none' && above?.control === 'none' && above.reason === entry.row.reason
+  })
 
   // Every note on how far the list can be trusted, keyed by the id the list's aria-describedby names.
   const notes = []
@@ -707,8 +720,8 @@ export default function ServicesPage() {
         <div className="min-w-0 rounded-md border border-border-subtle bg-bg-elevated">
           {/* Cards below lg: the table needs 52rem, more than a phone or a narrow tablet has. */}
           <ul className="lg:hidden" aria-label="Services" aria-describedby={describedBy}>
-            {shown.map(({ row, group, nested }) => (
-              <ServiceCard key={row.id} row={row} usage={usageFor(row)} group={group} nested={nested}
+            {shown.map(({ row, group, nested, repeatReason }) => (
+              <ServiceCard key={row.id} row={row} usage={usageFor(row)} group={group} nested={nested} repeatReason={repeatReason}
                            onLogs={setLogsFor} onAction={onAction} action={actionStates[row.id]} />
             ))}
           </ul>
@@ -727,8 +740,8 @@ export default function ServicesPage() {
                 </tr>
               </thead>
               <tbody>
-                {shown.map(({ row, group, nested }) => (
-                  <ServiceRow key={row.id} row={row} usage={usageFor(row)} group={group} nested={nested}
+                {shown.map(({ row, group, nested, repeatReason }) => (
+                  <ServiceRow key={row.id} row={row} usage={usageFor(row)} group={group} nested={nested} repeatReason={repeatReason}
                               onLogs={setLogsFor} onAction={onAction} action={actionStates[row.id]} />
                 ))}
               </tbody>
