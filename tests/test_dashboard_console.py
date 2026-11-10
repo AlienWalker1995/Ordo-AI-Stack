@@ -838,3 +838,55 @@ def test_grouping_leaves_the_container_counts_alone():
     counts = console.service_counts(list(_grouped().values()))
     ungrouped = console.service_counts(list(_grouped(groups=[]).values()))
     assert counts == ungrouped
+
+
+# --- the launcher's apps ---
+
+def _labelled(name, href, *, group="", description="", label_name="", status="running", status_text="Up 1 day",
+              health=None, project="nas-stack"):
+    return {"name": name, "status": status, "image": name, "project": project, "service": name,
+            "health": health, "status_text": status_text,
+            "link": {"href": href, "name": label_name, "description": description, "group": group}}
+
+
+def test_apps_come_from_cards_with_an_open_link_and_labelled_containers():
+    cards = [{"id": "webui", "name": "Open WebUI", "open_url": "https://chat/", "ok": True, "description": "Chat"},
+             {"id": "qdrant", "name": "Qdrant", "open_url": None, "ok": True},
+             {"id": "bridge", "name": "Bridge", "open_url": "https://bridge/", "ok": True, "background": True},
+             {"id": "comfyui", "name": "ComfyUI", "open_url": "https://comfy/", "ok": False}]
+    host = [_labelled("radarr", "http://radarr/", group="Automation", label_name="Radarr"),
+            _labelled("jellyfin", "http://jf/", group="Media", label_name="Jellyfin", description="Media server"),
+            {"name": "plain", "status": "running", "project": "x", "link": None}]
+    apps = console.launcher_apps(cards, host)
+    assert [(a["group"], a["name"]) for a in apps] == [
+        ("Ordo", "ComfyUI"), ("Ordo", "Open WebUI"), ("Automation", "Radarr"), ("Media", "Jellyfin")]
+    assert apps[0]["status"] == "down" and apps[1]["description"] == "Chat"
+
+
+def test_a_labelled_container_without_a_name_or_group_falls_back_to_its_own():
+    [app] = console.launcher_apps([], [_labelled("ugly-name-1", "http://x/", project="stack")])
+    assert (app["name"], app["group"]) == ("ugly-name-1", "stack")
+
+
+def test_a_labelled_containers_status_follows_its_verdict():
+    host = [_labelled("a", "http://a/", status="exited", status_text="Exited (1) 1 hour ago"),
+            _labelled("b", "http://b/", health="unhealthy", status_text="Up 1 hour (unhealthy)"),
+            _labelled("c", "http://c/", health="starting", status_text="Up 5 seconds (health: starting)")]
+    assert [a["status"] for a in console.launcher_apps([], host)] == ["down", "down", "unknown"]
+
+
+def test_no_cards_and_no_host_list_is_no_apps():
+    assert console.launcher_apps([], None) == []
+
+
+def test_only_http_links_become_apps():
+    host = [_labelled("evil", "javascript:alert(1)"), _labelled("ftp", "ftp://files/"),
+            _labelled("ok", "HTTPS://fine.example/", label_name="Fine")]
+    cards = [{"id": "x", "name": "X", "open_url": "data:text/html,hi", "ok": True}]
+    assert [a["name"] for a in console.launcher_apps(cards, host)] == ["Fine"]
+
+
+def test_groups_differing_only_in_case_are_one_group():
+    host = [_labelled("a", "http://a/", group="Media", label_name="A"),
+            _labelled("b", "http://b/", group="media", label_name="B")]
+    assert [a["group"] for a in console.launcher_apps([], host)] == ["Media", "Media"]

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from pathlib import PurePosixPath
+from urllib.parse import urlsplit
 
 # Services the control plane refuses to cycle because they serve the request itself. Mirrors
 # ordo.control.broker.DockerBackend.SELF_REFERENTIAL (a repo test keeps the two equal); the dashboard
@@ -658,6 +659,62 @@ def build_service_table(cards: list[dict], containers_by_id: dict,
         rows.append(_foreign_row(seen["project"], name, seen["host"], seen["managed"], managed_projects))
     rows.sort(key=_sort_key)
     return rows
+
+
+# ---------------------------------------------------------------------------------------------
+# apps (the Overview's launcher)
+# ---------------------------------------------------------------------------------------------
+
+# The group Ordo's own service UIs list under; a labelled container names its own.
+ORDO_APPS_GROUP = "Ordo"
+
+
+def _app_status(row: dict) -> str:
+    """up, down or unknown for a labelled container, from the same verdict the Services table uses."""
+    verdict = classify_container(row.get("status"), row.get("health"), row.get("status_text"))
+    if verdict == "up":
+        return "up"
+    if verdict in ("failed", "unhealthy", "stopped"):
+        return "down"
+    return "unknown"
+
+
+def _openable(url: str | None) -> bool:
+    """Only an http(s) URL becomes a link: a label is free text, and `javascript:` in an href
+    would run in the dashboard's origin when clicked."""
+    return urlsplit(url or "").scheme.lower() in ("http", "https")
+
+
+def launcher_apps(cards: list[dict], host_containers: list[dict] | None) -> list[dict]:
+    """Every web UI a person can open, for the Overview's launcher and the command palette.
+
+    Two sources, no list kept in code: each catalog card with an Open link (its plugin's
+    catalog.json), and each host container labelled the Homepage way (`homepage.href`, plus
+    optional name, description and group; ops-controller passes them through as `link`). Ordo's
+    own group comes first, then the others by name; within a group, apps sort by name. Group
+    names compare without case, and every app in a group carries its first spelling, so `Media`
+    and `media` are one group. A URL that is not http(s) is left out."""
+    apps = []
+    for card in cards or []:
+        if not _openable(card.get("open_url")) or card.get("background"):
+            continue
+        ok = card.get("ok")
+        apps.append({"name": card.get("name") or card.get("id"), "url": card["open_url"],
+                     "description": card.get("description") or "", "group": ORDO_APPS_GROUP,
+                     "status": "up" if ok else "down" if ok is False else "unknown"})
+    for row in host_containers or []:
+        link = row.get("link")
+        if not link or not _openable(link.get("href")):
+            continue
+        apps.append({"name": link.get("name") or row.get("name"), "url": link["href"],
+                     "description": link.get("description") or "",
+                     "group": link.get("group") or row.get("project") or "Other",
+                     "status": _app_status(row)})
+    spelling: dict[str, str] = {}
+    for app in apps:
+        app["group"] = spelling.setdefault(app["group"].lower(), app["group"])
+    apps.sort(key=lambda a: (a["group"] != ORDO_APPS_GROUP, a["group"].lower(), a["name"].lower()))
+    return apps
 
 
 def service_counts(rows: list[dict]) -> dict:

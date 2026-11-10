@@ -102,18 +102,41 @@
   "knowledge": {
     "documents": 2483
   },
-  "links": [
-    {
-      "name": "Open WebUI",
-      "url": "https://chat.example.test/"
-    },
-    {
-      "name": "N8N",
-      "url": "https://n8n.example.test/"
-    },
+  "apps": [
     {
       "name": "ComfyUI",
-      "url": "https://comfy.example.test/"
+      "url": "https://comfy.example.test/",
+      "description": "Image, video and audio generation",
+      "group": "Ordo",
+      "status": "up"
+    },
+    {
+      "name": "Open WebUI",
+      "url": "https://chat.example.test/",
+      "description": "Chat with the local models",
+      "group": "Ordo",
+      "status": "up"
+    },
+    {
+      "name": "Langfuse",
+      "url": "https://langfuse.example.test/",
+      "description": "Agent traces, datasets and evals",
+      "group": "Ordo",
+      "status": "down"
+    },
+    {
+      "name": "Jellyfin",
+      "url": "http://media.example.test:8096/",
+      "description": "Movies and shows",
+      "group": "Media",
+      "status": "up"
+    },
+    {
+      "name": "Radarr",
+      "url": "http://media.example.test:7878/",
+      "description": "",
+      "group": "Media",
+      "status": "unknown"
     }
   ],
   "generated_at": 1790680000.25

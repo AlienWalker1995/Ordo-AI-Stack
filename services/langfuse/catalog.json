@@ -3,6 +3,7 @@
     {
       "id": "langfuse",
       "name": "Langfuse",
+      "description": "Agent traces, datasets and evals",
       "order": 150,
       "port": null,
       "url": null,

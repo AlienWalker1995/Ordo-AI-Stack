@@ -167,10 +167,22 @@ def test_overview_service_count_covers_every_project_and_leaves_out_finished_job
     }
 
 
-def test_overview_carries_host_knowledge_and_links_from_the_catalog(live):
+def test_overview_carries_host_knowledge_and_the_apps_from_the_catalog(live):
     body = live.get("/api/overview").json()
     assert body["host"]["disk_pct"] == 80.4 and body["knowledge"]["documents"] == 2483
-    assert {"name": "Open WebUI", "url": "https://chat.example/"} in body["links"]
+    assert {"name": "Open WebUI", "url": "https://chat.example/", "description": "", "group": "Ordo",
+            "status": "up"} in body["apps"]
+
+
+def test_overview_apps_include_a_homepage_labelled_container(live):
+    labelled = [*HOST_CONTAINERS, {
+        "name": "jellyfin", "status": "running", "image": "jellyfin", "project": "nas-stack", "service": "jellyfin",
+        "health": None, "status_text": "Up 4 days",
+        "link": {"href": "http://media.example/", "name": "Jellyfin", "description": "Media server", "group": "Media"}}]
+    with patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=labelled)):
+        apps = live.get("/api/overview").json()["apps"]
+    assert apps[-1] == {"name": "Jellyfin", "url": "http://media.example/", "description": "Media server",
+                        "group": "Media", "status": "up"}
 
 
 def test_overview_with_the_control_plane_down_is_unknown_not_healthy(live):
