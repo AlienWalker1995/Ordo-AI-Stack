@@ -8,6 +8,7 @@ dependency reads as unavailable, never as zeros.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from unittest.mock import AsyncMock, patch
@@ -111,6 +112,14 @@ def gpu_idle():
     return patch.object(routes_console, "_ops_json", side_effect=ops_json)
 
 
+@pytest.fixture(autouse=True)
+def dismissals_file(tmp_path):
+    """Each test gets its own dismissals file instead of the dashboard's data directory."""
+    path = tmp_path / "attention_dismissed.json"
+    with patch.object(routes_console, "_dismissals_path", return_value=path):
+        yield path
+
+
 @pytest.fixture
 def live(dashboard_operator_headers):
     """Every fetcher patched with the payloads above."""
@@ -152,6 +161,38 @@ def test_overview_status_counts_what_needs_attention(live):
     assert not any("evals" in t for t in titles)
     assert body["status"]["level"] == "critical"
     assert body["status"]["text"] == "2 things need you"
+
+
+def test_a_dismissed_item_leaves_the_list_and_the_count_until_restored(live):
+    assert live.post("/api/attention/dismiss", json={"id": "probe-down:codebase-memory"}).json() == {"ok": True}
+    body = live.get("/api/overview").json()
+    assert [a["id"] for a in body["attention"]] == ["disk"]
+    assert [a["id"] for a in body["attention_dismissed"]] == ["probe-down:codebase-memory"]
+    assert body["status"]["text"] == "1 thing needs you"
+    assert body["status"]["level"] == "warning"
+
+    live.post("/api/attention/restore", json={"id": "probe-down:codebase-memory"})
+    body = live.get("/api/overview").json()
+    assert len(body["attention"]) == 2 and body["attention_dismissed"] == []
+
+
+def test_a_dismissal_is_forgotten_once_its_condition_clears(live, dismissals_file):
+    live.post("/api/attention/dismiss", json={"id": "failed:gone-container"})
+    live.get("/api/overview")
+    assert "failed:gone-container" not in json.loads(dismissals_file.read_text())
+
+
+def test_a_partial_read_keeps_every_dismissal(live, dismissals_file):
+    # Without the host list a failed foreign container is simply not seen this poll; that is not
+    # the condition clearing, so its dismissal must survive.
+    live.post("/api/attention/dismiss", json={"id": "failed:gone-container"})
+    with patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=None)):
+        live.get("/api/overview")
+    assert "failed:gone-container" in json.loads(dismissals_file.read_text())
+
+
+def test_a_dismissal_needs_an_id(live):
+    assert live.post("/api/attention/dismiss", json={"id": ""}).status_code == 422
 
 
 def test_overview_service_count_covers_every_project_and_leaves_out_finished_jobs(live):

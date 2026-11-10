@@ -15,9 +15,9 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from dashboard import console
+from dashboard import attention_store, console
 from dashboard.services_catalog import load_service_groups
 
 logger = logging.getLogger(__name__)
@@ -211,11 +211,11 @@ def _status_line(status_gpu: dict | None, attention: list[dict], host_containers
 
 @router.get("/overview")
 async def overview() -> dict:
-    status, services, registry, hardware, cards, rag, throughput, served, host_containers, managed = \
-        await asyncio.gather(
+    status, services, registry, hardware, cards, rag, throughput, served, host_containers, managed, \
+        history = await asyncio.gather(
             _ops_json("/status"), _ops_json("/services"), _ops_json("/registry/models"),
             _hardware(), _service_cards(), _rag(), _throughput(), _served(),
-            _host_containers(), _ops_json("/projects"),
+            _host_containers(), _ops_json("/projects"), _ops_json("/jobs/history"),
         )
     status_gpu = (status or {}).get("gpu") if status else None
     containers = _containers(services)
@@ -225,7 +225,12 @@ async def overview() -> dict:
                                        control_plane_up=services is not None,
                                        host_containers=host_containers, managed=managed)
     host_rows = [r for r in rows if r["project"] != console.ORDO_PROJECT]
-    attention = console.build_attention(cards, containers, hardware, status_gpu, host_rows=host_rows)
+    every_item = console.build_attention(cards, containers, hardware, status_gpu, host_rows=host_rows,
+                                         leases=(history or {}).get("history"))
+    # Forget dismissals whose condition cleared, but only after a complete read: a source that
+    # failed this poll would otherwise look like every condition it reports had cleared.
+    complete_read = None not in (status, services, host_containers, history, hardware)
+    attention, dismissed = await _apply_dismissals(every_item, prune=complete_read)
     engine = console.chat_engine(status_gpu, containers)
     medians = console.chat_medians(throughput, served, _registry(registry))
     return {
@@ -237,6 +242,8 @@ async def overview() -> dict:
         "gpus": console.gpu_cards((hardware or {}).get("gpus") or [], _registry(registry), status_gpu),
         "chat": {**engine, **medians},
         "attention": attention,
+        # Items a person dismissed; each comes back on its own once its condition clears.
+        "attention_dismissed": dismissed,
         "host": {k: (hardware or {}).get(k) for k in
                  ("cpu_pct", "ram_used_gb", "ram_total_gb", "ram_pct",
                   "disk_used_gb", "disk_total_gb", "disk_pct")},
@@ -245,6 +252,58 @@ async def overview() -> dict:
         "apps": console.launcher_apps(cards, host_containers),
         "generated_at": time.time(),
     }
+
+
+# ---------------------------------------------------------------------------------------------
+# attention dismissals
+# ---------------------------------------------------------------------------------------------
+
+def _dismissals_path() -> Path:
+    from dashboard.app import DASHBOARD_DATA_PATH
+
+    return DASHBOARD_DATA_PATH / attention_store.FILE_NAME
+
+
+# Serialises the read-modify-write of the dismissals file between overview polls and clicks.
+_dismissals_lock = asyncio.Lock()
+
+
+async def _apply_dismissals(items: list[dict], *, prune: bool) -> tuple[list[dict], list[dict]]:
+    async with _dismissals_lock:
+        path = _dismissals_path()
+        dismissed = attention_store.load(path)
+        if prune:
+            kept = console.prune_dismissals(dismissed, items)
+            if kept != dismissed:
+                attention_store.save(path, kept)
+                dismissed = kept
+        return console.split_dismissed(items, dismissed)
+
+
+class AttentionBody(BaseModel):
+    id: str = Field(min_length=1, max_length=300)
+
+
+@router.post("/attention/dismiss")
+async def dismiss_attention(body: AttentionBody) -> dict:
+    """Hide one attention item until its condition clears."""
+    async with _dismissals_lock:
+        path = _dismissals_path()
+        dismissed = attention_store.load(path)
+        dismissed[body.id] = time.time()
+        attention_store.save(path, dismissed)
+    return {"ok": True}
+
+
+@router.post("/attention/restore")
+async def restore_attention(body: AttentionBody) -> dict:
+    """List a dismissed item again."""
+    async with _dismissals_lock:
+        path = _dismissals_path()
+        dismissed = attention_store.load(path)
+        if dismissed.pop(body.id, None) is not None:
+            attention_store.save(path, dismissed)
+    return {"ok": True}
 
 
 @router.get("/drift")

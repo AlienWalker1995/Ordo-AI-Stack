@@ -78,7 +78,7 @@ describe('the KPI band', () => {
     mockApi({
       'GET /api/overview': () => ({
         ...fixture('/api/overview'),
-        attention: [],
+        attention: [], attention_dismissed: [],
         status: { level: 'ok', text: 'All systems normal' },
       }),
       // No drift finding either, or withDrift would rebuild the calm verdict into a count.

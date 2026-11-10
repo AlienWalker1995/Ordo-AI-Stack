@@ -176,12 +176,48 @@ def test_a_disk_below_the_threshold_is_not_an_alert():
     assert items == []
 
 
-def test_a_rejected_gpu_job_is_an_alert():
-    # The scheduler reports rejected jobs as bare ids (ordo/control/scheduler.py `_rejected`).
-    status = {**IDLE, "rejected": ["big-render"]}
-    items = console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, status)
-    assert items == [{"severity": "warning", "title": "GPU job big-render was rejected",
+def test_a_gpu_job_rejected_within_a_day_is_an_alert():
+    # The lease history stamps a rejection with `ended` (ordo/control/scheduler.py).
+    leases = [{"id": "big-render", "outcome": "rejected", "started": None, "ended": 1000.0},
+              {"id": "small-render", "outcome": "completed", "started": 900.0, "ended": 950.0}]
+    items = console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, IDLE,
+                                    leases=leases, now=1000.0 + 3600)
+    assert items == [{"id": "gpu-rejected:big-render:1000", "severity": "warning",
+                      "title": "GPU job big-render was rejected",
                       "detail": "it needs more VRAM than the GPU has", "service": None}]
+
+
+def test_a_gpu_job_rejected_more_than_a_day_ago_is_left_to_the_activity_timeline():
+    leases = [{"id": "big-render", "outcome": "rejected", "started": None, "ended": 1000.0}]
+    now = 1000.0 + console.REJECTION_ALERT_WINDOW_S + 1
+    assert console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, IDLE,
+                                   leases=leases, now=now) == []
+
+
+def test_the_schedulers_untimed_rejected_list_is_not_an_alert():
+    # /status `rejected` is bare ids restored from the scheduler snapshot with no time on them, so
+    # a rejection from weeks ago would stand in the list forever. The history is the source.
+    status = {**IDLE, "rejected": ["big-render"]}
+    assert console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, status) == []
+
+
+def test_every_attention_item_has_a_stable_id_naming_its_condition():
+    cards = [{"id": "webui", "name": "Open WebUI", "ok": False, "error": "HTTP 502"}]
+    rows = containers(qdrant={"state": "running", "health": "unhealthy", "status": "Up 2 hours (unhealthy)"},
+                      n8n={"state": "exited", "health": None, "status": "Exited (1) 1 minute ago"})
+    host_rows = [{"name": "web-dev-1", "project": "site", "verdict": "failed", "status": "Exited (255)"}]
+    items = console.build_attention(cards, rows, {"disk_pct": 95, "ram_pct": 95}, IDLE, host_rows=host_rows)
+    assert sorted(i["id"] for i in items) == ["disk", "failed:n8n", "failed:web-dev-1", "memory",
+                                              "probe-down:webui", "unhealthy:qdrant"]
+
+
+def test_a_dismissed_item_is_split_out_until_its_condition_clears():
+    items = [{"id": "disk", "severity": "warning"}, {"id": "failed:web-dev-1", "severity": "critical"}]
+    shown, hidden = console.split_dismissed(items, {"failed:web-dev-1": 5.0})
+    assert [i["id"] for i in shown] == ["disk"]
+    assert [i["id"] for i in hidden] == ["failed:web-dev-1"]
+    # Once web-dev-1 is fixed its dismissal is forgotten, so a later failure is listed again.
+    assert console.prune_dismissals({"failed:web-dev-1": 5.0, "disk": 6.0}, [items[0]]) == {"disk": 6.0}
 
 
 def test_a_model_evicted_for_a_render_is_not_an_alert():

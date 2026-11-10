@@ -15,6 +15,7 @@ free to differ; the fixtures carry a realistic stack, not these inputs.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -61,7 +62,10 @@ OPS = {
                                    "outcome": "completed"},
                                   {"id": "gate-comfyui", "kind": "media", "submitted": 300.0,
                                    "started": 400.0, "ended": 580.0, "outcome": "completed",
-                                   "evicted": ["inference-engine-gpu"]}]},
+                                   "evicted": ["inference-engine-gpu"]},
+                                  # Rejected a minute ago, so it is still an attention item.
+                                  {"id": "train-lora-xl", "kind": "train", "started": None,
+                                   "ended": time.time() - 60, "outcome": "rejected"}]},
     "/audit?limit=100": {"entries": [{"ts": 300.0, "caller": "dashboard", "action": "restart",
                                       "target": "n8n", "result": "ok"}]},
     "/projects": {"projects": [{"project": "media-stack", "containers": [
@@ -144,9 +148,14 @@ def _ops_controller_client(payloads: dict[str, dict]):
 
 
 @pytest.fixture
-def client(dashboard_operator_headers, monkeypatch):
+def client(dashboard_operator_headers, monkeypatch, tmp_path):
     """The dashboard app with only its I/O replaced."""
     import dashboard.app as dashboard_app
+
+    # One item dismissed, so /api/overview returns an `attention_dismissed` element to compare.
+    dismissals = tmp_path / "attention_dismissed.json"
+    dismissals.write_text(json.dumps({"disk": 1.0}), encoding="utf-8")
+    monkeypatch.setattr(routes_console, "_dismissals_path", lambda: dismissals)
 
     # service-pressure reaches ops-controller through _ops_request, which needs the token.
     monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "fixture-ops-token")
