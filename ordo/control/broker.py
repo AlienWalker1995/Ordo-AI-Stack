@@ -744,6 +744,9 @@ class MockBackend:
             "gpu": None,
             "services": {c.service: {**idle, "running": c.state == "running"}
                          for c in self.project_containers.values()},
+            # Every running container this backend can see, by name (DockerBackend: the host's).
+            "containers": {c.name: {"cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0}
+                           for c in self.project_containers.values() if c.state == "running"},
             "vram_aggregate_unavailable": True,
         }
 
@@ -1414,6 +1417,10 @@ class DockerBackend:
         thread pool. A single CLI call is the same idea with less machinery, and it is why this
         route is inherently slow: the daemon samples cgroup counters twice to compute a CPU delta.
         Callers must NOT paper over that with a short timeout and a zero-filled fallback.
+
+        The same call samples every running container on the host, so `containers` keeps each
+        reading by container name too: the dashboard shows the CPU and memory of other compose
+        projects' containers (nas-stack and the like) from it.
         """
         by_name = {r["name"]: r for r in self._project_ps()}
         proc = subprocess.run(
@@ -1422,13 +1429,17 @@ class DockerBackend:
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
         )
         services: dict[str, dict] = {}
+        containers: dict[str, dict] = {}
         for line in proc.stdout.splitlines():
             parts = line.split("\t")
-            if len(parts) != 4 or parts[0] not in by_name:
+            if len(parts) != 4:
                 continue
             name, cpu, mem_usage, mem_pct = parts
-            row = by_name[name]
             used = mem_usage.split("/")[0].strip()
+            containers[name] = {"cpu_pct": _pct(cpu), "mem_gb": _to_gb(used), "mem_pct": _pct(mem_pct)}
+            if name not in by_name:
+                continue
+            row = by_name[name]
             services[row["service"]] = {
                 "cpu_pct": _pct(cpu),
                 "mem_gb": _to_gb(used),
@@ -1442,7 +1453,7 @@ class DockerBackend:
                 "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
                 "vram_gb": 0.0, "vram_pct": 0.0, "running": row["state"] == "running",
             })
-        return {"gpu": None, "services": services, "vram_aggregate_unavailable": True}
+        return {"gpu": None, "services": services, "containers": containers, "vram_aggregate_unavailable": True}
 
 
 

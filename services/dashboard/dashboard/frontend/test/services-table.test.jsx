@@ -180,3 +180,14 @@ describe('Services: one flat list', () => {
     expect(api.sent('GET', path).length).toBeGreaterThan(0)
   })
 })
+
+describe('Services: CPU and memory of other compose projects', () => {
+  it("reads another project's container from the host-wide stats, by container name", async () => {
+    mockApi()
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+    const media = within(rowNamed(rows, 'media-server'))
+    expect(await media.findByText('4.2%')).toBeTruthy()
+    expect(media.getByText('1.1 GB')).toBeTruthy()
+  })
+})

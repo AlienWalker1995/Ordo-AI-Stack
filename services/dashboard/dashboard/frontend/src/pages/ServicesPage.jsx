@@ -594,6 +594,13 @@ export default function ServicesPage() {
     for (const s of pressure.data?.services || []) out[s.id] = s
     return out
   }, [pressure.data])
+  // Every running container on the host, by name: how another compose project's rows (which
+  // carry no Ordo service id) get their CPU and memory.
+  const usageByContainer = useMemo(() => {
+    const out = {}
+    for (const c of pressure.data?.containers || []) out[c.name] = { ...c, running: true, reason: null }
+    return out
+  }, [pressure.data])
 
   // Start changes nothing that is running, so it goes straight out; stop and restart ask first.
   const onAction = useCallback((row, action) => {
@@ -649,7 +656,7 @@ export default function ServicesPage() {
     const children = childrenOf.get(row.id)
     return children ? { children, expanded: isOpen(row), onToggle: () => toggleRow(row) } : null
   }
-  const ownUsage = (row) => usageById[row.compose] || usageById[row.card_id]
+  const ownUsage = (row) => usageById[row.compose] || usageById[row.card_id] || usageByContainer[row.container]
   // A service's CPU and memory are its containers' together. A value nobody measured is never
   // counted as 0: a sum that leaves containers out is marked partial, and a field no container
   // reported stays null. Stopped containers are the exception — a stopped part cannot be using

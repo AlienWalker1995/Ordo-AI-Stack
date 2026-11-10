@@ -404,7 +404,7 @@ EXPECTED: dict[str, tuple] = {
     'full GET /containers/ordo-inference-engine-gpu-1': (200, ('health', 'image', 'image_id', 'mounts', 'name', 'networks', 'ports', 'project', 'restart_count', 'restart_policy', 'service', 'started_at', 'state'), None, None, 'runs'),
     'full GET /containers/no-such-container': (404, ('error',), "container 'no-such-container' is not in project 'ordo'", None, 'runs'),
     'full GET /containers/a/b': (404, ('error',), 'no route GET /containers/a/b', None, 'runs'),
-    'full GET /stats/services': (200, ('gpu', 'services', 'vram_aggregate_unavailable'), None, None, 'runs'),
+    'full GET /stats/services': (200, ('containers', 'gpu', 'services', 'vram_aggregate_unavailable'), None, None, 'runs'),
     'full GET /registry/models': (200, ('models',), None, None, 'runs'),
     'full GET /registry/gpus': (200, ('gpus',), None, None, 'runs'),
     'full GET /gpus': (200, ('gpus',), None, None, 'runs'),

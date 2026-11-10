@@ -401,13 +401,19 @@ def test_container_inspect_summarizes_a_project_container(unchanged):
 
 def test_service_stats_covers_every_project_service(unchanged):
     stats = unchanged.backend.service_stats()
-    assert set(stats) == {"gpu", "services", "vram_aggregate_unavailable"}
+    assert set(stats) == {"gpu", "services", "containers", "vram_aggregate_unavailable"}
     assert stats["gpu"] is None and stats["vram_aggregate_unavailable"] is True
     assert sorted(stats["services"]) == SERVICES
     for service, row in stats["services"].items():
         assert set(row) == {"cpu_pct", "mem_gb", "mem_pct", "vram_gb", "vram_pct", "running"}
         assert all(isinstance(row[k], float) and row[k] >= 0 for k in row if k != "running")
         assert row["running"] is (service != "job")
+    # Every running container is measured by name as well (the host's, on real docker).
+    ours = {f"{unchanged.project}-{s}-1" for s in SERVICES if s != "job"}
+    assert ours <= set(stats["containers"])
+    for row in stats["containers"].values():
+        assert set(row) == {"cpu_pct", "mem_gb", "mem_pct"}
+        assert all(isinstance(v, float) and v >= 0 for v in row.values())
 
 
 def test_service_restarts_counts_every_project_container_from_zero(unchanged):

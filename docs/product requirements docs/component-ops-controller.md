@@ -45,7 +45,7 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/containers` | GET | Every container on the host: name, state, image, compose project and service, health, docker's status text, and `link` (its launcher link from Homepage-convention labels: `homepage.href` required, `homepage.name`, `homepage.description`, `homepage.group` optional; null without `homepage.href`) |
 | `/containers/{name}/logs` | GET | Tail one container's logs |
 | `/containers/{name}/restart` | POST | Restart one container (`confirm: true`) |
-| `/stats/services` | GET | Per-service CPU/memory stats |
+| `/stats/services` | GET | Per-service CPU/memory stats, plus `containers`: every running container on the host by name (`cpu_pct`, `mem_gb`, `mem_pct`), from the same single `docker stats` sample |
 | `/compose/up`, `/compose/down`, `/compose/restart` | POST | Whole-project compose verbs (`confirm: true`) |
 
 **Registry, downloads and diagnostics**
