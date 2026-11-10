@@ -268,11 +268,11 @@ def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
             continue
         detail = f"{row.get('project') or 'no project'}: {row.get('status') or ''}"
         if verdict == "failed":
-            items.append({"id": f"failed:{row.get('name')}", "severity": "critical",
+            items.append({"id": f"host-failed:{row.get('name')}", "severity": "critical",
                           "title": f"{row.get('name')} exited with an error",
                           "detail": detail, "service": row.get("name")})
         else:
-            items.append({"id": f"unhealthy:{row.get('name')}", "severity": "warning",
+            items.append({"id": f"host-unhealthy:{row.get('name')}", "severity": "warning",
                           "title": f"{row.get('name')} is unhealthy",
                           "detail": detail, "service": row.get("name")})
     disk = (hardware or {}).get("disk_pct")
@@ -312,13 +312,25 @@ def split_dismissed(items: list[dict], dismissed: dict) -> tuple[list[dict], lis
     return shown, hidden
 
 
-def prune_dismissals(dismissed: dict, items: list[dict]) -> dict:
+# The source each attention id's condition is read from, by the id's prefix. A dismissal is
+# forgotten only when its own source was read and no longer reports the condition.
+ATTENTION_SOURCES = {
+    "probe-down": "cards", "failed": "services", "unhealthy": "services",
+    "host-failed": "host", "host-unhealthy": "host",
+    "disk": "disk", "memory": "memory", "gpu-rejected": "history",
+}
+
+
+def prune_dismissals(dismissed: dict, items: list[dict], read: set[str]) -> dict:
     """Keep only the dismissals whose condition still holds. Forgetting the rest is what makes a
     dismissal last "until it clears": if the same container fails again later, it is listed again.
-    Call it only with items built from a complete read, or a blip that hides a condition for one
-    poll would forget its dismissal."""
+
+    `read` names the sources (ATTENTION_SOURCES values) this poll actually read. A condition whose
+    source failed is not seen this poll, which is not the same as cleared, so its dismissal is
+    kept; so is one whose id has no known source."""
     current = {i["id"] for i in items}
-    return {k: v for k, v in dismissed.items() if k in current}
+    return {k: v for k, v in dismissed.items()
+            if k in current or ATTENTION_SOURCES.get(k.split(":", 1)[0]) not in read}
 
 
 def drift(doctor: dict | None) -> dict:

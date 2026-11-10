@@ -207,17 +207,28 @@ def test_every_attention_item_has_a_stable_id_naming_its_condition():
                       n8n={"state": "exited", "health": None, "status": "Exited (1) 1 minute ago"})
     host_rows = [{"name": "web-dev-1", "project": "site", "verdict": "failed", "status": "Exited (255)"}]
     items = console.build_attention(cards, rows, {"disk_pct": 95, "ram_pct": 95}, IDLE, host_rows=host_rows)
-    assert sorted(i["id"] for i in items) == ["disk", "failed:n8n", "failed:web-dev-1", "memory",
+    # A foreign container's ids are prefixed, so one sharing an ordo service's name never shares
+    # its dismissal.
+    assert sorted(i["id"] for i in items) == ["disk", "failed:n8n", "host-failed:web-dev-1", "memory",
                                               "probe-down:webui", "unhealthy:qdrant"]
 
 
 def test_a_dismissed_item_is_split_out_until_its_condition_clears():
-    items = [{"id": "disk", "severity": "warning"}, {"id": "failed:web-dev-1", "severity": "critical"}]
-    shown, hidden = console.split_dismissed(items, {"failed:web-dev-1": 5.0})
+    items = [{"id": "disk", "severity": "warning"}, {"id": "host-failed:web-dev-1", "severity": "critical"}]
+    shown, hidden = console.split_dismissed(items, {"host-failed:web-dev-1": 5.0})
     assert [i["id"] for i in shown] == ["disk"]
-    assert [i["id"] for i in hidden] == ["failed:web-dev-1"]
+    assert [i["id"] for i in hidden] == ["host-failed:web-dev-1"]
     # Once web-dev-1 is fixed its dismissal is forgotten, so a later failure is listed again.
-    assert console.prune_dismissals({"failed:web-dev-1": 5.0, "disk": 6.0}, [items[0]]) == {"disk": 6.0}
+    every_source = set(console.ATTENTION_SOURCES.values())
+    assert console.prune_dismissals({"host-failed:web-dev-1": 5.0, "disk": 6.0}, [items[0]],
+                                    every_source) == {"disk": 6.0}
+
+
+def test_a_dismissal_outlives_a_poll_that_could_not_read_its_source():
+    dismissed = {"disk": 1.0, "host-failed:web-dev-1": 2.0, "gpu-rejected:big:9": 3.0, "unknown-kind": 4.0}
+    # The disk metric and the history failed this poll; the host list was read and web-dev-1 is fine.
+    assert console.prune_dismissals(dismissed, [], {"cards", "services", "host", "memory"}) == {
+        "disk": 1.0, "gpu-rejected:big:9": 3.0, "unknown-kind": 4.0}
 
 
 def test_a_model_evicted_for_a_render_is_not_an_alert():

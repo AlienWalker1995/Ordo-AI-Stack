@@ -177,18 +177,32 @@ def test_a_dismissed_item_leaves_the_list_and_the_count_until_restored(live):
 
 
 def test_a_dismissal_is_forgotten_once_its_condition_clears(live, dismissals_file):
-    live.post("/api/attention/dismiss", json={"id": "failed:gone-container"})
+    live.post("/api/attention/dismiss", json={"id": "host-failed:gone-container"})
     live.get("/api/overview")
-    assert "failed:gone-container" not in json.loads(dismissals_file.read_text())
+    assert "host-failed:gone-container" not in json.loads(dismissals_file.read_text())
 
 
-def test_a_partial_read_keeps_every_dismissal(live, dismissals_file):
-    # Without the host list a failed foreign container is simply not seen this poll; that is not
-    # the condition clearing, so its dismissal must survive.
-    live.post("/api/attention/dismiss", json={"id": "failed:gone-container"})
-    with patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=None)):
+@pytest.mark.parametrize("failure", ["host list", "managed projects", "disk metric", "lease history"])
+def test_a_poll_that_misses_a_source_keeps_its_dismissals(live, dismissals_file, failure):
+    # A source that failed reports none of its conditions; that is not them clearing.
+    dismissed = {"host-failed:gone-container": 1.0, "disk": 2.0, "gpu-rejected:big:9": 3.0}
+    dismissals_file.write_text(json.dumps(dismissed))
+
+    async def ops_json(path, timeout=None):
+        if (failure, path) in {("managed projects", "/projects"), ("lease history", "/jobs/history")}:
+            return None
+        return OPS.get(path)
+
+    hardware = {**HARDWARE, "disk_pct": 10.0}  # calm, so only the metric's absence matters below
+    if failure == "disk metric":
+        hardware = {**HARDWARE, "disk_pct": None}
+    host = None if failure == "host list" else HOST_CONTAINERS
+    with patch.object(routes_console, "_ops_json", side_effect=ops_json),          patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=host)),          patch.object(routes_console, "_hardware", new=AsyncMock(return_value=hardware)):
         live.get("/api/overview")
-    assert "failed:gone-container" in json.loads(dismissals_file.read_text())
+    kept = json.loads(dismissals_file.read_text())
+    lost = {"host list": "host-failed:gone-container", "managed projects": "host-failed:gone-container",
+            "disk metric": "disk", "lease history": "gpu-rejected:big:9"}[failure]
+    assert lost in kept
 
 
 def test_a_dismissal_needs_an_id(live):

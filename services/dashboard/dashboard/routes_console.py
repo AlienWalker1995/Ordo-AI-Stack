@@ -227,10 +227,9 @@ async def overview() -> dict:
     host_rows = [r for r in rows if r["project"] != console.ORDO_PROJECT]
     every_item = console.build_attention(cards, containers, hardware, status_gpu, host_rows=host_rows,
                                          leases=(history or {}).get("history"))
-    # Forget dismissals whose condition cleared, but only after a complete read: a source that
-    # failed this poll would otherwise look like every condition it reports had cleared.
-    complete_read = None not in (status, services, host_containers, history, hardware)
-    attention, dismissed = await _apply_dismissals(every_item, prune=complete_read)
+    attention, dismissed = await _apply_dismissals(every_item, _sources_read(
+        cards=cards, services=services, host_containers=host_containers, managed=managed,
+        hardware=hardware, history=history))
     engine = console.chat_engine(status_gpu, containers)
     medians = console.chat_medians(throughput, served, _registry(registry))
     return {
@@ -268,16 +267,51 @@ def _dismissals_path() -> Path:
 _dismissals_lock = asyncio.Lock()
 
 
-async def _apply_dismissals(items: list[dict], *, prune: bool) -> tuple[list[dict], list[dict]]:
+def _sources_read(*, cards, services, host_containers, managed, hardware, history) -> set[str]:
+    """The attention sources (console.ATTENTION_SOURCES) this poll actually read. A source that
+    failed reports none of its conditions, which must not read as every one of them clearing."""
+    hardware = hardware or {}
+    read = {
+        "cards": bool(cards),
+        "services": services is not None,
+        # A foreign container's verdict comes from the host list, or the managed project's own row.
+        "host": host_containers is not None and managed is not None,
+        # hardware_stats always answers, with None for a metric it could not read.
+        "disk": hardware.get("disk_pct") is not None,
+        "memory": hardware.get("ram_pct") is not None,
+        "history": history is not None,
+    }
+    return {source for source, ok in read.items() if ok}
+
+
+def _load_and_prune(items: list[dict], read: set[str]) -> dict:
+    path = _dismissals_path()
+    dismissed = attention_store.load(path)
+    kept = console.prune_dismissals(dismissed, items, read)
+    if kept != dismissed:
+        attention_store.save(path, kept)
+    return kept
+
+
+def _dismiss(item_id: str) -> None:
+    path = _dismissals_path()
+    dismissed = attention_store.load(path)
+    dismissed[item_id] = time.time()
+    attention_store.save(path, dismissed)
+
+
+def _restore(item_id: str) -> None:
+    path = _dismissals_path()
+    dismissed = attention_store.load(path)
+    if dismissed.pop(item_id, None) is not None:
+        attention_store.save(path, dismissed)
+
+
+async def _apply_dismissals(items: list[dict], read: set[str]) -> tuple[list[dict], list[dict]]:
+    # File I/O runs off the event loop: this is on every overview poll.
     async with _dismissals_lock:
-        path = _dismissals_path()
-        dismissed = attention_store.load(path)
-        if prune:
-            kept = console.prune_dismissals(dismissed, items)
-            if kept != dismissed:
-                attention_store.save(path, kept)
-                dismissed = kept
-        return console.split_dismissed(items, dismissed)
+        dismissed = await asyncio.to_thread(_load_and_prune, items, read)
+    return console.split_dismissed(items, dismissed)
 
 
 class AttentionBody(BaseModel):
@@ -288,10 +322,7 @@ class AttentionBody(BaseModel):
 async def dismiss_attention(body: AttentionBody) -> dict:
     """Hide one attention item until its condition clears."""
     async with _dismissals_lock:
-        path = _dismissals_path()
-        dismissed = attention_store.load(path)
-        dismissed[body.id] = time.time()
-        attention_store.save(path, dismissed)
+        await asyncio.to_thread(_dismiss, body.id)
     return {"ok": True}
 
 
@@ -299,10 +330,7 @@ async def dismiss_attention(body: AttentionBody) -> dict:
 async def restore_attention(body: AttentionBody) -> dict:
     """List a dismissed item again."""
     async with _dismissals_lock:
-        path = _dismissals_path()
-        dismissed = attention_store.load(path)
-        if dismissed.pop(body.id, None) is not None:
-            attention_store.save(path, dismissed)
+        await asyncio.to_thread(_restore, body.id)
     return {"ok": True}
 
 

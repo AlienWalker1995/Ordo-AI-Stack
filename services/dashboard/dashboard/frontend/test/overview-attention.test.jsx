@@ -32,7 +32,7 @@ describe('the attention list', () => {
     const dismissed = within(attentionSection()).getByText('web-dev-1 exited with an error').closest('li')
     fireEvent.click(within(dismissed).getByRole('button', { name: 'Restore web-dev-1 exited with an error' }))
     await waitFor(() => expect(api.sent('POST', '/api/attention/restore')).toHaveLength(1))
-    expect(api.sent('POST', '/api/attention/restore')[0].body).toEqual({ id: 'failed:web-dev-1' })
+    expect(api.sent('POST', '/api/attention/restore')[0].body).toEqual({ id: 'host-failed:web-dev-1' })
   })
 
   it('shows only the toggle when everything that needs attention was dismissed', async () => {
