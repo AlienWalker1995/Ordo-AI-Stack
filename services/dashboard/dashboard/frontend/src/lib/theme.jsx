@@ -45,7 +45,9 @@ export function applyThemeChoice(choice) {
   document.documentElement.dataset.theme = resolveTheme(choice)
 }
 
-const ThemeContext = createContext({ choice: 'auto', resolved: 'dark', setChoice: (_choice) => {} /* eslint-disable-line no-unused-vars */ })
+// The type is declared, not inferred from the no-op default, so setChoice(value) typechecks.
+/** @type {import('react').Context<{ choice: string, resolved: string, setChoice: (choice: string) => void }>} */
+const ThemeContext = createContext({ choice: 'auto', resolved: 'dark', setChoice: () => {} })
 
 export function ThemeProvider({ children }) {
   const [choice, setChoiceState] = useState(readThemeChoice)

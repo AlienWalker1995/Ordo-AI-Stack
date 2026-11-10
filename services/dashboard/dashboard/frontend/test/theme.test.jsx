@@ -82,11 +82,9 @@ describe('the colour theme', () => {
     expect(frame.getAttribute('src')).not.toContain('theme=dark')
   })
 
-  it('keeps a one-argument setChoice on the default context, read before the provider mounts', () => {
-    // Before any ThemeProvider mounts, consumers read this default value instead of the
-    // provider's value. Its setChoice keeps the same one-argument shape as the provider's,
-    // so setChoice(e.target.value) both runs and type-checks; a zero-arity stub still runs
-    // but loses the argument in the inferred type, which is what broke the tsc gate.
+  it('gives a consumer outside the provider a harmless default', () => {
+    // Before any ThemeProvider mounts, consumers read the context's default. The typecheck gate
+    // (npm run typecheck) holds its setChoice to the provider's one-argument signature.
     let ctx
     function Probe() {
       ctx = useTheme()
@@ -96,7 +94,6 @@ describe('the colour theme', () => {
     expect(ctx.choice).toBe('auto')
     expect(ctx.resolved).toBe('dark')
     expect(typeof ctx.setChoice).toBe('function')
-    expect(ctx.setChoice.length).toBe(1)
     expect(() => ctx.setChoice('light')).not.toThrow()
   })
 })
