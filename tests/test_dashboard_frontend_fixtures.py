@@ -108,8 +108,9 @@ COMFY_HISTORY = {"r1": {"status": {"status_str": "success", "messages": [["execu
                         "outputs": {"9": {"images": [{"filename": "ordo_00001_.png", "subfolder": "",
                                                       "type": "output"}]}}}}
 PROMETHEUS_RANGE = {"status": "success", "data": {"resultType": "matrix", "result": [
-    {"metric": {"job": "inference-engine-gpu"}, "values": [[1700000000, "21.5"], [1700000300, "22.9"]]},
-    {"metric": {"job": "inference-engine-cpu"}, "values": [[1700000000, "2.6"], [1700000300, "2.8"]]},
+    # ops-controller's ordo_engine_* family, labelled by `engine` (the engine's service).
+    {"metric": {"engine": "inference-engine-gpu"}, "values": [[1700000000, "21.5"], [1700000300, "22.9"]]},
+    {"metric": {"engine": "inference-engine-cpu"}, "values": [[1700000000, "2.6"], [1700000300, "2.8"]]},
 ]}}
 STATS_SERVICES = {"gpu": {"total_gb": 34.2, "used_gb": 29.6, "utilization_pct": 97},
                   "services": {"open-webui": {"cpu_pct": 1.5, "mem_gb": 0.6, "mem_pct": 0.5, "vram_gb": 0.0,

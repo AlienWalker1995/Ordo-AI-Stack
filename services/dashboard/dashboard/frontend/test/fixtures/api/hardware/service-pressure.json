@@ -35,7 +35,7 @@
     },
     {
       "id": "inference-engine-cpu",
-      "name": "llama.cpp (CPU fallback)",
+      "name": "llama.cpp (CPU)",
       "cpu_pct": 0.4,
       "mem_gb": 21.7,
       "mem_pct": 19.8,

@@ -18,7 +18,7 @@ A web-based control plane that provides a single pane of glass for:
 |----------|--------|------|-------------|
 | `/api/health` | GET | None | Dashboard + upstream service health (container healthcheck) |
 | `/api/hardware/service-pressure` | GET | None | Per-container CPU/RAM; VRAM null until ops-controller measures it; unmeasured values are null with a `reason`; plus `containers`: every running container on the host by name (read from ops-controller `/stats/services`: how the Services page shows other managed projects' containers), empty when the source is unavailable |
-| `/api/overview` | GET | None | Status line, GPUs and who holds them, chat engine, attention items (`attention`) and the ones a person dismissed (`attention_dismissed`), host, and `apps`: every web UI to open, from catalog cards with an Open link (their `description` included) and host containers labelled the Homepage way (`homepage.href`, optional `homepage.name`, `homepage.description`, `homepage.group`) (Overview page) |
+| `/api/overview` | GET | None | Status line, GPUs and who holds them, every model engine with its state, device and speeds (`engines[]`), who answers `local-chat` now (`chat`: its own engine, a stand-in, or nobody; `starting` while the primary is still starting and no stand-in serves), attention items (`attention`) and the ones a person dismissed (`attention_dismissed`), host, and `apps`: every web UI to open, from catalog cards with an Open link (their `description` included) and host containers labelled the Homepage way (`homepage.href`, optional `homepage.name`, `homepage.description`, `homepage.group`) (Overview page) |
 | `/api/attention/dismiss` | POST | Y | `{id}`: hide an attention item until its condition clears (kept in `DASHBOARD_DATA_PATH/attention_dismissed.json`); an id whose kind (the part before `:`) is not one the Overview produces is 422 |
 | `/api/attention/restore` | POST | Y | `{id}`: list a dismissed attention item again |
 | `/api/activity` | GET | None | Renders, GPU leases and operator actions, newest first |
@@ -36,7 +36,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/work/events` | POST | `X-Throughput-Token` when `THROUGHPUT_RECORD_TOKEN` is set | A model request attempt started or ended (called by model-gateway); kept in memory only |
 | `/api/work` | GET | None | Requests in flight per engine, a five-minute per-caller summary, the CPU fallback's prefill progress (`/slots`) |
 | `/api/throughput/benchmark` | POST | Y | Short generation against `local-chat` |
-| `/api/perf/series` | GET | None | Tokens per second per chat server (Prometheus) |
+| `/api/perf/series` | GET | None | Tokens generated per second per engine, keyed by engine service name (Prometheus) |
 | `/api/perf/grafana` | GET | None | Whether Grafana is up + the embed path (Performance page) |
 | `/api/orchestration/readiness` | GET | None | Orchestration readiness check |
 | `/api/orchestration/workflows*`, `/validate`, `/outputs` | GET/POST | Y | Workflow store used by the orchestration MCP server (`services/orchestration/server.py`) |
