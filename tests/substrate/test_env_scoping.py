@@ -187,13 +187,16 @@ def test_the_agent_and_every_comfyui_client_get_the_gated_url(rendered):
 
 def test_a_key_the_render_did_not_produce_is_left_out():
     """Without comfyui there is no COMFYUI_URL in .env, so the agent gets no reference to it (a
-    `${COMFYUI_URL?}` would fail every compose call on a stack without comfyui)."""
+    `${COMFYUI_URL?}` would fail every compose call on a stack without comfyui); the same holds for
+    IMAGE_GEN_ENABLED without image-gen, whose flag this render drops along with the plugin."""
     plugins = [p for p in PLUGINS if p not in ("comfyui", "comfyui-mcp", "song-gen", "image-gen")]
     rc = render(Source.from_dict({"hardware": HW, "model": "auto", "plugins": plugins, "site": SITE}),
                 CATALOG, REGISTRY)
     assert "COMFYUI_URL" not in rc.env
     agent_env = rc.compose_dict()["services"]["agent"].get("environment") or {}
     assert "COMFYUI_URL" not in agent_env
+    assert "IMAGE_GEN_ENABLED" not in rc.env
+    assert "IMAGE_GEN_ENABLED" not in agent_env
 
 
 def test_ops_controller_holds_no_derived_key(rendered):
