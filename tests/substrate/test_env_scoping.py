@@ -199,6 +199,20 @@ def test_a_key_the_render_did_not_produce_is_left_out():
     assert "IMAGE_GEN_ENABLED" not in agent_env
 
 
+def test_comfyui_without_image_gen_drops_only_the_flag():
+    """The operator case the changelog names: ComfyUI runs, image-gen does not. The gated URL must
+    reach every client (a live render queue needs it), and only the flag may be missing — with
+    COMFYUI_URL set but IMAGE_GEN_ENABLED unset the boot hook selects nothing."""
+    plugins = [p for p in PLUGINS if p != "image-gen"]
+    rc = render(Source.from_dict({"hardware": HW, "model": "auto", "plugins": plugins, "site": SITE}),
+                CATALOG, REGISTRY)
+    assert "COMFYUI_URL" in rc.env
+    agent_env = rc.compose_dict()["services"]["agent"].get("environment") or {}
+    assert "COMFYUI_URL" in agent_env
+    assert "IMAGE_GEN_ENABLED" not in rc.env
+    assert "IMAGE_GEN_ENABLED" not in agent_env
+
+
 def test_ops_controller_holds_no_derived_key(rendered):
     """ops-controller runs `docker compose` itself, and compose prefers a process env value over
     --env-file. A derived key in its env would shadow the .env its own re-render just wrote."""
