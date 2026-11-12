@@ -62,6 +62,11 @@ RUN chmod 0755 /usr/local/bin/github-app-token
 COPY plugins/ops-router/ /opt/hermes/plugins/ops-router/
 COPY ops_client.py /opt/hermes/plugins/ops-router/ops_client.py
 
+# The stack's own image_gen backend, `comfyui`: MiniMax-H3-Image on ComfyUI through the GPU gate
+# (COMFYUI_URL), running the workflow the image-gen plugin declares. Placed beside upstream's
+# bundled backends so it is discovered the same way; the boot hook selects it once.
+COPY plugins/image_gen/comfyui/ /opt/hermes/plugins/image_gen/comfyui/
+
 # Repo-owned skill: upstream's optional ComfyUI skill plus this stack's deployment notes
 # (skill-overlays/comfyui/ordo-deployment.md), spliced into SKILL.md ahead of the upstream quick
 # start, which otherwise tells the agent to install and launch its own ComfyUI. The notes tell it
@@ -139,6 +144,7 @@ ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 LABEL ordo.immutable-paths="/opt/hermes"
 COPY secret-env.sh /opt/ordo/secret-env.sh
 COPY ordo-init.sh /etc/cont-init.d/50-ordo
-RUN chmod -R a+rX,go-w /opt/ordo /opt/ordo-skills /opt/ordo-seed /opt/hermes/plugins/ops-router /opt/claude-code /opt/codex \
+RUN chmod -R a+rX,go-w /opt/ordo /opt/ordo-skills /opt/ordo-seed /opt/hermes/plugins/ops-router \
+    /opt/hermes/plugins/image_gen/comfyui /opt/claude-code /opt/codex \
     && chmod 0755 /etc/cont-init.d/50-ordo /usr/local/bin/claude /usr/local/bin/codex \
     && chmod 0644 /etc/claude-code/managed-settings.json /etc/codex/managed_config.toml

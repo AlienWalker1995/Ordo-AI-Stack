@@ -160,7 +160,7 @@ def run(
                         blocking=False))
 
     # 4. GPU present if media/voice plugins are enabled
-    gpu_plugins = [p for p in rc.plugins_enabled if p in ("comfyui", "song-gen", "voice")]
+    gpu_plugins = [p for p in rc.plugins_enabled if p in ("comfyui", "song-gen", "image-gen", "voice")]
     gpu_ok = rc.hardware.has_gpu or not gpu_plugins
     checks.append(Check("GPU present for enabled media/voice plugins", gpu_ok,
                         "no GPU-only plugins" if not gpu_plugins else

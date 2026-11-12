@@ -25,7 +25,7 @@ from .source import StackSource, enabled_ids
 # well, derived from its manifest kind (see `installable`): the plugin enable/disable API persists
 # through this same write path.
 INSTALLABLE_PLUGINS = frozenset({
-    "comfyui", "song-gen", "voice", "rag", "open-webui", "monitoring",
+    "comfyui", "song-gen", "image-gen", "voice", "rag", "open-webui", "monitoring",
     "searxng-web", "obsidian-livesync", "inference-engine-cpu",
 })
 

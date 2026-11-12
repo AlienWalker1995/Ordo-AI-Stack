@@ -154,6 +154,16 @@ if [ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ]; then
     fi
 fi
 
+# The image_generate tool's provider: the stack's own ComfyUI (MiniMax-H3-Image, the image-gen
+# plugin's default backend) whenever the stack has ComfyUI's gate. Upstream's default is FAL, which
+# needs a paid key this stack does not have. Selected once, behind its own sentinel, so an operator
+# who later picks another provider in `hermes tools` keeps it.
+IMAGE_GEN_MARK="$HERMES_HOME/.ordo-image-gen-seeded"
+if [ -n "${COMFYUI_URL:-}" ] && [ ! -f "$IMAGE_GEN_MARK" ]; then
+    hermes_config image_gen.provider comfyui
+    as_hermes touch "$IMAGE_GEN_MARK"
+fi
+
 # Register the repo-owned skills (/opt/ordo-skills) as a skills.external_dirs entry.
 timeout 60 /command/s6-setuidgid hermes "$HERMES_PYTHON" /opt/ordo/ordo_skills.py boot
 

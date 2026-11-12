@@ -50,7 +50,7 @@ HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
 # NInfer needs a Blackwell card (catalog min_compute_cap 12.0).
 NINFER_HW = {**HW, "gpus": [{**HW["gpus"][0], "compute_cap": "12.0"}, HW["gpus"][1]]}
 # The operator's plugin set, so every service renders.
-PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "inference-engine-cpu", "open-webui",
+PLUGINS = ["comfyui", "song-gen", "image-gen", "voice", "rag", "qdrant-rag", "inference-engine-cpu", "open-webui",
            "searxng-web", "searxng", "comfyui-mcp",
            "orchestration", "hermes-dashboard", "monitoring", "memory-vault", "edge", "tailnet-names",
            "obsidian-livesync", "langfuse", "evals"]
@@ -186,7 +186,7 @@ def test_the_agent_and_every_comfyui_client_get_the_gated_url(rendered):
 def test_a_key_the_render_did_not_produce_is_left_out():
     """Without comfyui there is no COMFYUI_URL in .env, so the agent gets no reference to it (a
     `${COMFYUI_URL?}` would fail every compose call on a stack without comfyui)."""
-    plugins = [p for p in PLUGINS if p not in ("comfyui", "comfyui-mcp", "song-gen")]
+    plugins = [p for p in PLUGINS if p not in ("comfyui", "comfyui-mcp", "song-gen", "image-gen")]
     rc = render(Source.from_dict({"hardware": HW, "model": "auto", "plugins": plugins, "site": SITE}),
                 CATALOG, REGISTRY)
     assert "COMFYUI_URL" not in rc.env
