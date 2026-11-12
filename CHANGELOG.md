@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format is loosely b
 - **Hand-edited image files page the operator.** An image can declare the paths it bakes in and nothing may change at run time (`LABEL ordo.immutable-paths="..."`); the Hermes image declares `/opt/hermes`. ops-controller's `/metrics` reports `ordo_container_immutable_files_changed{service}` from `docker diff` (directories and interpreter-written bytecode caches left out, but a rewritten `.pyc` whose source is untouched counts, so a bytecode-only hotfix still pages; one reading serves up to 5 minutes and is re-taken at once when any container of the project is recreated, since a diff takes seconds), and `ImmutableFilesModified` pages when it is above zero for 2 minutes. On 2026-11-06 the agent patched three upstream Hermes modules in its running container as root; nothing noticed, and the next recreate would have silently undone it.
 
 ### Changed
+- **ComfyUI pinned to v0.45.2.** v0.45.0 is the first release that runs MiniMax-H3-Image natively; P-H3-Image keeps working.
 - **ComfyUI pinned to v0.44.0**, the first release that runs P-H3-Image natively.
 - **Hermes Agent pinned to v0.23.0** (upstream `nousresearch/hermes-agent:stable`, by digest). Also drops the temporary `GATEWAY_HEALTH_URL` dashboard workaround, which only compensated for the 0.21.7-0.22.0 bug where the gateway's own launcher was not recognised as a running gateway; that recognition now ships upstream, so the dashboard reports gateway status directly.
 

@@ -473,8 +473,10 @@ docker compose -p ordo exec comfyui git -C /root/ComfyUI rev-parse HEAD
 Rolling back is the same edit in reverse — the reconciler downgrades the checkout and re-pins the
 runtime deps to the older ref's `requirements.txt`.
 
-Current pin: **v0.44.0** (`2c75dc1b`), the first release carrying P-H3-Image support. **v0.41.1**
-(`45bf90d1`), the first release carrying FLUX 3 Image support, is the immediate rollback.
+Current pin: **v0.45.2** (`6e8488ef`). v0.45.0 is the first release carrying MiniMax-H3-Image
+support. **v0.44.0** (`2c75dc1b`), the first release carrying P-H3-Image support, is the immediate
+rollback, but it cannot run MiniMax-H3-Image. **v0.41.1** (`45bf90d1`) is the first release carrying
+FLUX 3 Image support.
 **v0.37.0** (`73c9bad4`) is older still: it cannot detect the flux3 transformer,
 so a rollback there is only valid together with switching the timelapse image pipeline from the
 default flux3 templates to the Qwen-Image 2.1 ones (set `TIMELAPSE_T2I_TEMPLATE=qwen21_t2i.json`
