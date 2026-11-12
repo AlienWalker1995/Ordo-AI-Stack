@@ -5,3 +5,4 @@ author: ordo-ai-stack
 kind: backend
 requires_env:
   - COMFYUI_URL
+  - IMAGE_GEN_ENABLED

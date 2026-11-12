@@ -65,6 +65,14 @@ def _gate_url() -> str:
     return os.environ.get("COMFYUI_URL", "").strip().rstrip("/")
 
 
+def _image_gen_enabled() -> bool:
+    """The image-gen plugin is enabled (the render gives the agent IMAGE_GEN_ENABLED=1 only then).
+    Without it the weights may be absent, and a call would take the GPU lease, evicting the chat
+    model, only for ComfyUI to reject the graph; so the provider stays unavailable even if it is
+    still the selected one."""
+    return os.environ.get("IMAGE_GEN_ENABLED", "").strip() == "1"
+
+
 def _timeout_s() -> float:
     try:
         from plugins.image_gen._common import load_image_gen_config
@@ -103,7 +111,7 @@ class ComfyUIImageGenProvider(ImageGenProvider):
         return "ComfyUI (local MiniMax-H3-Image)"
 
     def is_available(self) -> bool:
-        return bool(_gate_url())
+        return bool(_gate_url()) and _image_gen_enabled()
 
     def list_models(self) -> list[dict[str, Any]]:
         return [{
@@ -119,7 +127,7 @@ class ComfyUIImageGenProvider(ImageGenProvider):
 
     def get_setup_schema(self) -> dict[str, Any]:
         return {"name": self.display_name, "badge": "local",
-                "tag": "MiniMax-H3-Image on this stack's ComfyUI; needs COMFYUI_URL (the GPU gate)",
+                "tag": "MiniMax-H3-Image on this stack's ComfyUI; needs the image-gen plugin and COMFYUI_URL (the GPU gate)",
                 "env_vars": []}
 
     def capabilities(self) -> dict[str, Any]:
@@ -135,6 +143,9 @@ class ComfyUIImageGenProvider(ImageGenProvider):
         base = _gate_url()
         if not base:
             return fail("COMFYUI_URL is not set (it must point at the ComfyUI GPU gate)", "not_configured")
+        if not _image_gen_enabled():
+            return fail("The image-gen plugin is not enabled on this stack, so its model may be absent; "
+                        "enable it, or pick another provider in `hermes tools`", "not_configured")
 
         sources = (collect_source_images(image_url, reference_image_urls) or [])[:MAX_SOURCE_IMAGES]
         try:

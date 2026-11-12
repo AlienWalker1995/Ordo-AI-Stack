@@ -135,6 +135,7 @@ def load(monkeypatch):
     saved = []
     _stub_hermes(monkeypatch, saved)
     monkeypatch.setenv("COMFYUI_URL", GATE)
+    monkeypatch.setenv("IMAGE_GEN_ENABLED", "1")
 
     def _load(fake):
         spec = importlib.util.spec_from_file_location("comfyui_image_provider_under_test", PROVIDER_FILE)
@@ -211,6 +212,18 @@ def test_the_gate_refusing_the_gpu_is_an_error_not_a_hang(load):
     result = provider.generate("anything detailed", "square")
 
     assert result["success"] is False and "503" in result["error"]
+
+
+def test_with_image_gen_disabled_the_provider_never_touches_the_gpu(load, monkeypatch):
+    """Selected earlier, then image-gen turned off: the weights may be gone, so a call must fail
+    before it reaches the gate (whose /prompt would take the lease and evict the chat model)."""
+    fake = FakeComfyUI()
+    provider, _saved = load(fake)
+    monkeypatch.delenv("IMAGE_GEN_ENABLED")
+    assert provider.is_available() is False
+    result = provider.generate("anything detailed", "square")
+    assert result["error_type"] == "not_configured"
+    assert fake.urls == []
 
 
 def test_without_the_gate_the_provider_is_unavailable(load, monkeypatch):
