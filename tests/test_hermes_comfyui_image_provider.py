@@ -303,6 +303,13 @@ def test_the_hook_keeps_a_provider_chosen_before_the_upgrade(boot):
     assert boot.mark.exists()
 
 
+def test_an_empty_provider_value_counts_as_none_chosen(boot):
+    """`config get` succeeds on a key set to "", which must not read as a chosen provider: the tool
+    would stay on FAL, which has no key here."""
+    (boot.store / "image_gen.provider").write_text("", encoding="utf-8")
+    assert boot(IMAGE_GEN_ENABLED="1", COMFYUI_URL=GATE) == "comfyui"
+
+
 def test_comfyui_without_image_gen_selects_nothing(boot):
     """Without the image-gen weights every call would take the GPU lease (evicting the chat model)
     only to be rejected by ComfyUI, so ComfyUI alone must not select the provider."""

@@ -162,7 +162,8 @@ fi
 # operator's choice in `hermes tools` (before or after this) is kept.
 IMAGE_GEN_MARK="$HERMES_HOME/.ordo-image-gen-seeded"
 if [ "${IMAGE_GEN_ENABLED:-}" = "1" ] && [ -n "${COMFYUI_URL:-}" ] && [ ! -f "$IMAGE_GEN_MARK" ]; then
-    if ! as_hermes "$HERMES_BIN" config get image_gen.provider >/dev/null 2>&1; then
+    # Unset (`config get` fails) and set-but-empty both count as "no provider chosen".
+    if [ -z "$(as_hermes "$HERMES_BIN" config get image_gen.provider 2>/dev/null)" ]; then
         hermes_config image_gen.provider comfyui
     fi
     as_hermes touch "$IMAGE_GEN_MARK"
