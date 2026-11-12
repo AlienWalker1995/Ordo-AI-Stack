@@ -74,8 +74,10 @@ SPEC: dict[str, set[str]] = {
     # The gated ComfyUI URL: the dialogue publisher, the reel/image scripts and the baked comfyui
     # skill all submit to $COMFYUI_URL (AR2). Without it they fall back to a
     # direct address, which bypasses the GPU lease. The entrypoint seeds the context window and the two
-    # Hermes budget knobs into config.yaml.
-    "agent": {"COMFYUI_URL", "LLAMACPP_CTX_SIZE", "HERMES_MAX_TOKENS", "HERMES_COMPRESSION_THRESHOLD_PERCENT"},
+    # Hermes budget knobs into config.yaml, and selects the comfyui image provider only while
+    # image-gen is enabled.
+    "agent": {"COMFYUI_URL", "IMAGE_GEN_ENABLED", "LLAMACPP_CTX_SIZE", "HERMES_MAX_TOKENS",
+              "HERMES_COMPRESSION_THRESHOLD_PERCENT"},
     # The official couchdb image's docker-entrypoint.sh creates the admin from COUCHDB_USER.
     "couchdb": {"COUCHDB_USER"},
     # services/obsidian-livesync/entrypoint.sh (`:?` guards on all three).

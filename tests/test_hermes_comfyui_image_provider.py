@@ -10,7 +10,10 @@ from __future__ import annotations
 import base64
 import importlib.util
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -215,3 +218,93 @@ def test_without_the_gate_the_provider_is_unavailable(load, monkeypatch):
     monkeypatch.delenv("COMFYUI_URL")
     assert provider.is_available() is False
     assert provider.generate("x", "square")["error_type"] == "not_configured"
+
+
+# --- How the image places the provider, and how the boot hook selects it ----------------------
+
+HERMES_DIR = REPO / "services" / "hermes"
+
+
+def test_the_image_copies_the_provider_beside_upstreams_bundled_backends():
+    """Upstream discovers image_gen backends under /opt/hermes/plugins/image_gen/<name>/, so the
+    COPY must land exactly there and the source must hold a loadable plugin."""
+    dockerfile = (HERMES_DIR / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY plugins/image_gen/comfyui/ /opt/hermes/plugins/image_gen/comfyui/" in dockerfile
+    assert "/opt/hermes/plugins/image_gen/comfyui " in dockerfile          # readable by the hermes user
+    source = HERMES_DIR / "plugins" / "image_gen" / "comfyui"
+    assert (source / "__init__.py").is_file()
+    manifest = (source / "plugin.yaml").read_text(encoding="utf-8")
+    assert "name: comfyui" in manifest and "kind: backend" in manifest
+
+
+def _hook_block() -> str:
+    """The image-gen block of the boot hook, from its sentinel to the `fi` that closes it."""
+    lines = (HERMES_DIR / "ordo-init.sh").read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("IMAGE_GEN_MARK="))
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == "fi")
+    return "\n".join(lines[start:end + 1])
+
+
+FAKE_HERMES = """#!/bin/sh
+# `hermes config get|set KEY [VALUE]` over one file per key, failing `get` on an unset key as the
+# real CLI does ("Config key not set").
+store="$FAKE_HERMES_STORE"
+[ "$1" = config ] || exit 2
+case "$2" in
+  get) [ -f "$store/$3" ] && cat "$store/$3" || exit 1 ;;
+  set) printf '%s' "$4" > "$store/$3" ;;
+esac
+"""
+
+
+@pytest.fixture
+def boot(tmp_path):
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("needs bash to run the boot hook block")
+    fake = tmp_path / "hermes"
+    fake.write_text(FAKE_HERMES, encoding="utf-8", newline="\n")
+    fake.chmod(0o755)
+    store = tmp_path / "config"
+    store.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    script = tmp_path / "hook.sh"
+    script.write_text("as_hermes() { \"$@\"; }\n"
+                      "hermes_config() { as_hermes \"$HERMES_BIN\" config set \"$1\" \"$2\" >/dev/null; }\n"
+                      + _hook_block() + "\n", encoding="utf-8", newline="\n")
+
+    def run(**env):
+        full = {"PATH": os.environ.get("PATH", ""), "HERMES_BIN": str(fake), "HERMES_HOME": str(home),
+                "FAKE_HERMES_STORE": str(store), **env}
+        subprocess.run([bash, str(script)], env=full, check=True)
+        provider = store / "image_gen.provider"
+        return provider.read_text(encoding="utf-8") if provider.exists() else None
+
+    run.store = store
+    run.mark = home / ".ordo-image-gen-seeded"
+    return run
+
+
+def test_the_hook_selects_comfyui_when_image_gen_is_enabled(boot):
+    assert boot(IMAGE_GEN_ENABLED="1", COMFYUI_URL=GATE) == "comfyui"
+    assert boot.mark.exists()
+
+
+def test_the_hook_does_not_override_the_operators_later_choice(boot):
+    boot(IMAGE_GEN_ENABLED="1", COMFYUI_URL=GATE)
+    (boot.store / "image_gen.provider").write_text("krea", encoding="utf-8")
+    assert boot(IMAGE_GEN_ENABLED="1", COMFYUI_URL=GATE) == "krea"
+
+
+def test_the_hook_keeps_a_provider_chosen_before_the_upgrade(boot):
+    (boot.store / "image_gen.provider").write_text("openai", encoding="utf-8")
+    assert boot(IMAGE_GEN_ENABLED="1", COMFYUI_URL=GATE) == "openai"
+    assert boot.mark.exists()
+
+
+def test_comfyui_without_image_gen_selects_nothing(boot):
+    """Without the image-gen weights every call would take the GPU lease (evicting the chat model)
+    only to be rejected by ComfyUI, so ComfyUI alone must not select the provider."""
+    assert boot(COMFYUI_URL=GATE) is None
+    assert not boot.mark.exists()

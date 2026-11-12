@@ -65,13 +65,16 @@ secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN_HERMES]
 # whole file). COMFYUI_URL is the ComfyUI admission gate: the dialogue/reel/image publishers and the
 # baked comfyui skill submit to it. Without it they fall back to a
 # direct ComfyUI address, which bypasses the GPU lease. Rendered only while comfyui is enabled.
+# IMAGE_GEN_ENABLED: rendered only while the image-gen plugin is enabled; the boot hook selects the
+# `comfyui` image_gen provider (MiniMax-H3-Image) only then.
 # LLAMACPP_CTX_SIZE: the context window (inference-engine-gpu KV / gateway max_input_tokens / the dashboard
 # progress bar); the boot hook seeds it into $HERMES_HOME/config.yaml and refuses to start without it.
 # HERMES_MAX_TOKENS / HERMES_COMPRESSION_THRESHOLD_PERCENT (`site:` knobs, present only when set): the
 # boot hook seeds them into config.yaml; unset, it keeps its own defaults. Compaction triggers at that
 # fraction (0-1) of the effective input budget (context_length - max_tokens), see
 # agent/context_compressor.py::_compute_threshold_tokens; raising it compacts LATER.
-derived_env: [COMFYUI_URL, LLAMACPP_CTX_SIZE, HERMES_MAX_TOKENS, HERMES_COMPRESSION_THRESHOLD_PERCENT]
+derived_env: [COMFYUI_URL, IMAGE_GEN_ENABLED, LLAMACPP_CTX_SIZE, HERMES_MAX_TOKENS,
+              HERMES_COMPRESSION_THRESHOLD_PERCENT]
 
 environment:
   # The name every Hermes tool and skill reads (ops_client.py, the ops-router plugin, brain skills),
