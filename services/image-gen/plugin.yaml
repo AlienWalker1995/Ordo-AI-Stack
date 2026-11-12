@@ -1,0 +1,46 @@
+id: image-gen
+name: Image generation (MiniMax-H3-Image)
+description: Local text-to-image and image editing, the stack's default image provider. Needs the ComfyUI backend + a large GPU.
+requires:
+  nvidia: true
+  # The int8 DiT (19.5 GiB) is the resident floor; the NVFP4 text encoder (14.6 GiB) runs before it
+  # and is offloaded once the prompt is encoded, so one 24 GB card is the minimum and 32 GB is
+  # comfortable.
+  vram_gb: 24
+  ram_gb: 32
+depends_on: [comfyui]   # won't enable unless comfyui is also enabled
+provides: [image]
+compose_profile: media
+# image-gen runs as a workflow + models INSIDE the ComfyUI service (no separate container); it
+# contributes only the enable flag and rides comfyui's `media` profile. Hence no `services:`.
+# Its consumer: Hermes' image_generate tool, whose `comfyui` provider
+# (services/hermes/plugins/image_gen/comfyui) runs the default backend's workflow through the gate.
+env:
+  IMAGE_GEN_ENABLED: "1"
+
+# --- backends -----------------------------------------------------------------------------
+# Data-only declaration of which image models this plugin can drive: the weight files each one
+# needs and the seeded workflow that drives it. Add a missing weight with the comfyui MCP tool
+# download_comfyui_model (url + category), using the pinned URL below.
+backends:
+  - id: minimax-h3-image
+    name: MiniMax-H3-Image
+    default: true
+    # Requires ComfyUI >= v0.45.0: MiniMaxH3ImageConditioning and the model detection for its DiT
+    # and 2D VAE landed upstream in ede4e5fe (PR #17655). services/comfyui pins COMFYUI_APP_REF to
+    # v0.45.2 (6e8488ef).
+    min_comfyui_version: "0.45.0"
+    # Comfy-Org's repack of MiniMaxAI/MiniMax-H3-Image, pinned to a revision: /resolve/main/ is a
+    # moving ref. The int8 DiT is the repack's own default (its workflow templates load it). The
+    # text encoder is the NVFP4 one the MiniMax-H3 video models already use (the same file, sha256
+    # 35a88d51...), so the image model adds only the DiT and the VAE to the models volume.
+    weights:
+      - {category: diffusion_models, url: "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/0bb149f51e3156ed4b90dd45d5620346bfe1df8f/diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors", sha256: 83eb140f1ff95c068f8a6886e6d3f3d0d4ab2e07bb2fe6d2ef992a51146ee622}
+      - {category: text_encoders, url: "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/0bb149f51e3156ed4b90dd45d5620346bfe1df8f/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", sha256: 35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6}
+      - {category: vae, url: "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/0bb149f51e3156ed4b90dd45d5620346bfe1df8f/vae/minimax_h3_image_vae_fp16.safetensors", sha256: d80e9c2e5cfc9844869961ff5a58c9a9e52182df6bfb30b26018dd7f348721af}
+    workflow: scripts/comfyui/workflows/minimax-h3-image.json
+    license: MiniMax-H3-Image Community License
+    notes: >-
+      Text to image, or an edit of up to 16 pictures named <Picture 1>, <Picture 2>, ... in the
+      prompt. Distilled to 6 steps at cfg 1 with no negative prompt; tuned for about 4 MP
+      (2048x2048 of area). It expects a detailed English description of the whole image.

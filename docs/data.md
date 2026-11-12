@@ -169,7 +169,7 @@ A vision projector is pinned in the model's `mmproj:` mapping (`file`, `source`,
 
 A model switch (the dashboard's Models page, or `POST /model-config` on `ops-controller`) never recreates `inference-engine-gpu` onto a file the volume lacks: it answers 409 naming the missing files and the `ordo fetch <catalog-id>` to run on the host, and changes nothing.
 
-**ComfyUI:** add a model with the `download_comfyui_model` MCP tool (`url` plus `category`, e.g. `checkpoints`, `loras`, `vae`). It calls `ops-controller` `POST /models/download`, which writes into the `comfyui-models` **named volume** (the same volume ComfyUI reads RO), so the file lands where ComfyUI looks with no copy step. One download runs at a time; poll `get_comfyui_model_download_status`. Music3 weight URLs are listed under `weights:` in `services/song-gen/plugin.yaml`.
+**ComfyUI:** add a model with the `download_comfyui_model` MCP tool (`url` plus `category`, e.g. `checkpoints`, `loras`, `vae`). It calls `ops-controller` `POST /models/download`, which writes into the `comfyui-models` **named volume** (the same volume ComfyUI reads RO), so the file lands where ComfyUI looks with no copy step. One download runs at a time; poll `get_comfyui_model_download_status`. The pinned weight URLs are listed under `weights:` in each media plugin: Music3 in `services/song-gen/plugin.yaml`, MiniMax-H3-Image (with sha256s) in `services/image-gen/plugin.yaml`.
 
 ### ComfyUI outputs
 

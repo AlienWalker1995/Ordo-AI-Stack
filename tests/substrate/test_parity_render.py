@@ -24,7 +24,7 @@ P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_5090, "compu
 
 # Every kind=service plugin V2 ships after the parity port (GPU + CPU-ok), on the real dual-GPU host.
 EXPECTED_SERVICE_PLUGINS = {
-    "comfyui", "song-gen", "voice", "monitoring",          # GPU / media / voice
+    "comfyui", "song-gen", "image-gen", "voice", "monitoring",  # GPU / media / voice
     "rag", "open-webui",                                   # ported CPU-ok services
     "searxng-web", "hermes-dashboard", "edge",
     "ltx-trainer",                                        # LoRA trainer (sole trainer since 2026-07-24)
@@ -51,21 +51,23 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 17 kind=service plugins are REGISTERED (9 parity set + ltx-trainer + tailnet-names +
-    # obsidian-livesync + obsidian-livesync-funnel + inference-engine-cpu + langfuse + evals + html-video) and 5 kind=mcp
+    # 18 kind=service plugins are REGISTERED (9 parity set + ltx-trainer + tailnet-names +
+    # obsidian-livesync + obsidian-livesync-funnel + inference-engine-cpu + langfuse + evals + html-video
+    # + image-gen) and 5 kind=mcp
     # (qdrant-rag, searxng, memory-vault + the restored comfyui-mcp /
-    # orchestration). 12 of the service plugins ENABLE on the full host: langfuse, evals, html-video, the public
+    # orchestration). 13 of the service plugins ENABLE on the full host: langfuse, evals, html-video, the public
     # Funnel and the tailnet-name sidecars are opt-in (`default: false`), so `plugins: auto`
     # deliberately leaves them out. (The media "worker"
     # plugin was retired, dropping the parity set from 12 to 11; inference-engine-cpu - the CPU LLM
-    # fallback - was added post-parity; n8n (`automation`) was removed 2026-10-10.)
+    # fallback - was added post-parity; n8n (`automation`) was removed 2026-10-10; image-gen, the
+    # default image model, was added 2026-11-12.)
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
     opt_in = [p.id for p in svc if not p.default]
-    assert len(svc) == 17 and len(mcp) == 5
+    assert len(svc) == 18 and len(mcp) == 5
     assert opt_in == ["evals", "html-video", "langfuse", "obsidian-livesync-funnel", "tailnet-names"]
     rc = _dual()
-    assert len(rc.plugins_enabled) == 12
+    assert len(rc.plugins_enabled) == 13
     assert len(rc.mcp_servers) == 5
 
 

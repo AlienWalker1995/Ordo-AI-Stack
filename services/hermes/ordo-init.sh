@@ -154,6 +154,21 @@ if [ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ]; then
     fi
 fi
 
+# The image_generate tool's provider: the stack's own ComfyUI running MiniMax-H3-Image, but only
+# while the image-gen plugin is enabled (IMAGE_GEN_ENABLED). ComfyUI alone is not enough: without
+# the image-gen weights every call would take the GPU lease, evicting the chat model, only for
+# ComfyUI to reject the graph. Upstream's default is FAL, which needs a paid key this stack does not
+# have. Selected once, behind its own sentinel, and only when no provider is chosen yet, so an
+# operator's choice in `hermes tools` (before or after this) is kept.
+IMAGE_GEN_MARK="$HERMES_HOME/.ordo-image-gen-seeded"
+if [ "${IMAGE_GEN_ENABLED:-}" = "1" ] && [ -n "${COMFYUI_URL:-}" ] && [ ! -f "$IMAGE_GEN_MARK" ]; then
+    # Unset (`config get` fails) and set-but-empty both count as "no provider chosen".
+    if [ -z "$(as_hermes "$HERMES_BIN" config get image_gen.provider 2>/dev/null)" ]; then
+        hermes_config image_gen.provider comfyui
+    fi
+    as_hermes touch "$IMAGE_GEN_MARK"
+fi
+
 # Register the repo-owned skills (/opt/ordo-skills) as a skills.external_dirs entry.
 timeout 60 /command/s6-setuidgid hermes "$HERMES_PYTHON" /opt/ordo/ordo_skills.py boot
 

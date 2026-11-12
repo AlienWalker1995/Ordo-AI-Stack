@@ -1,0 +1,83 @@
+{
+  "_comment": [
+    "MiniMax-H3-Image text -> image, or an edit of up to 16 pictures. ComfyUI API format (the shape",
+    "POST /prompt accepts), so this file is both the UI starting point and the thing automation",
+    "submits. Seeded to user/default/workflows/ordo/ by scripts/comfyui/boot.sh: repo-owned,",
+    "replaced on every boot. Edit it here, not in the UI.",
+    "",
+    "Text to image as written. To edit, add LoadImage nodes and wire each IMAGE into node 4 as",
+    "images.image_1, images.image_2, ...; the prompt names them <Picture 1>, <Picture 2>, ...",
+    "Width and height 0 take the size of image_1, or 2048x2048 without pictures.",
+    "",
+    "The model is distilled: 6 steps, cfg 1, no negative prompt. It expects a detailed English",
+    "description of the whole image; a one-line prompt gives a plain result.",
+    "",
+    "Requires ComfyUI >= v0.45.0 (services/comfyui pins COMFYUI_APP_REF) and the weight files",
+    "listed under the minimax-h3-image backend in services/image-gen/plugin.yaml.",
+    "",
+    "Submit THROUGH the gate (http://comfyui-gate:8188/prompt), never straight to comfyui:8188:",
+    "the gate acquires GPU residency before the render starts. See services/gpu-gate/README.md."
+  ],
+  "1": {
+    "class_type": "UNETLoader",
+    "_meta": { "title": "H3-Image DiT" },
+    "inputs": {
+      "unet_name": "minimax_h3_image_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "_meta": { "title": "H3 text encoder" },
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "_meta": { "title": "H3-Image VAE" },
+    "inputs": { "vae_name": "minimax_h3_image_vae_fp16.safetensors" }
+  },
+  "4": {
+    "class_type": "MiniMaxH3ImageConditioning",
+    "_meta": { "title": "Prompt" },
+    "inputs": {
+      "clip": ["2", 0],
+      "vae": ["3", 0],
+      "prompt": "A sunlit workshop bench seen from slightly above: a half-built wooden sailboat model on a cutting mat, brass clamps, curled pine shavings, a mug of coffee and a pencil sketch of the hull, warm late-afternoon light through a window on the left, shallow depth of field, photographic.",
+      "width": 2048,
+      "height": 2048
+    }
+  },
+  "5": {
+    "class_type": "ConditioningZeroOut",
+    "_meta": { "title": "No negative (cfg 1)" },
+    "inputs": { "conditioning": ["4", 0] }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "_meta": { "title": "Sample (6 steps, cfg 1)" },
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["4", 1],
+      "seed": 42,
+      "steps": 6,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "7": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["6", 0], "vae": ["3", 0] }
+  },
+  "8": {
+    "class_type": "SaveImage",
+    "inputs": { "images": ["7", 0], "filename_prefix": "image/minimax-h3-image" }
+  }
+}

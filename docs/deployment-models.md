@@ -188,7 +188,7 @@ primitives differ.
 
 The compose stack splits cleanly by hardware need:
 
-- **GPU-only services** — `comfyui`, `voice` (STT/TTS), `song-gen`, `ltx-trainer` — self-declare
+- **GPU-only services** — `comfyui`, `voice` (STT/TTS), `song-gen`, `image-gen`, `ltx-trainer` — self-declare
   `nvidia: true` in their plugin manifests and require a **GPU instance** (e.g. AWS `g`/`p` families
   with the NVIDIA container runtime). On a CPU-only VM the render engine gates them **off** rather than
   shipping a guaranteed crash.
