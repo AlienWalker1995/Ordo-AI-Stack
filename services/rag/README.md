@@ -36,8 +36,11 @@ The index follows the disk:
 
 Two guards stop a lost mount from wiping the index:
 - a top-level folder with no files on disk (mount not ready or evicted) is skipped with a warning;
+  loose files directly under the watch root never count as such a missing mount, because that
+  directory always exists (it is created at startup);
 - a pass that would delete more than `RECONCILE_MAX_DELETE_FRACTION` (default 0.5) of the indexed
-  sources is refused and logged as an error, unless `RECONCILE_ALLOW_MASS_DELETE=1`.
+  sources is refused and logged as an error, unless `RECONCILE_ALLOW_MASS_DELETE=1`; the guard does
+  not fire below three indexed sources, where a refusal could never shed the last files.
 
 The eval harness still keeps its own check (`ordo_evals.runner._check_rag_leak`) that no point is
 rooted under the eval scratch folder after cleanup.

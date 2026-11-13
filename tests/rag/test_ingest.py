@@ -187,11 +187,48 @@ def test_reconcile_never_deletes_from_a_root_with_no_files_on_disk(tmp_path, del
     assert "skipped root memory-vault" in caplog.text
 
 
-def test_reconcile_never_deletes_anything_from_an_empty_watch_tree(tmp_path, deletes):
+def test_reconcile_in_an_empty_watch_tree_sheds_loose_files_but_keeps_mounted_subfolders(tmp_path, deletes, caplog):
+    """With nothing on disk every subfolder is a mount that is not ready and is kept — but the
+    watch root itself always exists, so a loose file right under it is genuinely gone."""
     state = {"notes/a.md": "1", "b.md": "2"}
 
+    assert ingest.reconcile_index(state, {}, {}) == 1
+
+    assert deletes.deleted == ["b.md"] and list(state) == ["notes/a.md"]
+    assert "skipped root notes" in caplog.text and "skipped root ." not in caplog.text
+
+
+def test_a_loose_file_at_the_watch_root_is_removed_when_the_folders_survive(tmp_path, deletes, caplog):
+    """Deleting every loose file under the watch root while the mounted subfolders keep files used
+    to keep those chunks forever, warning about a mount that cannot be missing."""
+    _write(tmp_path, "notes/a.md")
+    state = {"notes/a.md": "1", "report.txt": "2"}
+
+    assert ingest.reconcile_index(state, {}, {}) == 1
+
+    assert deletes.deleted == ["report.txt"] and "notes/a.md" in state
+    assert "skipped root ." not in caplog.text
+
+
+def test_a_small_index_sheds_all_of_its_loose_files_without_the_override(tmp_path, deletes):
+    """Below the guard's size floor a refused pass could never shed the last files: two orphans of
+    two indexed sources are already 'over half', so a one- or two-file index needs no override."""
+    _write(tmp_path, "notes/a.md")
+    state = {"a.md": "1", "b.md": "2"}     # both loose at the watch root, both gone
+
+    assert ingest.reconcile_index(state, {}, {}) == 2
+
+    assert sorted(deletes.deleted) == ["a.md", "b.md"]
+
+
+def test_the_delete_fraction_guard_still_applies_from_three_sources_up(tmp_path, deletes, caplog):
+    _write(tmp_path, "notes/a.md")
+    state = {"a.md": "1", "b.md": "2", "c.md": "3"}     # all three loose files gone
+
     assert ingest.reconcile_index(state, {}, {}) == 0
-    assert deletes.deleted == [] and len(state) == 2
+
+    assert deletes.deleted == [] and len(state) == 3
+    assert "REFUSED" in caplog.text
 
 
 def test_reconcile_refuses_to_delete_over_the_configured_fraction(tmp_path, deletes, monkeypatch, caplog):

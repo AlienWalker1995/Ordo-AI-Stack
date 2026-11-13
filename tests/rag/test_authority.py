@@ -175,6 +175,14 @@ def test_the_watch_mounts_match_the_authority_prefixes():
     assert f"CANONICAL_PREFIXES: ${{RAG_CANONICAL_PREFIXES:-{ingest.DEFAULT_CANONICAL_PREFIXES}}}" in plugin
 
 
+def test_the_shipped_canonical_default_is_the_vaults_real_folder():
+    """Pinned against the live vault layout: matching is a case-sensitive startswith, so a default
+    that drifts from the real folder (notes/Ordo/Canonical/) matches nothing and the whole
+    canonical tier dies quietly."""
+    assert ingest.DEFAULT_CANONICAL_PREFIXES == "memory-vault/notes/Ordo/Canonical/"
+    assert ingest._folder_prefixes(ingest.DEFAULT_CANONICAL_PREFIXES) == ("memory-vault/notes/Ordo/Canonical/",)
+
+
 def test_the_canonical_folders_come_from_configuration():
     assert ingest._folder_prefixes("memory-vault/notes/Canon, stack-docs/specs/ ,,") == (
         "memory-vault/notes/Canon/", "stack-docs/specs/")

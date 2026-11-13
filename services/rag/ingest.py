@@ -54,6 +54,12 @@ RECONCILE_INTERVAL_SEC = max(60, int(os.environ.get("RECONCILE_INTERVAL_SEC", "6
 # A pass that would delete more than this fraction of the indexed sources is refused: it looks like
 # a mount that lost files, not an operator deleting half the notes.
 RECONCILE_MAX_DELETE_FRACTION = float(os.environ.get("RECONCILE_MAX_DELETE_FRACTION", "0.5"))
+# The fraction guard only applies once the index holds at least this many sources: on a one- or
+# two-file index a refused pass could never shed the last files (two orphans of two indexed
+# sources are already "over half"), so small deployments would need RECONCILE_ALLOW_MASS_DELETE
+# just to reconcile normally. Below three sources the worst case sheds a handful of chunks, which
+# a rescan rebuilds if the call was wrong.
+RECONCILE_GUARD_MIN_INDEX = 3
 RECONCILE_ALLOW_MASS_DELETE = os.environ.get("RECONCILE_ALLOW_MASS_DELETE", "").strip().lower() in {"1", "true", "yes"}
 # Chunks per embedding request. The engine computes about 3.4 chunks a second and keeps computing a
 # request after its client gives up, so one request must stay far inside EMBED_TIMEOUT_SECONDS.
@@ -75,11 +81,14 @@ HEARTBEAT_PATH = Path("/tmp/rag-ingestion.heartbeat")
 # agent-memory-and-context-poisoning doc). Decided by WHERE a file lives, never by what it claims:
 # a note that writes `authority: canonical` in its own frontmatter is still derived.
 #   canonical  the operator's source-of-truth folder(s), named by CANONICAL_PREFIXES: paths under
-#              the watch tree, comma-separated. By default the vault's notes/canonical/. The folder
-#              is the operator's alone: agent-facing containers should mount it read-only.
+#              the watch tree, comma-separated. By default the vault's notes/Ordo/Canonical/, where
+#              the canonical docs live and nowhere else. Matching is a case-sensitive startswith, so
+#              this must spell the real folder exactly: a drift matches nothing and every document
+#              stays derived. The folder is the operator's alone: agent-facing containers should
+#              mount it read-only.
 #   ephemeral  the memory vault's inbox/ (unreviewed captures)
 #   derived    everything else (notes, memories, runbooks, other docs)
-DEFAULT_CANONICAL_PREFIXES = "memory-vault/notes/canonical/"
+DEFAULT_CANONICAL_PREFIXES = "memory-vault/notes/Ordo/Canonical/"
 
 
 def _folder_prefixes(raw: str) -> tuple[str, ...]:
@@ -104,8 +113,10 @@ FOLDER_DEPTH = 4
 # Bumped when the metadata rules change: points stored under an older version get their payload
 # rewritten in place at the next scan (no re-embedding). 2: status is normalised and last_verified
 # validated, so a stored "archived # old" or a future date is corrected. 3: history folders, and
-# each chunk's ancestor folders for folder-scoped search.
-META_VERSION = 3
+# each chunk's ancestor folders for folder-scoped search. 4: the shipped canonical default pointed
+# at a folder the vault does not have, so the real canonical folder's chunks were stored as
+# derived; re-tagging gives them authority: canonical without re-embedding.
+META_VERSION = 4
 FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
 INLINE_COMMENT_RE = re.compile(r"(^|\s)#.*$")
 # Every status a document can have in the index. Synonyms map onto these; anything else is current.
@@ -592,9 +603,11 @@ def _source_root(source: str) -> str:
 
 
 def _drop_unverifiable_roots(orphans: list[str], wanted: set[str]) -> list[str]:
-    """The orphans under a root that still has files on disk. A root with none is a mount that is
-    not ready or was evicted: nothing in it can be called deleted."""
-    present_roots = {_source_root(source) for source in wanted}
+    """The orphans under a root that still has files on disk. A subfolder root with no files left
+    is a mount that is not ready or was evicted: nothing in it can be called deleted. The watch
+    root itself ("." — loose top-level files) always exists: main() creates it before anything is
+    scanned, so a gone loose file really is gone."""
+    present_roots = {_source_root(source) for source in wanted} | {"."}
     kept = [source for source in orphans if _source_root(source) in present_roots]
     for root in sorted({_source_root(source) for source in orphans} - present_roots):
         logger.warning("Reconcile skipped root %s: no files on disk (mount not ready?), its indexed "
@@ -619,7 +632,9 @@ def reconcile_index(state: dict[str, str], stale_meta: dict[str, str],
     orphans = _drop_unverifiable_roots(sorted(indexed - wanted), wanted)
     if not orphans:
         return 0
-    if len(orphans) > RECONCILE_MAX_DELETE_FRACTION * len(indexed) and not RECONCILE_ALLOW_MASS_DELETE:
+    if len(indexed) >= RECONCILE_GUARD_MIN_INDEX \
+            and len(orphans) > RECONCILE_MAX_DELETE_FRACTION * len(indexed) \
+            and not RECONCILE_ALLOW_MASS_DELETE:
         logger.error("Reconcile REFUSED: it would delete %d of %d indexed sources (over %.0f%%). Set "
                      "RECONCILE_ALLOW_MASS_DELETE=1 if the files really are gone.",
                      len(orphans), len(indexed), RECONCILE_MAX_DELETE_FRACTION * 100)
