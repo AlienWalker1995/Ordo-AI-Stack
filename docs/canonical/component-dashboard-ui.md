@@ -1,3 +1,11 @@
+---
+authority: canonical
+status: current
+owner: operator
+last_verified: 2026-11-12
+verified_against: 1c97d8f3608b
+---
+
 # Component: Dashboard UI
 
 ## Purpose
@@ -6,13 +14,14 @@ A web-based control plane that provides a single pane of glass for:
 - Managing Docker-Compose services (start/stop/restart, logs; ComfyUI restarts from its card) (Services)
 - Switching the GPU chat model and managing GGUF files on disk (Models)
 - Viewing token throughput and GPU metrics via the embedded Grafana "Ordo performance" dashboard at `/grafana/` (Performance)
+- The dashboard's dependency status, recent failures and request traces from `/api/diagnostics` (Logs)
 - A Ctrl/Cmd K command palette to jump to a page or open a tool
 
 ## API Reference
 
 **Base URL:** `http://dashboard:8080` (internal `ordo-net` only — no host port; reached via the Caddy edge at `https://${CADDY_TAILNET_HOSTNAME}:8444/`, its dedicated SSO-gated port under the port-per-service model — see [Architecture & Principles](architecture-and-principles.md))
 
-**Auth:** Operators reach the dashboard through the Caddy edge (oauth2-proxy + Google SSO with an email allowlist). In the table below, `Y` marks routes that need a principal (`dashboard/auth.py`): the edge SSO identity (`X-Forwarded-Email`, trusted only when the TCP peer is `caddy`) or `Authorization: Bearer <OPS_CONTROLLER_TOKEN>` for internal callers. That is every non-GET route plus everything under `/api/ops/` and `/api/orchestration/` except `/readiness`. `None` marks health and read-only views, open to anything on `ordo-net`.
+**Auth:** Operators reach the dashboard through the Caddy edge (oauth2-proxy + Google SSO with an email allowlist). In the table below, `Y` marks routes that need a principal (`dashboard/auth.py`): the edge SSO identity (`X-Forwarded-Email`, trusted only when the TCP peer is `caddy`) or `Authorization: Bearer <OPS_CONTROLLER_TOKEN>` for internal callers. That is every route whose method is not `GET`, `HEAD` or `OPTIONS`, plus everything under `/api/ops/` and `/api/orchestration/`, minus the public paths `/api/health`, `/api/orchestration/readiness` and `/api/auth/local/sign-in` (local mode only). `None` marks health and read-only views, open to anything on `ordo-net`.
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
@@ -22,6 +31,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/attention/dismiss` | POST | Y | `{id}`: hide an attention item until its condition clears (kept in `DASHBOARD_DATA_PATH/attention_dismissed.json`); an id whose kind (the part before `:`) is not one the Overview produces is 422 |
 | `/api/attention/restore` | POST | Y | `{id}`: list a dismissed attention item again |
 | `/api/activity` | GET | None | Renders, GPU leases and operator actions, newest first |
+| `/api/drift` | GET | None | ops-controller's `/doctor` checks (substrate, open-webui, alerting) for the Overview drift callout |
 | `/api/services/table` | GET | None | Every container on the host: verdict, control kind (`ordo`, `managed`, `host`, `link`, `group`, `none`) and allowed actions; a service's containers nest under its row (`parent` names it), which carries `group_verdict`, the worst state across the group (Services page) |
 | `/api/ops/services/{id}/start` | POST | Y | Start service (via ops-controller) |
 | `/api/ops/services/{id}/stop` | POST | Y | Stop service |
@@ -39,7 +49,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/perf/series` | GET | None | Tokens generated per second per engine, keyed by engine service name (Prometheus) |
 | `/api/perf/grafana` | GET | None | Whether Grafana is up + the embed path (Performance page) |
 | `/api/orchestration/readiness` | GET | None | Orchestration readiness check |
-| `/api/orchestration/workflows*`, `/validate`, `/outputs` | GET/POST | Y | Workflow store used by the orchestration MCP server (`services/orchestration/server.py`) |
+| `/api/orchestration/workflows*`, `/validate`, `/outputs` | GET/POST | Y | Workflow store used by the orchestration MCP server (`services/orchestration/server.py`): list, `from-template`, `save`, `{id}/versions`, `{id}/diff`, `{id}/promote`, `{id}/rollback` |
 | `/api/orchestration/comfyui/restart`, `/comfyui/status` | POST/GET | Y | Restart ComfyUI / its status (called by the orchestration MCP server; the Services card restarts ComfyUI through the generic service action) |
 | `/api/orchestration/registry/models`, `/registry/gpus` | GET | Y | Served models and GPU pins derived from the render, proxied from ops-controller |
 | `/api/diagnostics` | GET | None | Dependency health and recent failures: per-dependency status, the failure ring newest first, and the `DEP-<DEP>-<KIND>` code table (see [Diagnostics](#diagnostics)) |

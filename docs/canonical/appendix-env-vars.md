@@ -1,3 +1,11 @@
+---
+authority: canonical
+status: current
+owner: operator
+last_verified: 2026-11-12
+verified_against: 1c97d8f3608b
+---
+
 # Appendix: Environment Variables Reference
 
 Service-wiring variables the render sets. Operator-set variables (paths, ports, RAG tuning, tokens) are in [configuration.md](../configuration.md).
@@ -6,12 +14,12 @@ Service-wiring variables the render sets. Operator-set variables (paths, ports, 
 |----------|---------|-------------|---------|
 | `LLAMACPP_URL` | model-gateway, dashboard | llama.cpp internal URL | `http://inference-engine-gpu:8080` |
 | `DASHBOARD_URL` | model-gateway | Dashboard for throughput recording | `http://dashboard:8080` |
-| `OPS_CONTROLLER_URL` | dashboard, agent, comfyui, mcp-comfyui, ltx-trainer | Control plane (`ops-controller`) URL: GPU leases, model switch, service lifecycle | `http://ops-controller:9000` |
+| `OPS_CONTROLLER_URL` | dashboard, agent, comfyui, mcp-comfyui, ltx-trainer, evals | Control plane (`ops-controller`) URL: GPU leases, model switch, service lifecycle | `http://ops-controller:9000` |
 | `OPEN_WEBUI_DEFAULT_MODEL` | open-webui | Default model shown in Open WebUI chat (rendered into `DEFAULT_MODELS`) | `local-chat` |
 | `DISCORD_BOT_TOKEN_FILE` | agent | Docker secret file path for the Discord bot token; the entrypoint reads it into `DISCORD_BOT_TOKEN` inside the container. Plaintext `DISCORD_BOT_TOKEN` env is never set; `tests/test_secrets_isolation.py` asserts it's absent | `/run/secrets/discord_bot_token` |
-| `WEBUI_AUTH` | open-webui | Enable Open WebUI auth | `False` (target `True` in M6) |
+| `WEBUI_AUTH` | open-webui | Enable Open WebUI auth | `False` (target `True`) |
 | `OPENAI_API_BASE` | open-webui | OpenAI-compat base URL | `http://model-gateway:11435/v1` |
-| `LITELLM_MASTER_KEY` | model-gateway, model-gateway-keys, dashboard | LiteLLM master key; the entrypoint refuses to start unless it matches `^sk-[A-Za-z0-9_-]{32,}$` | *(required)* |
+| `LITELLM_MASTER_KEY` | model-gateway, model-gateway-keys, comfyui | LiteLLM master key; the entrypoint refuses to start unless it is `sk-` followed by 32+ characters | *(required)* |
 | `LITELLM_SALT_KEY` | model-gateway | Encrypts provider credentials stored in `litellm-db`. NEVER rotate | *(required)* |
 | `LITELLM_DB_PASSWORD` | model-gateway, litellm-db | Postgres password, a file for both (`POSTGRES_PASSWORD_FILE`, `DATABASE_PASSWORD_FILE`) | *(required)* |
 | `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_EDGE` | agent, open-webui, external clients | Per-consumer LiteLLM virtual keys, provisioned by `model-gateway-keys` | *(generated)* |

@@ -5,7 +5,7 @@
 # network namespace, not the engine's. Egress-capable MCP servers are unfiltered here.
 #
 # See the "SSRF Defenses (MCP)" section of
-# docs/product requirements docs/security-and-trust-model.md.
+# docs/canonical/security-and-trust-model.md.
 
 $doc = @"
 SSRF egress blocking (Windows / Docker Desktop)
@@ -27,6 +27,6 @@ What you can do today:
 
 The platform-independent fix (per-server internal networks, an egress proxy
 for searxng) is tracked in the "SSRF Defenses (MCP)" section of
-docs/product requirements docs/security-and-trust-model.md
+docs/canonical/security-and-trust-model.md
 "@
 Write-Host $doc

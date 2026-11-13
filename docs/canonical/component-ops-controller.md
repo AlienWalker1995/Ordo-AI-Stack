@@ -1,3 +1,11 @@
+---
+authority: canonical
+status: current
+owner: operator
+last_verified: 2026-11-12
+verified_against: 1c97d8f3608b
+---
+
 # Component: Ops Controller
 
 ## Purpose
@@ -6,7 +14,7 @@ The Ordo control plane (`ordo serve`, `ordo/control/api.py`). Drives the GPU/job
 scheduler, performs the drift-safe model switch (writes the declarative `ordo.yaml`
 source, then re-renders `.env` + compose + Hermes ctx in one pass so they can never
 disagree), and owns the compose-lifecycle API the dashboard and agent call (start, stop,
-restart, recreate, logs, image pulls, audit). It holds `docker.sock`, and the
+restart, recreate, logs, audit). It holds `docker.sock`, and the
 `DockerBackend` guard (`ordo/control/broker.py`) scopes every container call to the `<project>-*`
 prefix, so it cannot reach containers outside this compose project.
 
@@ -14,10 +22,13 @@ prefix, so it cannot reach containers outside this compose project.
 
 **Base URL:** `http://ops-controller:9000` (internal network; no host port)
 
-**Auth:** None enforced by ops-controller itself (`ordo/control/api.py` has no auth check). It
-publishes no host port and is reachable only on the internal network; callers (dashboard,
-agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>` from
-`out/secrets.env` by convention.
+**Auth:** Every call except `/health`, `/healthz`, `/metrics` and `/lease` must carry
+`Authorization: Bearer <token>`; anything else gets `401` with `WWW-Authenticate: Bearer`, and the
+process refuses to start without a token (`ordo/control/api.py`, `ordo/control/serve.py`). Two
+principals exist (`ordo/control/principals.py`): `admin`, proved by `OPS_CONTROLLER_TOKEN` (sent by
+the dashboard, comfyui-mcp and gpu-gate), and `hermes`, proved by `OPS_CONTROLLER_TOKEN_HERMES`
+(the agent's `OPS_CONTROLLER_TOKEN` env carries this scoped token) and limited to a route
+allowlist; a route outside it gets `403`. It publishes no host port.
 
 **Scheduler and model switch**
 
@@ -46,7 +57,7 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/containers/{name}/logs` | GET | Tail one container's logs |
 | `/containers/{name}/restart` | POST | Restart one container (`confirm: true`) |
 | `/stats/services` | GET | Per-service CPU/memory stats, plus `containers`: every running container on the host by name (`cpu_pct`, `mem_gb`, `mem_pct`), from the same single `docker stats` sample |
-| `/compose/up`, `/compose/down`, `/compose/restart` | POST | Whole-project compose verbs (`confirm: true`) |
+| `/compose/up`, `/compose/down`, `/compose/restart` | POST | Compose verbs (`confirm: true`); the whole project, or one service's lifecycle group with an optional `service` body key |
 
 **Registry, downloads and diagnostics**
 
@@ -55,33 +66,35 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/registry/models` | GET | Every model the current render serves (file, GPU pin, ctx, projector), derived on each call |
 | `/gpus` | GET | Live per-card VRAM (MiB), utilization and temperature: NVIDIA via nvidia-smi, AMD via sysfs (`ordo/render/gpu_live.py`); the dashboard's GPU widgets read this |
 | `/registry/gpus` | GET | The same live cards (GiB), with the models the render pins to each |
-| `/gpu/assignments` | GET | Current GPU pins |
 | `/gpu/assign`, `/registry/models/{id}/assign-gpu` | POST | 410: GPU pins are render-time (`ordo.yaml`) |
 | `/models/download`, `/models/download/status` | POST, GET | Resumable download of one allowlisted-host URL into the ComfyUI models volume |
 | `/comfyui/install-node-requirements` | POST | pip-install a custom-node pack's `requirements.txt` inside the comfyui container |
 | `/diagnostics/dstate` | GET | Processes stuck in uninterruptible sleep |
-| `/doctor` | GET | Read-only drift checks, judged as `ordo doctor` judges them: this process's substrate digest vs the one out/manifest.json records, and the open-webui model-gateway probe when it runs. `{"ok", "checks": [{"check", "ok", "detail"}]}`; the dashboard Overview shows the failed ones |
+| `/doctor` | GET | Read-only drift checks, judged as `ordo doctor` judges them: this process's substrate digest vs the one out/manifest.json records, the open-webui model-gateway probe when it runs, and the alert-delivery verdict from the materialized secret files (`alerting`). `{"ok", "checks": [{"check", "ok", "detail"}]}`; the dashboard Overview shows the failed ones |
 | `/audit` | GET | Audit log tail (`limit`, default 50) |
 
 **Safety:** Every mutating lifecycle, compose, plugin and pip call requires `{"confirm": true}` (JSON true: `"true"`, `1` or `"yes"` is refused).
-Plugin enable/disable is limited to the `INSTALLABLE_PLUGINS` allowlist in `ordo/control/plugin_install.py`;
+Plugin enable/disable is limited to the `INSTALLABLE_PLUGINS` allowlist plus every `kind: mcp` plugin (`ordo/control/plugin_install.py`);
 core substrate services cannot be added or removed through it.
 
 ## Audit Log
 
 `ordo/control/audit.py` writes one fsync'd JSONL line to `AUDIT_LOG_PATH` (`/data/audit.log` in the
 container, `data/ops-controller/audit.log` on the host) for every state-changing call, whatever
-its outcome: success, dry run, `401`/`409`/`400` refusal or failure. Reads are not recorded. The
-one writer is `ControlPlane.handle()`, which wraps `route()`, so a new route is audited without
-opting in. The log rotates at 10 MB and keeps five generations (`audit.1.log` ... `audit.5.log`).
+its outcome: success, dry run, `401`/`403`/`409`/`400` refusal or failure. Reads are not recorded,
+with two exceptions: `GET /projects/{project}/containers/{name}/logs` (action `project.logs`) and any
+read the principal allowlist refuses (`403`). `ControlPlane.handle()` wraps `route()`, so a new
+route is audited without opting in; the HTTP layer in `app()` also records the `401`, `403` and
+bad-JSON `400` refusals that never reach it. The log rotates at 10 MB and keeps five generations (`audit.1.log` ... `audit.5.log`).
 Export: `GET /audit?limit=N` (`1 <= N <= 1000`, newest first, across the generations).
 
 ```json
-{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"searxng","result":"ok","method":"POST","path":"/services/searxng/restart","status":200,"dry_run":false,"confirm":true}
+{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"searxng","result":"ok","method":"POST","path":"/services/searxng/restart","status":200,"dry_run":false,"confirm":true,"principal":"admin"}
 ```
 
 `caller` is the request's `X-Actor` header (`unknown` when absent). Every client sends one, but it
-is self-declared: all callers hold the same bearer token. Full schema: [data.md](../data.md#audit-log).
+is self-declared; the record's `principal` field says which token (`admin` or `hermes`) proved
+the caller. Full schema: [data.md](../data.md#audit-log).
 
 ## Design Principle
 

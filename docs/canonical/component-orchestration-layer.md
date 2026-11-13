@@ -1,3 +1,11 @@
+---
+authority: canonical
+status: current
+owner: operator
+last_verified: 2026-11-12
+verified_against: 1c97d8f3608b
+---
+
 # Orchestration Layer
 
 ## Purpose

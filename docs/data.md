@@ -75,13 +75,15 @@ A `servers.json` entry, for the `qdrant-rag` server (service `mcp-qdrant-rag`):
 
 ```json
 {
-  "server_id": "qdrant-rag",
+  "id": "qdrant-rag",
   "litellm_name": "qdrant_rag",
   "plugin_id": "qdrant-rag",
+  "name": "Qdrant RAG (MCP tools)",
   "service": "mcp-qdrant-rag",
   "url": "http://mcp-qdrant-rag:9000/mcp",
+  "network": "stack",
   "tools": ["qdrant_status", "..."],
-  "network": "stack"
+  "hosted": false
 }
 ```
 
