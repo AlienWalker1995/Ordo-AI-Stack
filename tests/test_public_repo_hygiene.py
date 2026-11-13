@@ -92,6 +92,14 @@ def test_the_denylist_is_read_from_the_environment(monkeypatch, tmp_path):
     assert hygiene.findings("cd my-other-project", hygiene.operator_denylist())
 
 
+def test_an_invalid_denylist_line_fails_by_line_number_without_printing_the_name(monkeypatch):
+    monkeypatch.setenv("ORDO_HYGIENE_DENYLIST", "fine\nsecretname++\n")
+    with pytest.raises(SystemExit) as failure:
+        hygiene.operator_denylist()
+    message = str(failure.value)
+    assert "denylist line 2" in message and "secretname" not in message
+
+
 def test_a_plain_substring_denylist_catches_a_name_after_an_escape_letter_or_underscore():
     """Why the denylist holds plain substrings: these are the shapes a word boundary let through."""
     denylist = [hygiene.re.compile("myproject", hygiene.re.IGNORECASE)]

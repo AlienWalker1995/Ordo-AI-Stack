@@ -99,10 +99,16 @@ def operator_denylist() -> list[re.Pattern[str]]:
     if not text.strip() and file_path:
         text = Path(file_path).read_text(encoding="utf-8")
     patterns = []
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), start=1):
         line = line.strip()
-        if line and not line.startswith("#"):
+        if not line or line.startswith("#"):
+            continue
+        try:
             patterns.append(re.compile(line, re.IGNORECASE))
+        except re.error as error:
+            # Name the line, never its text: the log this is printed to is public.
+            raise SystemExit(f"public repo hygiene: denylist line {number} is not a valid regular "
+                             f"expression ({error.msg}); escape regex metacharacters with a backslash") from None
     return patterns
 
 
