@@ -27,7 +27,7 @@ Every UI serves at its origin **root** behind a plain SSO reverse_proxy (`import
 - [ ] New MCP servers: `kind: mcp` manifest with an explicit `network:` and only the `env:` / `secrets:` the server needs; granted to the keys that should see it
 - [ ] No new host port exposures without justification
 - [ ] Audit events emitted for all privileged actions
-- [ ] New env vars documented in [Environment Variables Reference](docs/product%20requirements%20docs/appendix-env-vars.md), `ordo.example.yaml`, and `out/secrets.env.example`
+- [ ] New env vars documented in [Environment Variables Reference](docs/canonical/appendix-env-vars.md), `ordo.example.yaml`, and `out/secrets.env.example`
 
 ## What not to commit
 

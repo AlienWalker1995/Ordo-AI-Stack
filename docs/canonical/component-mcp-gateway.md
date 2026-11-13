@@ -1,3 +1,11 @@
+---
+authority: canonical
+status: current
+owner: operator
+last_verified: 2026-11-12
+verified_against: 1c97d8f3608b
+---
+
 # Component: MCP Tool Aggregation (LiteLLM MCP gateway)
 
 ## Purpose
@@ -28,18 +36,19 @@ LiteLLM registration and the rendered server list (`out/mcp/servers.json`) from 
 | `network` | `internal` (default) or `stack` |
 | `command` | Optional compose command override |
 | `env` | Compose environment; `${VAR}` interpolates from `.env` / `secrets.env` |
-| `secrets` | Required secret keys, same semantics as service plugins |
+| `secret_files` | Secret keys this server reads from a file: each is mounted under `/run/secrets` and its `<KEY>_FILE` env points at it (required secrets themselves are the manifest's top-level `secrets:`) |
 | `volumes` | Compose volume list (host binds and named volumes) |
 | `depends_on` | Compose dependencies on stack services |
 | `healthcheck` | Optional; overrides the renderer's default HTTP probe (only searxng needs it: that image has no `python3`) |
 | `timeout` | Per-server LiteLLM tool timeout in seconds (default 60) |
 | `auth` | Optional upstream auth LiteLLM presents (hosted servers) |
 | `allowed_tools` | Optional; narrows what LiteLLM exposes from this server |
-| `tools` | Informational, and the parity test's expectation |
+| `tools` | Informational (the MCP parity check was retired in #224) |
 
 Keys carried over from the retired Docker-gateway schema (`longLived`, `disableNetwork`, and
 `PLACEHOLDER_*` values) are rejected by the renderer, as is an unknown key, a non-`http`
-transport, a missing `port` alongside `image`, a bad `network` value and a duplicate `server_id`.
+transport, a missing `port` alongside `image`, a bad `network` value, and two different `server_id`s
+that derive the same LiteLLM name (`a-b` and `a_b`). A repeated `server_id` only adds a render note.
 
 Full example (`services/qdrant-rag/plugin.yaml`):
 
@@ -62,6 +71,8 @@ mcp:
     QDRANT_URL: http://qdrant:6333
     EMBED_URL: http://inference-engine-embed:8080
     RAG_COLLECTION: documents
+    # EmbeddingGemma 2's query prompt; rag-ingestion's EMBED_DOCUMENT_PREFIX is the document side.
+    EMBED_QUERY_PREFIX: "task: search result | query: "
   tools: [qdrant_search, qdrant_status]
 ```
 
@@ -70,7 +81,7 @@ mcp:
 `ordo render` turns each enabled `kind: mcp` plugin into:
 
 - A compose service **`mcp-<server_id>`**: `restart: unless-stopped`, `init: true`,
-  `security_opt: [no-new-privileges:true]`, `cpus: "1"`, `mem_limit: 2g`, labels `ordo.mcp=true`,
+  `security_opt: [no-new-privileges:true]`, `deploy.resources.limits` of `cpus: "1"` and `memory: 2g`, labels `ordo.mcp=true`,
   `ordo.mcp.server_id=<id>`, `ordo.mcp.plugin=<plugin id>`. **No `env_file`**: a server sees only
   the variables and secrets its own manifest declares, never the gateway's full env surface.
 - Network placement on the top-level **`ordo-mcp-net`**, declared `internal: true`.
@@ -88,8 +99,8 @@ mcp:
 - `out/model-gateway/mcp_servers.yaml`: the LiteLLM `mcp_servers` fragment, mounted read-only at
   `/config` and merged into the proxy config by the entrypoint. The file is **required**: a render
   with no MCP plugins emits `mcp_servers: {}`, and a missing file is a fail-loud start error.
-- `out/mcp/servers.json`: `{server_id, litellm_name, plugin_id, service, url, tools, network}` per
-  server plus the registered-plugin map. No compose service consumes it anymore (the dashboard's
+- `out/mcp/servers.json`: `{id, litellm_name, plugin_id, name, service, url, network, tools, hosted}`
+  per server plus the registered-plugin map. No compose service consumes it anymore (the dashboard's
   read-only mount went with the Settings drawer); the native-mode checklist (`ordo/host/native.py`)
   points operators at it.
 
@@ -143,7 +154,7 @@ LiteLLM namespaces tools **`<litellm_name>-<tool>`**, and Hermes prefixes its ow
    session per operation (BerriAI/litellm #25128) and cannot hold a session id.
 2. **Hosted server:** manifest with `url:` and, if the upstream needs a token,
    `auth: {type: bearer_token, secret: <SECRET_KEY>}`. No container is rendered.
-3. **stdio-only upstream:** manifest plus a ten-line Dockerfile block, one fixed recipe, that
+3. **stdio-only upstream:** manifest plus a short Dockerfile block, one fixed recipe, that
    bridges stdio to stateless streamable HTTP:
 
 ```dockerfile
