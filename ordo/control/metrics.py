@@ -22,6 +22,7 @@ import os
 import re
 import ssl
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
@@ -38,10 +39,19 @@ logger = logging.getLogger(__name__)
 
 CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
-# How long one reading of the immutable-path changes is served before it is taken again. A reading
-# runs `docker diff` of each declaring container, about 2.4 s for the agent (measured 2026-11-06),
-# where the rest of a scrape takes 0.6 s; a hand-edit does not need minute resolution to be paged.
-IMMUTABLE_CHANGES_MAX_AGE_SECONDS = 300.0
+# How often the immutable-path changes are read. A reading runs `docker diff` of each declaring
+# container, which is slow and unbounded: 2.4 s for the agent on 2026-11-06, 44 s on 2026-11-08.
+# Read inline, it pushed every scrape past Prometheus's 30 s timeout and took the whole target
+# (every container alert) down. So its own thread (serve.py) takes the reading and a scrape only
+# reads memory. A hand-edit does not need minute resolution to be paged.
+IMMUTABLE_CHANGES_REFRESH_SECONDS = 300.0
+# A reading older than this is unknown, not "still clean": the reader thread died or wedged.
+IMMUTABLE_CHANGES_STALE_SECONDS = 3 * IMMUTABLE_CHANGES_REFRESH_SECONDS
+# How soon a failed reading is retried: short enough that a transient docker hiccup (a daemon
+# restart, a socket timeout) does not leave the ImmutableFilesModified alert blind for the full
+# interval; before this PR the next scrape (~15 s later) retried, so recovery stays within two of
+# Prometheus's 15 s scrapes.
+IMMUTABLE_CHANGES_RETRY_SECONDS = 30.0
 
 # The filesystems ops-controller reports, by the `mount` label the alert rules use.
 #   docker: the container's own root, which lives on the Docker data disk (on Docker Desktop, the
@@ -309,41 +319,61 @@ class MetricsCollector:
         self.tls_cert_files = dict(tls_cert_files)
         # The cached GPU chat liveness (chat_probe.py); never probed inline, so a scrape stays fast.
         self.chat_up = chat_up
-        self._immutable_changes: Mapping[str, int] | None = None
-        self._immutable_changes_read_at = float("-inf")
-        # The containers the cached reading describes ({service: id}): a recreate changes them and
-        # invalidates the reading before the age does.
-        self._immutable_changes_containers: Mapping[str, str] | None = None
+        # The last immutable-path reading: (changed-file counts, the {service: container id} it
+        # describes, when it was taken). Written by refresh_immutable_changes on its own thread.
+        self._immutable_lock = threading.Lock()
+        self._immutable_reading: tuple[Mapping[str, int], Mapping[str, str], float] | None = None
+        # Set by a scrape that sees the containers changed, so the reader thread reads again now.
+        self.immutable_refresh_wanted = threading.Event()
 
-    def _read_immutable_changes(self) -> Mapping[str, int] | None:
-        """The last reading while it is younger than IMMUTABLE_CHANGES_MAX_AGE_SECONDS AND still
-        describes the same containers, else a new one. The container IDs matter: after
-        `ordo recreate hermes` — the step the alert's own description tells the operator to run —
-        the old nonzero count must not keep paging a clean new container until the age expires.
-        A failed reading is not kept, so the next scrape tries again."""
+    def refresh_immutable_changes(self) -> bool:
+        """Take one immutable-path reading. Called by the reader thread (serve.py), never by a scrape.
+        Returns whether the reading succeeded: the thread backs off shorter after a failure, so a
+        transient docker hiccup does not leave the collector failed for the full interval. A failed
+        reading clears the last one, so the collector reports failed instead of serving an old count
+        as current."""
         broker = self.broker
         if broker is None:
-            # text() only calls this while self.broker is set; a None broker has nothing to read.
-            return None
-        now = time.monotonic()
+            return True
         try:
+            # The container IDs first: the reading describes these containers or newer ones.
             containers = broker.backend.running_container_ids()
+            changes = broker.backend.immutable_path_changes()
+        except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a crash
+            logger.warning("metrics: cannot read the immutable-path changes: %s", e)
+            with self._immutable_lock:
+                self._immutable_reading = None
+            return False
+        with self._immutable_lock:
+            self._immutable_reading = (changes, containers, time.monotonic())
+        return True
+
+    def _read_immutable_changes(self) -> Mapping[str, int] | None:
+        """The last reading, from memory. None (a failed collector) when there is none yet, the last
+        one failed, or it is stale because the reader thread stopped.
+
+        A service whose container changed since the reading is left out and the reader is woken:
+        after `ordo recreate hermes`, the step the alert's own description tells the operator to
+        run, the old nonzero count must not keep paging a clean new container."""
+        broker = self.broker
+        if broker is None:
+            return None
+        with self._immutable_lock:
+            reading = self._immutable_reading
+        if reading is None:
+            return None
+        changes, containers, read_at = reading
+        if time.monotonic() - read_at > IMMUTABLE_CHANGES_STALE_SECONDS:
+            return None
+        try:
+            current = broker.backend.running_container_ids()
         except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a 500
             logger.warning("metrics: cannot read the container ids: %s", e)
-            containers = None
-        stale = now - self._immutable_changes_read_at >= IMMUTABLE_CHANGES_MAX_AGE_SECONDS
-        if containers is not None and self._immutable_changes_containers is not None:
-            stale = stale or containers != self._immutable_changes_containers
-        if not stale:
-            return self._immutable_changes
-        try:
-            changes = broker.backend.immutable_path_changes()
-        except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a 500
-            logger.warning("metrics: cannot read the immutable-path changes: %s", e)
             return None
-        self._immutable_changes, self._immutable_changes_read_at = changes, now
-        self._immutable_changes_containers = containers
-        return changes
+        if current != containers:
+            self.immutable_refresh_wanted.set()
+        return {service: count for service, count in changes.items()
+                if current.get(service) == containers.get(service)}
 
     def text(self) -> str:
         """The lease, container, disk and certificate state in the Prometheus text format."""
@@ -389,3 +419,19 @@ class MetricsCollector:
             gpu_chat_up=self.chat_up() if self.chat_up else None,
             netns_repair=self.netns_repair_stats() if self.netns_repair_stats else None,
             engines=engine_samples, engines_failed=engines_failed))
+
+
+def immutable_changes_loop(collector: MetricsCollector) -> None:
+    """The reader thread's loop (serve.py starts it): take a reading now, then wait for the interval
+    or a recreate a scrape saw. A failed reading backs off shorter, so a transient docker hiccup
+    does not leave the ImmutableFilesModified alert blind for the full interval; an unexpected error
+    is caught, so the thread cannot die and strand the collector failed until a process restart."""
+    while True:
+        try:
+            ok = collector.refresh_immutable_changes()
+        except Exception as e:  # noqa: BLE001 - the thread must survive an unexpected error
+            logger.warning("metrics: the immutable-path reading raised: %s", e)
+            ok = False
+        delay = IMMUTABLE_CHANGES_REFRESH_SECONDS if ok else IMMUTABLE_CHANGES_RETRY_SECONDS
+        collector.immutable_refresh_wanted.wait(delay)
+        collector.immutable_refresh_wanted.clear()

@@ -1376,7 +1376,7 @@ class DockerBackend:
         `docker ps`, then per running container a `docker inspect` for the label and, when it
         carries one (today only the agent), a `docker diff`. A container that vanishes between the
         ps and its inspect or diff is skipped, not a failed reading: a failed reading drops the
-        metric out and the alert resolves early, and the next scrape sees whatever is left anyway."""
+        metric out and the alert resolves early, and the next reading (within 30 s) sees whatever is left anyway."""
         ids = [row["id"] for row in self._project_ps() if row.get("id") and row.get("state") == "running"]
         if not ids:
             return {}
@@ -1390,7 +1390,7 @@ class DockerBackend:
                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
                     check=True)
             except subprocess.CalledProcessError as e:
-                logger.warning("metrics: %s vanished before its inspect (%s); skipping it this scrape",
+                logger.warning("metrics: %s vanished before its inspect (%s); skipping it this reading",
                                container_id[:12], (e.stderr or "").strip()[:120])
                 continue
             line = proc.stdout.splitlines()[0] if proc.stdout.strip() else ""
@@ -1399,10 +1399,12 @@ class DockerBackend:
             if not (service and roots):
                 continue
             try:
+                # Off the scrape path (metrics.py reads this on its own thread), so the timeout only
+                # bounds a wedged daemon: the agent's diff took 44 s on 2026-11-08.
                 diff = subprocess.run(["docker", "diff", container_id], capture_output=True, text=True,
-                                      encoding="utf-8", errors="replace", timeout=30, check=True)
+                                      encoding="utf-8", errors="replace", timeout=180, check=True)
             except subprocess.CalledProcessError as e:
-                logger.warning("metrics: %s vanished before its diff (%s); skipping it this scrape",
+                logger.warning("metrics: %s vanished before its diff (%s); skipping it this reading",
                                container_id[:12], (e.stderr or "").strip()[:120])
                 continue
             counts[service] = len(changed_immutable_files(diff.stdout.splitlines(), roots))
