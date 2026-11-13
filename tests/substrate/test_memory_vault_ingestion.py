@@ -253,7 +253,7 @@ class _FakeClock:
 
 
 def _run_pass(ingest, paths, seen, backoff, attempts, fail):
-    def fake_ingest(path, state):
+    def fake_ingest(path, state, stale_meta=None):
         attempts.append(path.name)
         if path.name in fail:
             raise RuntimeError("timed out")
@@ -341,19 +341,34 @@ class _ScrollClient:
 
 def test_what_is_indexed_comes_from_the_store_across_pages(ingest, monkeypatch):
     # The record lived in the container's /tmp, so every recreate re-embedded the whole index.
+    v = ingest.META_VERSION
     client = _ScrollClient([
-        (200, [{"payload": {"source": "a.md", "digest": "1"}}, {"payload": {"source": "a.md", "digest": "1"}}], "next"),
-        (200, [{"payload": {"source": "b.md", "digest": "2"}}, {"payload": {"source": "old.md"}}], None),
+        (200, [{"payload": {"source": "a.md", "digest": "1", "meta_version": v}},
+               {"payload": {"source": "a.md", "digest": "1", "meta_version": v}}], "next"),
+        (200, [{"payload": {"source": "b.md", "digest": "2", "meta_version": v}}, {"payload": {"source": "old.md"}}], None),
     ])
     _use_client(ingest, monkeypatch, client)
-    assert ingest._indexed_digests() == {"a.md": "1", "b.md": "2"}
+    assert ingest._indexed_digests() == ({"a.md": "1", "b.md": "2"}, {})
     assert client.requests[1]["offset"] == "next"
     assert all(request["with_vector"] is False for request in client.requests)
 
 
 def test_a_missing_collection_means_nothing_is_indexed(ingest, monkeypatch):
     _use_client(ingest, monkeypatch, _ScrollClient([(404, [], None)]))
-    assert ingest._indexed_digests() == {}
+    assert ingest._indexed_digests() == ({}, {})
+
+
+def test_files_indexed_with_older_metadata_are_listed_for_a_metadata_update(ingest, monkeypatch):
+    # Points from before META_VERSION (or with one chunk lagging) are re-tagged, not re-embedded.
+    v = ingest.META_VERSION
+    client = _ScrollClient([(200, [
+        {"payload": {"source": "fresh.md", "digest": "1", "meta_version": v}},
+        {"payload": {"source": "old.md", "digest": "2"}},
+        {"payload": {"source": "mixed.md", "digest": "3", "meta_version": v}},
+        {"payload": {"source": "mixed.md", "digest": "3", "meta_version": v - 1}},
+    ], None)])
+    _use_client(ingest, monkeypatch, client)
+    assert ingest._indexed_digests() == ({"fresh.md": "1"}, {"old.md": "2", "mixed.md": "3"})
 
 
 def test_the_batch_size_and_scan_interval_are_configured_by_the_plugin():
