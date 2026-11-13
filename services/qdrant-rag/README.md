@@ -25,7 +25,7 @@ rag-ingestion stores three fields with every chunk: `authority`, `status` and `l
 
 | Authority | Where the file lives |
 |---|---|
-| `canonical` | `docs/canonical/` (the PRDs) |
+| `canonical` | The operator's source-of-truth folder, `RAG_CANONICAL_PREFIXES` (default: the vault's `notes/canonical/`) |
 | `ephemeral` | the vault's `inbox/` |
 | `derived` | everywhere else |
 

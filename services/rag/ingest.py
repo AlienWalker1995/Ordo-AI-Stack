@@ -74,11 +74,22 @@ HEARTBEAT_PATH = Path("/tmp/rag-ingestion.heartbeat")
 # Authority: which source wins when two documents disagree (policy: the operator's
 # agent-memory-and-context-poisoning doc). Decided by WHERE a file lives, never by what it claims:
 # a note that writes `authority: canonical` in its own frontmatter is still derived.
-#   canonical  this repo's docs/canonical/ (the PRDs), mounted at stack-docs/; changed only by
-#              operator-merged PRs
+#   canonical  the operator's source-of-truth folder(s), named by CANONICAL_PREFIXES: paths under
+#              the watch tree, comma-separated. By default the vault's notes/canonical/. The folder
+#              is the operator's alone: agent-facing containers should mount it read-only.
 #   ephemeral  the memory vault's inbox/ (unreviewed captures)
 #   derived    everything else (notes, memories, runbooks, other docs)
-CANONICAL_PREFIXES = ("stack-docs/canonical/",)
+DEFAULT_CANONICAL_PREFIXES = "memory-vault/notes/canonical/"
+
+
+def _folder_prefixes(raw: str) -> tuple[str, ...]:
+    """Comma-separated folders as source prefixes, each ending in one slash so `canonical/` never
+    matches `canonical-drafts/`. Blank entries are dropped."""
+    folders = (entry.strip().strip("/") for entry in raw.split(","))
+    return tuple(f"{folder}/" for folder in folders if folder)
+
+
+CANONICAL_PREFIXES = _folder_prefixes(os.environ.get("CANONICAL_PREFIXES", DEFAULT_CANONICAL_PREFIXES))
 # Never indexed: the vault's copies of agent homes (agents/hermes/: thousands of skill files,
 # scripts and configs, refreshed daily by the operator's vault backup). The agent reads its own
 # skills directly; indexing the copy would bury notes under machinery and spend hours embedding it.

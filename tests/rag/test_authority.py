@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # --- rag-ingestion: classification ---
 
 def test_docs_under_canonical_are_canonical():
-    meta = ingest._document_meta("stack-docs/canonical/index.md", "---\nstatus: current\n---\n# PRD")
+    meta = ingest._document_meta(ingest.CANONICAL_PREFIXES[0] + "index.md","---\nstatus: current\n---\n# PRD")
     assert meta["authority"] == "canonical"
     assert meta["status"] == "current"
 
@@ -121,7 +121,7 @@ def test_new_chunks_carry_the_metadata(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest, "WATCH_DIR", tmp_path)
     fake = _Recorder()
     monkeypatch.setattr(ingest.httpx, "Client", fake)
-    doc = tmp_path / "stack-docs" / "canonical" / "index.md"
+    doc = tmp_path / ingest.CANONICAL_PREFIXES[0] / "index.md"
     doc.parent.mkdir(parents=True)
     doc.write_text("---\nstatus: current\nlast_verified: 2026-11-12\n---\n# Ordo", encoding="utf-8")
 
@@ -153,12 +153,24 @@ def test_an_indexed_file_with_old_metadata_is_retagged_not_reembedded(tmp_path, 
 
 
 def test_the_watch_mounts_match_the_authority_prefixes():
-    """The prefixes only work if the vault and the repo docs are mounted where they say."""
+    """The prefixes only work if the vault is mounted where the default says, read-only."""
     plugin = (ROOT / "services" / "rag" / "plugin.yaml").read_text(encoding="utf-8")
     assert "/docs:/watch/stack-docs:ro" in plugin
     assert ":/watch/memory-vault:ro" in plugin
-    assert (ROOT / "docs" / "canonical").is_dir()
-    assert "stack-docs/canonical/" in ingest.CANONICAL_PREFIXES
+    assert ingest.DEFAULT_CANONICAL_PREFIXES.startswith("memory-vault/")
+    assert f"CANONICAL_PREFIXES: ${{RAG_CANONICAL_PREFIXES:-{ingest.DEFAULT_CANONICAL_PREFIXES}}}" in plugin
+
+
+def test_the_canonical_folders_come_from_configuration():
+    assert ingest._folder_prefixes("memory-vault/notes/Canon, stack-docs/specs/ ,,") == (
+        "memory-vault/notes/Canon/", "stack-docs/specs/")
+    assert ingest._folder_prefixes("") == ()
+
+
+def test_a_folder_that_only_starts_like_the_canonical_one_is_not_canonical(monkeypatch):
+    monkeypatch.setattr(ingest, "CANONICAL_PREFIXES", ingest._folder_prefixes("memory-vault/notes/canonical"))
+    assert ingest._document_meta("memory-vault/notes/canonical/prd.md", "# x")["authority"] == "canonical"
+    assert ingest._document_meta("memory-vault/notes/canonical-drafts/prd.md", "# x")["authority"] == "derived"
 
 
 # --- qdrant-rag MCP server: filter and ranking ---
