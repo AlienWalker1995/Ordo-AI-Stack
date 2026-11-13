@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -355,14 +355,15 @@ def _normalise_status(raw: str | None) -> str:
 
 
 def _valid_past_date(raw: str | None) -> str | None:
-    """`raw` when it is a YYYY-MM-DD date that is not in the future, otherwise None."""
+    """`raw` when it is a YYYY-MM-DD date that is not in the future, otherwise None. Tomorrow by
+    this container's clock still passes: it is already today's date east of the container's zone."""
     if not raw or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
         return None
     try:
         parsed = datetime.strptime(raw, "%Y-%m-%d").date()
     except ValueError:
         return None
-    return raw if parsed <= date.today() else None
+    return raw if parsed <= date.today() + timedelta(days=1) else None
 
 
 def _document_meta(source: str, text: str) -> dict:
@@ -606,23 +607,20 @@ def reconcile_index(state: dict[str, str], stale_meta: dict[str, str],
     return deleted
 
 
-def remove_gone_files(paths: list[Path], state: dict[str, str], stale_meta: dict[str, str],
-                      seen: dict[str, tuple[int, int]]) -> None:
-    """Handles watch events for files that were deleted or moved away. A path that is a file again
-    (an editor's save-by-replace) is left alone."""
+def an_indexed_file_is_gone(paths: list[Path], state: dict[str, str], stale_meta: dict[str, str]) -> bool:
+    """True when a delete or move event names an indexed file that is no longer on disk. A path that
+    is a file again (an editor's save-by-replace) does not count.
+
+    The event deletes nothing itself. It only makes the next reconcile run now instead of at its
+    interval, so every deletion goes through the reconcile's guards: a mount that drops out sends a
+    delete event for every file in it, and must not wipe them from the index."""
     for path in paths:
         if path.is_file() and _is_ingestable_name(path):
             continue
         source = _file_key(path)
-        if source not in state and source not in stale_meta:
-            continue
-        try:
-            _delete_source(source)
-        except Exception as exc:
-            logger.error("Could not delete %s after its file went away: %s (reconcile retries)", source, exc)
-            continue
-        _forget(source, state, stale_meta, seen)
-        logger.info("Deleted %s: its file is gone", source)
+        if source in state or source in stale_meta:
+            return True
+    return False
 
 
 def _heartbeat(stop_event: threading.Event) -> None:
@@ -695,9 +693,10 @@ def main() -> None:
                 queue.clear()
                 gone = list(removed)
                 removed.clear()
-            remove_gone_files(gone, state, stale_meta, seen)
+            reconcile_now = an_indexed_file_is_gone(gone, state, stale_meta)
             ingest_pending(pending, state, seen, backoff, stale_meta)
-            if last_reconcile is None or time.monotonic() - last_reconcile >= RECONCILE_INTERVAL_SEC:
+            if (reconcile_now or last_reconcile is None
+                    or time.monotonic() - last_reconcile >= RECONCILE_INTERVAL_SEC):
                 last_reconcile = time.monotonic()
                 try:
                     reconcile_index(state, stale_meta, seen)

@@ -134,25 +134,47 @@ def test_a_moved_file_is_deleted_under_its_old_path_and_queued_under_the_new(tmp
     handler = ingest._EventHandler(queue, ingest.threading.Lock(), removed)
 
     handler.on_moved(types.SimpleNamespace(is_directory=False, src_path=str(old), dest_path=str(new)))
-    state = {"notes/old.md": "1"}
-    ingest.remove_gone_files(list(removed), state, {}, {})
+    _write(tmp_path, "notes/keep.md")
+    state = {"notes/old.md": "1", "notes/new.md": "2", "notes/keep.md": "3"}
 
     assert queue == {new}
-    assert deletes.deleted == ["notes/old.md"] and state == {}
+    assert ingest.an_indexed_file_is_gone(list(removed), state, {})   # so the reconcile runs now
+    assert deletes.deleted == []                                      # the event deletes nothing itself
+    ingest.reconcile_index(state, {}, {})
+    assert deletes.deleted == ["notes/old.md"] and "notes/old.md" not in state
 
 
-def test_a_delete_event_removes_the_source_unless_the_file_is_back(tmp_path, deletes):
+def test_a_delete_event_asks_for_a_reconcile_unless_the_file_is_back(tmp_path, deletes):
     back = _write(tmp_path, "notes/back.md")
     gone = tmp_path / "notes" / "gone.md"
     state = {"notes/back.md": "1", "notes/gone.md": "2"}
     removed = set()
     handler = ingest._EventHandler(set(), ingest.threading.Lock(), removed)
 
-    for path in (back, gone):
-        handler.on_deleted(types.SimpleNamespace(is_directory=False, src_path=str(path)))
-    ingest.remove_gone_files(sorted(removed), state, {}, {})
+    handler.on_deleted(types.SimpleNamespace(is_directory=False, src_path=str(back)))
+    assert not ingest.an_indexed_file_is_gone(sorted(removed), state, {})   # saved by replace: still there
 
+    handler.on_deleted(types.SimpleNamespace(is_directory=False, src_path=str(gone)))
+    assert ingest.an_indexed_file_is_gone(sorted(removed), state, {})
+    ingest.reconcile_index(state, {}, {})
     assert deletes.deleted == ["notes/gone.md"] and list(state) == ["notes/back.md"]
+
+
+def test_delete_events_for_a_whole_vanished_mount_delete_nothing(tmp_path, deletes):
+    """A mount that drops out sends a delete event per file. Those events only ask for a reconcile,
+    and the reconcile keeps a root that has no files on disk."""
+    _write(tmp_path, "stack-docs/a.md")
+    state = {"stack-docs/a.md": "1", "memory-vault/notes/a.md": "2", "memory-vault/notes/b.md": "3"}
+    removed = set()
+    handler = ingest._EventHandler(set(), ingest.threading.Lock(), removed)
+    for name in ("a.md", "b.md"):
+        handler.on_deleted(types.SimpleNamespace(is_directory=False,
+                                                 src_path=str(tmp_path / "memory-vault" / "notes" / name)))
+
+    assert ingest.an_indexed_file_is_gone(sorted(removed), state, {})
+    ingest.reconcile_index(state, {}, {})
+
+    assert deletes.deleted == [] and len(state) == 3
 
 
 def test_reconcile_never_deletes_from_a_root_with_no_files_on_disk(tmp_path, deletes, caplog):

@@ -27,11 +27,12 @@ with a leading dot, not by adding ingester config.
 ## Deleted, moved and no-longer-ingested files
 
 The index follows the disk:
-- the watchdog handler deletes a source on a delete or move event (a move also ingests the new path);
 - a reconcile pass (`reconcile_index`) deletes every indexed source whose file is gone or that the
   rules no longer ingest (excluded prefix, hidden folder, unsupported type). It runs right after the
   first full pass at startup, then every `RECONCILE_INTERVAL_SEC` (default 600), because Docker Desktop
-  bind mounts may emit no delete events.
+  bind mounts may emit no delete events;
+- a delete or move event for an indexed file makes that pass run now (a move also ingests the new
+  path). The event deletes nothing itself, so there is one deletion path and the guards below cover it.
 
 Two guards stop a lost mount from wiping the index:
 - a top-level folder with no files on disk (mount not ready or evicted) is skipped with a warning;
