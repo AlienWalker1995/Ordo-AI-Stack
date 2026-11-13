@@ -34,8 +34,13 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 - [Orchestration Layer](component-orchestration-layer.md) – Multi-service workflow coordination (target architecture; implementation evolves with the repo).
 - [Dashboard UI](component-dashboard-ui.md) – Ops dashboard: Overview, Services, Models, Performance and Logs pages.
 - [Security & Trust Model](security-and-trust-model.md) – Threat model, auth tiers, SSRF, secret handling.
-- [Decision: the agent holds no Docker socket](decision-agent-docker-access.md) – Why the agent's socket goes, what replaces each use of it, and the order of work.
 - [Environment Variables Reference](appendix-env-vars.md) – All env vars, services, defaults.
 - [Rollback Procedures](appendix-rollback.md) – Per-component rollback playbook.
 - [Open WebUI](https://docs.openwebui.com/) – Day-to-day chat interface (`:8443` through the edge); not owned by this repo but wired into the stack via compose.
+
+## Architecture Decision Records
+
+One decision per record: status, context, decision, consequences, and the backlog cards that implement it. A decision that is replaced gets a new record, and the old one is marked `superseded`.
+
+- [ADR-0001: The agent holds no Docker socket](adr-0001-agent-holds-no-docker-socket.md) – The agent's Docker work moves to ops-controller; what replaces each use of the socket, and the four cards that get there.
 

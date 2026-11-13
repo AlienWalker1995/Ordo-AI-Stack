@@ -162,7 +162,7 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 | `WEBUI_AUTH` defaults to `False` | G4 | Open WebUI ships open; target default is `True` | Medium |
 | Per-tool restrictions unused | G2 | Per-consumer MCP scoping is enforced by LiteLLM virtual-key grants (`require_key_mcp_access_defined: true`); the manifest's `allowed_tools` (per-tool narrowing) is supported by the schema but set by no manifest yet | Low |
 | Container hardening not rendered | G5 | No service renders `cap_drop: [ALL]`, `read_only` or `tmpfs`; core services (model-gateway, dashboard, ops-controller, agent, rag-ingestion) carry no `no-new-privileges` or resource limits | Medium |
-| The agent holds a Docker socket | G5 | The `agent` service mounts `/var/run/docker.sock`, and its read-write code mirror can reach the render output. Removal is decided and sequenced in [Decision: the agent holds no Docker socket](decision-agent-docker-access.md) | High |
+| The agent holds a Docker socket | G5 | The `agent` service mounts `/var/run/docker.sock`, and its read-write code mirror can reach the render output. Removal is decided and sequenced in [ADR-0001: The agent holds no Docker socket](adr-0001-agent-holds-no-docker-socket.md) | High |
 | MCP server network isolation | G5 | Closed: the `mcp-*` services sit on `ordo-mcp-net` (`internal: true`), joined only by `model-gateway`, and publish no host port. External clients reach `/mcp` through Caddy `:443` with a LiteLLM key | Low |
 
 ## Network Assignment

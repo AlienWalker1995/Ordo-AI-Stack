@@ -5,7 +5,7 @@ shipped implementation mounts the raw `/var/run/docker.sock` directly into `serv
 with prompt-based guardrails in SOUL.md (the operator's "prompting, not tech" call), not the
 lease-enforcing proxy proposed here. Retained as the design record of the rejected alternative; do not
 read it as current architecture. The current decision is
-[the agent holds no Docker socket](../canonical/decision-agent-docker-access.md).
+[ADR-0001: The agent holds no Docker socket](../canonical/adr-0001-agent-holds-no-docker-socket.md).
 **Mandate:** operator, 2026-08-09 — "Hermes should have entire control over Docker, its
 device; I want it to execute similar tasks without intervention" AND (prior message) "crashes
 can never happen, this must be a resilient box."

@@ -17,7 +17,7 @@ proxy) is recorded in `docs/design/hermes-owns-docker.md`.
 Anything Hermes does over the raw socket is not audited by Ordo.
 
 Removing the socket is decided and sequenced in
-[Decision: the agent holds no Docker socket](../canonical/decision-agent-docker-access.md).
+[ADR-0001: The agent holds no Docker socket](../canonical/adr-0001-agent-holds-no-docker-socket.md).
 Until its last step lands, the socket stays mounted.
 The seeded `SOUL.md` and the `ops-router` tools tell Hermes to use the control
 plane; an operator's live `SOUL.md` may grant more. The live `SOUL.md` sits in
