@@ -330,7 +330,7 @@ def test_overview_carries_host_knowledge_and_the_apps_from_the_catalog(live):
 
 def test_overview_apps_include_a_homepage_labelled_container(live):
     labelled = [*HOST_CONTAINERS, {
-        "name": "jellyfin", "status": "running", "image": "jellyfin", "project": "nas-stack", "service": "jellyfin",
+        "name": "jellyfin", "status": "running", "image": "jellyfin", "project": "media-stack", "service": "jellyfin",
         "health": None, "status_text": "Up 4 days",
         "link": {"href": "http://media.example/", "name": "Jellyfin", "description": "Media server", "group": "Media"}}]
     with patch.object(routes_console, "_host_containers", new=AsyncMock(return_value=labelled)):

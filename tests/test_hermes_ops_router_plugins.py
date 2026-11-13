@@ -263,7 +263,7 @@ class ProjectClient:
 
     def list_projects(self):
         self.calls.append(("list",))
-        return {"projects": [{"project": "nas-stack", "containers": []}]}
+        return {"projects": [{"project": "media-stack", "containers": []}]}
 
     def project_containers(self, project):
         self.calls.append(("containers", project))
@@ -282,16 +282,16 @@ def test_project_containers_lists_every_managed_project_without_a_name(router, m
     client = ProjectClient()
     monkeypatch.setattr(router, "_get_client", lambda: client)
     assert json.loads(router._project_containers({}))["ok"] is True
-    assert json.loads(router._project_containers({"project": "nas-stack"}))["project"] == "nas-stack"
-    assert client.calls == [("list",), ("containers", "nas-stack")]
+    assert json.loads(router._project_containers({"project": "media-stack"}))["project"] == "media-stack"
+    assert client.calls == [("list",), ("containers", "media-stack")]
 
 
 def test_project_logs_forwards_the_tail(router, monkeypatch):
     client = ProjectClient()
     monkeypatch.setattr(router, "_get_client", lambda: client)
-    result = json.loads(router._project_logs({"project": "nas-stack", "name": "janitorr", "tail": 50}))
+    result = json.loads(router._project_logs({"project": "media-stack", "name": "janitorr", "tail": 50}))
     assert result["ok"] is True
-    assert client.calls == [("logs", "nas-stack", "janitorr", 50)]
+    assert client.calls == [("logs", "media-stack", "janitorr", 50)]
 
 
 def test_project_logs_clamps_the_tail_to_the_route_cap(router, monkeypatch):
@@ -299,8 +299,8 @@ def test_project_logs_clamps_the_tail_to_the_route_cap(router, monkeypatch):
     # instead of handing the model an error for "2000" (0 is the existing "use the default" value).
     client = ProjectClient()
     monkeypatch.setattr(router, "_get_client", lambda: client)
-    router._project_logs({"project": "nas-stack", "name": "janitorr", "tail": 2000})
-    router._project_logs({"project": "nas-stack", "name": "janitorr", "tail": -5})
+    router._project_logs({"project": "media-stack", "name": "janitorr", "tail": 2000})
+    router._project_logs({"project": "media-stack", "name": "janitorr", "tail": -5})
     assert [c[3] for c in client.calls if c[0] == "logs"] == [1000, 1]
 
 
@@ -308,7 +308,7 @@ def test_project_logs_clamps_the_tail_to_the_route_cap(router, monkeypatch):
 def test_restart_project_container_refuses_without_json_true(router, monkeypatch, confirm):
     client = ProjectClient()
     monkeypatch.setattr(router, "_get_client", lambda: client)
-    result = json.loads(router._restart_project_container({"project": "nas-stack", "name": "janitorr",
+    result = json.loads(router._restart_project_container({"project": "media-stack", "name": "janitorr",
                                                            "confirm": confirm}))
     assert result["ok"] is False and "confirm" in result["error"]
     assert client.calls == []
@@ -317,10 +317,10 @@ def test_restart_project_container_refuses_without_json_true(router, monkeypatch
 def test_restart_project_container_forwards_a_confirmed_restart(router, monkeypatch):
     client = ProjectClient()
     monkeypatch.setattr(router, "_get_client", lambda: client)
-    result = json.loads(router._restart_project_container({"project": "nas-stack", "name": "janitorr",
+    result = json.loads(router._restart_project_container({"project": "media-stack", "name": "janitorr",
                                                            "confirm": True}))
     assert result["ok"] is True
-    assert client.calls == [("restart", "nas-stack", "janitorr", True)]
+    assert client.calls == [("restart", "media-stack", "janitorr", True)]
 
 
 def test_the_project_tools_say_what_they_may_do(router):
@@ -351,12 +351,12 @@ def test_the_client_calls_the_project_routes(monkeypatch):
                         lambda method, path, **kw: seen.append((method, path, kw.get("json"), kw.get("params")))
                         or Response())
     client.list_projects()
-    client.project_containers("nas-stack")
-    client.project_logs("nas-stack", "janitorr", tail=20)
-    client.restart_project_container("nas-stack", "janitorr", confirm=True)
+    client.project_containers("media-stack")
+    client.project_logs("media-stack", "janitorr", tail=20)
+    client.restart_project_container("media-stack", "janitorr", confirm=True)
     assert seen == [
         ("GET", "/projects", None, None),
-        ("GET", "/projects/nas-stack/containers", None, None),
-        ("GET", "/projects/nas-stack/containers/janitorr/logs", None, {"tail": 20}),
-        ("POST", "/projects/nas-stack/containers/janitorr/restart", {"confirm": True}, None),
+        ("GET", "/projects/media-stack/containers", None, None),
+        ("GET", "/projects/media-stack/containers/janitorr/logs", None, {"tail": 20}),
+        ("POST", "/projects/media-stack/containers/janitorr/restart", {"confirm": True}, None),
     ]

@@ -39,7 +39,7 @@ Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` se
 3. **Open WebUI** → enable RAG for chat (vector DB is already pointed at Qdrant in compose).
 4. **Check status:** the dashboard Overview page (`GET /api/overview`, `knowledge.documents`); the collection name defaults to `documents` (`RAG_COLLECTION`).
 
-Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` — set as `site:` keys in `ordo.yaml` (tracked template: [`ordo.example.yaml`](../ordo.example.yaml)) and re-render. The dashboard **RAG** section shows Qdrant collection point count when the stack can reach Qdrant. See the PRD **WS6: RAG Pipeline** for the full picture.
+Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` — set as `site:` keys in `ordo.yaml` (tracked template: [`ordo.example.yaml`](../ordo.example.yaml)) and re-render. The dashboard **RAG** section shows Qdrant collection point count when the stack can reach Qdrant. See `services/rag/README.md` for the full picture.
 
 **Optional — [Agentic Design Patterns](https://github.com/Mathews-Tom/Agentic-Design-Patterns) (MIT book text):** clone or copy the `.md` tree into `data/rag-input/` (for example `git clone --depth 1 https://github.com/Mathews-Tom/Agentic-Design-Patterns.git data/rag-input/agentic-design-patterns`), then run the steps above so `rag-ingestion` can index it.
 
@@ -77,5 +77,4 @@ Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS
 - [Configuration](configuration.md) — environment variables and service setup
 - [Data](data.md) — data schemas, lifecycle, and persistence rules
 - [Hermes Agent](hermes-agent.md) — agent setup, Discord wiring, upgrade notes
-- [PRD index](canonical/index.md) — platform design and components
 - [MCP tools](../services/model-gateway/README.md): LiteLLM's `/mcp` endpoint aggregating the registered MCP servers (web search, ComfyUI, code and memory tools)

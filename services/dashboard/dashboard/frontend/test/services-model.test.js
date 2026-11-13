@@ -268,8 +268,8 @@ describe('statusCounts', () => {
 describe('projectCounts', () => {
   it("counts each project's top-level rows and their failures, Ordo's project first", () => {
     const rows = [
-      { id: 'a', project: 'nas-stack', verdict: 'up', parent: null },
-      { id: 'b', project: 'nas-stack', verdict: 'failed', parent: null },
+      { id: 'a', project: 'media-stack', verdict: 'up', parent: null },
+      { id: 'b', project: 'media-stack', verdict: 'failed', parent: null },
       { id: 'g', project: 'ordo', verdict: 'up', group_verdict: 'unhealthy', parent: null },
       { id: 'g1', project: 'ordo', verdict: 'unhealthy', parent: 'g' },
       { id: 'c', project: 'adguard', verdict: 'up', parent: null },
@@ -278,7 +278,7 @@ describe('projectCounts', () => {
     expect(projectCounts(rows)).toEqual([
       { project: 'ordo', count: 1, failing: 1 },
       { project: 'adguard', count: 1, failing: 0 },
-      { project: 'nas-stack', count: 2, failing: 1 },
+      { project: 'media-stack', count: 2, failing: 1 },
     ])
   })
 })

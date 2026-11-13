@@ -107,7 +107,7 @@ def test_enable_and_disable_edit_an_explicit_plugins_list(stack, tmp_path):
     assert "edge" not in Source.load(stack / "ordo.yaml").plugins
 
 
-@pytest.mark.parametrize("flag, value", [("--hostname", "https://ordo.ts.net"), ("--emails", "not-an-email"),
+@pytest.mark.parametrize("flag, value", [("--hostname", "https://host.example.ts.net"), ("--emails", "not-an-email"),
                                          ("--client-id", "")])
 def test_invalid_input_writes_nothing(stack, flag, value):
     before = {p.name: p.read_text(encoding="utf-8") for p in stack.iterdir() if p.is_file()}

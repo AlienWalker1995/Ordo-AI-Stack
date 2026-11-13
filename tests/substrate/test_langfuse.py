@@ -371,7 +371,7 @@ def test_hermes_boot_hook_installs_upstreams_langfuse_catalog_plugin():
 def test_app_healthchecks_probe_the_bound_address_not_localhost():
     """Both Langfuse app services bind ONLY their container's eth0 address, so a localhost probe
     can never connect and the service sits permanently unhealthy while serving every peer fine
-    (observed live 2026-09-14: `172.25.0.39:3000 LISTEN`, localhost refused)."""
+    (observed live 2026-09-14: LISTEN on the eth0 address, localhost refused)."""
     svcs = _compose(render(_src(), CATALOG, REGISTRY))
     for name in ("langfuse-web", "langfuse-worker"):
         probe = " ".join(svcs[name]["healthcheck"]["test"])

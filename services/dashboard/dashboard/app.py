@@ -120,7 +120,7 @@ async def auth_middleware(request: Request, call_next):
     if not path.startswith("/api/"):
         return await call_next(request)
     # /api/throughput/record and /api/work/events: require THROUGHPUT_RECORD_TOKEN when set
-    # (model-gateway internal; PRD §3.E)
+    # (model-gateway internal)
     if path in ("/api/throughput/record", "/api/work/events"):
         token = read_secret("THROUGHPUT_RECORD_TOKEN")
         if token and not hmac.compare_digest(request.headers.get("X-Throughput-Token", ""), token):
