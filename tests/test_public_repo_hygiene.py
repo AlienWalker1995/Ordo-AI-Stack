@@ -48,7 +48,7 @@ def test_identifying_shapes_are_caught(text):
     "/home/hermes/.hermes and /home/me/dev",
     "discord-123456789012345678",
     "192.168.0.0/16, 172.18.0.5, 10.9.0.7",
-    "100.64.0.1 and 100.64.0.0/10",
+    "100.64.0.1 and 100.64.0.0/10, resolver 100.100.100.100",
     "react@18.3.1 and image@sha256:abc",
 ])
 def test_placeholders_pass(text):

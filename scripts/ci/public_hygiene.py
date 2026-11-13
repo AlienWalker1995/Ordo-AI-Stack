@@ -54,9 +54,10 @@ CHAT_ID = re.compile(r"(?<!\d)\d{17,20}(?!\d)")
 TAILNET_ID = re.compile(r"\btail[0-9a-f]{6,}\b")
 # A host address on a home LAN. Docker bridge ranges and the documentation CIDRs are not identifying.
 LAN_HOST = re.compile(r"(?<![\d.])192\.168\.\d{1,3}\.\d{1,3}(?![\d/])")
-# A tailnet host address. 100.64.0.x is the placeholder range the docs and fixtures use.
+# A tailnet host address. 100.64.0.x is the placeholder range the docs and fixtures use, and
+# 100.100.100.100 is the tailnet provider's own well-known resolver, the same on every tailnet.
 TAILNET_HOST = re.compile(r"(?<![\d.])100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}(?![\d/])")
-TAILNET_PLACEHOLDER = re.compile(r"^100\.64\.0\.\d{1,3}$")
+TAILNET_PLACEHOLDER = re.compile(r"^(100\.64\.0\.\d{1,3}|100\.100\.100\.100)$")
 
 SECRET_SHAPED_FILE = re.compile(
     r"(?i)(\.(sops|age|pem|key|p12|pfx)$|(^|/)\.env$|(^|/)\.env\.(?!example$)[a-z0-9_-]+$)")
