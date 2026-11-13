@@ -12,7 +12,9 @@ Authority: rag-ingestion stores each chunk's `authority` (canonical / derived / 
 by where the file lives), `status` and `last_verified`. A default search leaves out history
 (status archived or superseded) and the unreviewed inbox (ephemeral), ranks canonical docs (the
 PRDs) above other matches of similar similarity, and returns those fields with every result so the
-agent can tell a source of truth from a note that may be stale.
+agent can tell a source of truth from a note that may be stale. Only a canonical chunk reports
+`last_verified`; for any other chunk the date is the note's own unverified claim and is returned
+as `claimed_last_verified`.
 
 Why embed via inference-engine-embed directly (not model-gateway/litellm): litellm's
 /v1/embeddings route currently 500s for the local embed model; the raw
@@ -33,44 +35,61 @@ EMBED_QUERY_PREFIX = os.environ.get("EMBED_QUERY_PREFIX", "")
 
 # Status values that mark a document as history, left out unless the caller asks for them.
 HISTORY_STATUSES = ["archived", "superseded"]
-# Added to a canonical chunk's similarity before ranking: enough to put the PRD first among close
-# matches, not enough to lift an unrelated one over a clearly better note.
+# Added to a canonical chunk's similarity before ranking, to break near-ties in favour of the PRD.
 CANONICAL_BOOST = 0.05
+# The boost applies only to a canonical hit whose own score is within this of the best candidate's
+# score. It is smaller than the boost, so a canonical hit inside the margin can pass the best note
+# by a hair, and one outside it cannot: a weak match is never promoted for being canonical.
+CANONICAL_NEAR_TIE_MARGIN = 0.03
 # Candidates fetched per result returned, so the boost can reorder beyond the plain top `limit`.
 CANDIDATES_PER_RESULT = 3
 
 mcp = FastMCP("qdrant-rag", host="0.0.0.0", port=9000, stateless_http=True)
 
 
-def search_filter(include_history: bool) -> dict | None:
+def search_filter(include_history: bool, folders: list[str] | None = None) -> dict | None:
     """The Qdrant filter of a search. Chunks indexed before metadata existed carry no `status` or
-    `authority` and are kept: a must_not on a missing field excludes nothing."""
-    if include_history:
-        return None
-    return {"must_not": [
-        {"key": "status", "match": {"any": HISTORY_STATUSES}},
-        {"key": "authority", "match": {"value": "ephemeral"}},
-    ]}
+    `authority` and are kept: a must_not on a missing field excludes nothing. `folders` keeps only
+    documents under one of those folders (as stored by rag-ingestion, for example
+    `memory-vault/notes/work`); a chunk with no stored folders is then left out."""
+    conditions: dict = {}
+    if not include_history:
+        conditions["must_not"] = [
+            {"key": "status", "match": {"any": HISTORY_STATUSES}},
+            {"key": "authority", "match": {"value": "ephemeral"}},
+        ]
+    wanted = [folder.strip().strip("/") for folder in folders or [] if folder and folder.strip().strip("/")]
+    if wanted:
+        conditions["must"] = [{"key": "folders", "match": {"any": wanted}}]
+    return conditions or None
 
 
 def rank(hits: list[dict], limit: int) -> list[dict]:
     """The `limit` best hits after the canonical boost, as tool results with their provenance."""
+    best_score = max((hit.get("score", 0.0) for hit in hits), default=0.0)
+
     def ranked_score(hit: dict) -> float:
         payload = hit.get("payload") or {}
-        return hit.get("score", 0.0) + (CANONICAL_BOOST if payload.get("authority") == "canonical" else 0.0)
+        score = hit.get("score", 0.0)
+        near_best = score >= best_score - CANONICAL_NEAR_TIE_MARGIN
+        return score + (CANONICAL_BOOST if payload.get("authority") == "canonical" and near_best else 0.0)
 
     results = []
     for hit in sorted(hits, key=ranked_score, reverse=True)[:limit]:
         payload = hit.get("payload") or {}
-        results.append({
+        authority = payload.get("authority", "unknown")
+        result = {
             "score": round(hit.get("score", 0.0), 4),
             "source": payload.get("source"),
-            "authority": payload.get("authority", "unknown"),
+            "authority": authority,
             "status": payload.get("status", "unknown"),
-            "last_verified": payload.get("last_verified"),
             "chunk_index": payload.get("chunk_index"),
             "content": payload.get("content", ""),
-        })
+        }
+        # Only a canonical document's date is reviewed; any other note's date is its own claim.
+        date_key = "last_verified" if authority == "canonical" else "claimed_last_verified"
+        result[date_key] = payload.get("last_verified")
+        results.append(result)
     return results
 
 
@@ -87,7 +106,8 @@ def _embed(text: str) -> list[float]:
 
 
 @mcp.tool()
-def qdrant_search(query: str, limit: int = 5, include_history: bool = False) -> dict[str, Any]:
+def qdrant_search(query: str, limit: int = 5, include_history: bool = False,
+                  folders: list[str] | None = None) -> dict[str, Any]:
     """Semantic search over indexed documents in Qdrant.
 
     Use this to retrieve relevant indexed knowledge (docs, code, notes) instead
@@ -95,8 +115,8 @@ def qdrant_search(query: str, limit: int = 5, include_history: bool = False) -> 
     with their source file, similarity score and provenance:
       - authority "canonical": the operator's source-of-truth docs (the PRDs). When a canonical
         result and another result disagree, the canonical one wins.
-      - authority "derived": notes and other docs. They may be out of date: check last_verified,
-        and verify against the code or live state before acting on them.
+      - authority "derived": notes and other docs. They may be out of date: check claimed_last_verified
+        (the note's own unverified claim), and verify against the code or live state before acting on them.
     Archived and superseded documents and the unreviewed inbox are left out unless
     include_history is true (use it only to research what used to be true).
 
@@ -104,6 +124,9 @@ def qdrant_search(query: str, limit: int = 5, include_history: bool = False) -> 
         query: Natural-language search query.
         limit: Max number of chunks to return (default 5).
         include_history: Also return archived, superseded and inbox documents (default false).
+        folders: Search only under these folders, for example ["memory-vault/notes/work"] (a result's
+            `source` shows the folder it came from). Leave empty to search everything: use a scope when
+            the question belongs to one area and other areas would crowd the answer out.
     """
     q = (query or "").strip()
     if not q:
@@ -118,7 +141,7 @@ def qdrant_search(query: str, limit: int = 5, include_history: bool = False) -> 
             r = client.post(
                 f"{QDRANT_URL}/collections/{COLLECTION}/points/search",
                 json={"vector": vector, "limit": limit * CANDIDATES_PER_RESULT, "with_payload": True,
-                      "filter": search_filter(include_history)},
+                      "filter": search_filter(include_history, folders)},
             )
             if r.status_code == 404:
                 return {"error": f"collection '{COLLECTION}' does not exist yet — nothing has been ingested",

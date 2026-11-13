@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -46,6 +47,20 @@ WATCH_DIR = Path(os.environ.get("WATCH_DIR", "/watch")).resolve()
 CHUNK_SIZE = max(1, int(os.environ.get("CHUNK_SIZE", "400")))
 CHUNK_OVERLAP = max(0, int(os.environ.get("CHUNK_OVERLAP", "50")))
 SCAN_INTERVAL_SEC = max(5, int(os.environ.get("SCAN_INTERVAL_SEC", "120")))
+# How often the index is reconciled with the disk (indexed sources whose file is gone, or that the
+# rules no longer ingest, are deleted). Docker Desktop bind mounts may emit no delete events, so
+# this pass is what removes orphans there. The first one runs right after the first full pass.
+RECONCILE_INTERVAL_SEC = max(60, int(os.environ.get("RECONCILE_INTERVAL_SEC", "600")))
+# A pass that would delete more than this fraction of the indexed sources is refused: it looks like
+# a mount that lost files, not an operator deleting half the notes.
+RECONCILE_MAX_DELETE_FRACTION = float(os.environ.get("RECONCILE_MAX_DELETE_FRACTION", "0.5"))
+# The fraction guard only applies once the index holds at least this many sources: on a one- or
+# two-file index a refused pass could never shed the last files (two orphans of two indexed
+# sources are already "over half"), so small deployments would need RECONCILE_ALLOW_MASS_DELETE
+# just to reconcile normally. Below three sources the worst case sheds a handful of chunks, which
+# a rescan rebuilds if the call was wrong.
+RECONCILE_GUARD_MIN_INDEX = 3
+RECONCILE_ALLOW_MASS_DELETE = os.environ.get("RECONCILE_ALLOW_MASS_DELETE", "").strip().lower() in {"1", "true", "yes"}
 # Chunks per embedding request. The engine computes about 3.4 chunks a second and keeps computing a
 # request after its client gives up, so one request must stay far inside EMBED_TIMEOUT_SECONDS.
 EMBED_BATCH_SIZE = max(1, int(os.environ.get("EMBED_BATCH_SIZE", "16")))
@@ -65,20 +80,48 @@ HEARTBEAT_PATH = Path("/tmp/rag-ingestion.heartbeat")
 # Authority: which source wins when two documents disagree (policy: the operator's
 # agent-memory-and-context-poisoning doc). Decided by WHERE a file lives, never by what it claims:
 # a note that writes `authority: canonical` in its own frontmatter is still derived.
-#   canonical  this repo's docs/canonical/ (the PRDs), mounted at stack-docs/; changed only by
-#              operator-merged PRs
+#   canonical  the operator's source-of-truth folder(s), named by CANONICAL_PREFIXES: paths under
+#              the watch tree, comma-separated. By default the vault's notes/Ordo/Canonical/, where
+#              the canonical docs live and nowhere else. Matching is a case-sensitive startswith, so
+#              this must spell the real folder exactly: a drift matches nothing and every document
+#              stays derived. The folder is the operator's alone: agent-facing containers should
+#              mount it read-only.
 #   ephemeral  the memory vault's inbox/ (unreviewed captures)
 #   derived    everything else (notes, memories, runbooks, other docs)
-CANONICAL_PREFIXES = ("stack-docs/canonical/",)
+DEFAULT_CANONICAL_PREFIXES = "memory-vault/notes/Ordo/Canonical/"
+
+
+def _folder_prefixes(raw: str) -> tuple[str, ...]:
+    """Comma-separated folders as source prefixes, each ending in one slash so `canonical/` never
+    matches `canonical-drafts/`. Blank entries are dropped."""
+    folders = (entry.strip().strip("/") for entry in raw.split(","))
+    return tuple(f"{folder}/" for folder in folders if folder)
+
+
+CANONICAL_PREFIXES = _folder_prefixes(os.environ.get("CANONICAL_PREFIXES", DEFAULT_CANONICAL_PREFIXES))
 # Never indexed: the vault's copies of agent homes (agents/hermes/: thousands of skill files,
 # scripts and configs, refreshed daily by the operator's vault backup). The agent reads its own
 # skills directly; indexing the copy would bury notes under machinery and spend hours embedding it.
 EXCLUDED_PREFIXES = ("memory-vault/agents/",)
 EPHEMERAL_PREFIXES = ("memory-vault/inbox/",)
+# History by location: every document under these folders is stored as `archived`, whatever its
+# frontmatter says, so old plans, logs and archives stay searchable on request (include_history)
+# without one line of frontmatter per file. Comma-separated, like CANONICAL_PREFIXES.
+HISTORY_PREFIXES = _folder_prefixes(os.environ.get("HISTORY_PREFIXES", "memory-vault/archive/"))
+# How many ancestor folders of a document are stored for folder-scoped search.
+FOLDER_DEPTH = 4
 # Bumped when the metadata rules change: points stored under an older version get their payload
-# rewritten in place at the next scan (no re-embedding).
-META_VERSION = 1
+# rewritten in place at the next scan (no re-embedding). 2: status is normalised and last_verified
+# validated, so a stored "archived # old" or a future date is corrected. 3: history folders, and
+# each chunk's ancestor folders for folder-scoped search. 4: the shipped canonical default pointed
+# at a folder the vault does not have, so the real canonical folder's chunks were stored as
+# derived; re-tagging gives them authority: canonical without re-embedding.
+META_VERSION = 4
 FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
+INLINE_COMMENT_RE = re.compile(r"(^|\s)#.*$")
+# Every status a document can have in the index. Synonyms map onto these; anything else is current.
+STATUS_SYNONYMS = {"deprecated": "archived", "obsolete": "archived"}
+KNOWN_STATUSES = {"current", "superseded", "archived"}
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -306,9 +349,19 @@ def _delete_source(source: str) -> None:
         _delete_points(client, {"must": [_source_condition(source)]})
 
 
+def _scalar(value: str) -> str:
+    """A frontmatter value without its quotes or its trailing YAML comment (` # ...`)."""
+    value = value.strip()
+    if value[:1] in ("'", '"'):
+        closing = value.find(value[0], 1)
+        if closing > 0:
+            return value[1:closing]
+    return INLINE_COMMENT_RE.sub("", value).strip().strip("'\"")
+
+
 def _frontmatter(text: str) -> dict[str, str]:
-    """The flat `key: value` lines of a leading YAML frontmatter block, lowercased keys, quotes
-    stripped. Nested values and lists are ignored: only scalar fields are read from it."""
+    """The flat `key: value` lines of a leading YAML frontmatter block, lowercased keys, quotes and
+    inline comments stripped. Nested values and lists are ignored: only scalar fields are read."""
     match = FRONTMATTER_RE.match(text)
     if not match:
         return {}
@@ -317,14 +370,41 @@ def _frontmatter(text: str) -> dict[str, str]:
         if not line or line[0].isspace() or ":" not in line:
             continue
         key, _, value = line.partition(":")
-        value = value.strip().strip("'\"")
+        value = _scalar(value)
         if value:
             fields[key.strip().lower()] = value
     return fields
 
 
+def _normalise_status(raw: str | None) -> str:
+    """current, superseded or archived: the only values the search filter understands."""
+    status = (raw or "").strip().lower()
+    status = STATUS_SYNONYMS.get(status, status)
+    return status if status in KNOWN_STATUSES else "current"
+
+
+def _valid_past_date(raw: str | None) -> str | None:
+    """`raw` when it is a YYYY-MM-DD date that is not in the future, otherwise None. Tomorrow by
+    this container's clock still passes: it is already today's date east of the container's zone."""
+    if not raw or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        return None
+    try:
+        parsed = datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return raw if parsed <= date.today() + timedelta(days=1) else None
+
+
+def _ancestor_folders(source: str) -> list[str]:
+    """The folders `source` sits in, outermost first, at most FOLDER_DEPTH of them:
+    `vault/notes/work/a.md` gives `vault`, `vault/notes`, `vault/notes/work`. A search scoped to
+    any of them finds the document."""
+    parts = source.split("/")[:-1][:FOLDER_DEPTH]
+    return ["/".join(parts[:depth]) for depth in range(1, len(parts) + 1)]
+
+
 def _document_meta(source: str, text: str) -> dict:
-    """The authority, status and last-verified date stored with every chunk of `source`."""
+    """The authority, status, last-verified date and folders stored with every chunk of `source`."""
     if source.startswith(CANONICAL_PREFIXES):
         authority = "canonical"
     elif source.startswith(EPHEMERAL_PREFIXES):
@@ -332,10 +412,15 @@ def _document_meta(source: str, text: str) -> dict:
     else:
         authority = "derived"
     fields = _frontmatter(text) if Path(source).suffix.lower() in {".md", ".markdown"} else {}
+    last_verified = _valid_past_date(fields.get("last_verified")) or _valid_past_date(fields.get("modified"))
+    status = _normalise_status(fields.get("status"))
+    if status == "current" and source.startswith(HISTORY_PREFIXES):
+        status = "archived"   # a history folder: where the file lives decides, not what it claims
     return {
         "authority": authority,
-        "status": fields.get("status", "current").lower(),
-        "last_verified": fields.get("last_verified") or fields.get("modified") or None,
+        "status": status,
+        "last_verified": last_verified,
+        "folders": _ancestor_folders(source),
         "meta_version": META_VERSION,
     }
 
@@ -417,14 +502,17 @@ def _iter_supported_files() -> list[Path]:
     return sorted(found)
 
 
+def _is_ingestable_name(path: Path) -> bool:
+    """True when the rules allow `path` into the index, judged by its name alone."""
+    return path.suffix.lower() in SUPPORTED_EXTENSIONS and not _is_hidden(path) and not _is_excluded(_file_key(path))
+
+
 def ingest_path(path: Path, state: dict[str, str], stale_meta: dict[str, str] | None = None) -> bool:
     """Index `path` if its content changed. A file whose content is already indexed but whose stored
     metadata is out of date (listed in `stale_meta`) gets its metadata rewritten, not re-embedded."""
-    if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS or _is_hidden(path):
+    if not path.is_file() or not _is_ingestable_name(path):  # watch events still arrive for excluded folders
         return False
     source = _file_key(path)
-    if _is_excluded(source):          # watch events still arrive for excluded folders
-        return False
     digest = _sha256(path)
     if state.get(source) == digest:
         return False
@@ -509,6 +597,77 @@ def ingest_pending(paths: list[Path], state: dict[str, str], seen: dict[str, tup
             seen[source] = signature
 
 
+def _source_root(source: str) -> str:
+    """The top folder of a source (a mount under the watch tree), or "." for a top-level file."""
+    return source.split("/", 1)[0] if "/" in source else "."
+
+
+def _drop_unverifiable_roots(orphans: list[str], wanted: set[str]) -> list[str]:
+    """The orphans under a root that still has files on disk. A subfolder root with no files left
+    is a mount that is not ready or was evicted: nothing in it can be called deleted. The watch
+    root itself ("." — loose top-level files) always exists: main() creates it before anything is
+    scanned, so a gone loose file really is gone."""
+    present_roots = {_source_root(source) for source in wanted} | {"."}
+    kept = [source for source in orphans if _source_root(source) in present_roots]
+    for root in sorted({_source_root(source) for source in orphans} - present_roots):
+        logger.warning("Reconcile skipped root %s: no files on disk (mount not ready?), its indexed "
+                       "sources are kept", root)
+    return kept
+
+
+def _forget(source: str, state: dict[str, str], stale_meta: dict[str, str],
+            seen: dict[str, tuple[int, int]]) -> None:
+    state.pop(source, None)
+    stale_meta.pop(source, None)
+    seen.pop(source, None)
+
+
+def reconcile_index(state: dict[str, str], stale_meta: dict[str, str],
+                    seen: dict[str, tuple[int, int]]) -> int:
+    """Deletes every indexed source whose file is gone or that the rules no longer ingest (excluded
+    prefix, hidden folder, unsupported type). Returns how many sources were deleted. A root with no
+    files on disk is skipped, and a pass that would delete too large a share of the index is refused."""
+    wanted = {_file_key(path) for path in _iter_supported_files()}
+    indexed = state.keys() | stale_meta.keys()
+    orphans = _drop_unverifiable_roots(sorted(indexed - wanted), wanted)
+    if not orphans:
+        return 0
+    if len(indexed) >= RECONCILE_GUARD_MIN_INDEX \
+            and len(orphans) > RECONCILE_MAX_DELETE_FRACTION * len(indexed) \
+            and not RECONCILE_ALLOW_MASS_DELETE:
+        logger.error("Reconcile REFUSED: it would delete %d of %d indexed sources (over %.0f%%). Set "
+                     "RECONCILE_ALLOW_MASS_DELETE=1 if the files really are gone.",
+                     len(orphans), len(indexed), RECONCILE_MAX_DELETE_FRACTION * 100)
+        return 0
+    deleted = 0
+    for source in orphans:
+        try:
+            _delete_source(source)
+        except Exception as exc:
+            logger.error("Reconcile could not delete %s: %s (retried next pass)", source, exc)
+            continue
+        _forget(source, state, stale_meta, seen)
+        deleted += 1
+    logger.info("Reconcile deleted %d of %d indexed sources", deleted, len(indexed))
+    return deleted
+
+
+def an_indexed_file_is_gone(paths: list[Path], state: dict[str, str], stale_meta: dict[str, str]) -> bool:
+    """True when a delete or move event names an indexed file that is no longer on disk. A path that
+    is a file again (an editor's save-by-replace) does not count.
+
+    The event deletes nothing itself. It only makes the next reconcile run now instead of at its
+    interval, so every deletion goes through the reconcile's guards: a mount that drops out sends a
+    delete event for every file in it, and must not wipe them from the index."""
+    for path in paths:
+        if path.is_file() and _is_ingestable_name(path):
+            continue
+        source = _file_key(path)
+        if source in state or source in stale_meta:
+            return True
+    return False
+
+
 def _heartbeat(stop_event: threading.Event) -> None:
     while not stop_event.is_set():
         HEARTBEAT_PATH.write_text(str(int(time.time())), encoding="utf-8")
@@ -516,9 +675,10 @@ def _heartbeat(stop_event: threading.Event) -> None:
 
 
 class _EventHandler(FileSystemEventHandler):
-    def __init__(self, queue: set[Path], lock: threading.Lock) -> None:
+    def __init__(self, queue: set[Path], lock: threading.Lock, removed: set[Path] | None = None) -> None:
         self._queue = queue
         self._lock = lock
+        self._removed = removed if removed is not None else set()
 
     def on_created(self, event):  # type: ignore[override]
         if getattr(event, "is_directory", False):
@@ -531,6 +691,19 @@ class _EventHandler(FileSystemEventHandler):
             return
         with self._lock:
             self._queue.add(Path(event.src_path))
+
+    def on_deleted(self, event):  # type: ignore[override]
+        if getattr(event, "is_directory", False):
+            return  # a deleted folder's files are removed by the next reconcile
+        with self._lock:
+            self._removed.add(Path(event.src_path))
+
+    def on_moved(self, event):  # type: ignore[override]
+        if getattr(event, "is_directory", False):
+            return  # a moved folder is picked up by the next rescan and reconcile
+        with self._lock:
+            self._removed.add(Path(event.src_path))
+            self._queue.add(Path(event.dest_path))
 
 
 def main() -> None:
@@ -546,11 +719,13 @@ def main() -> None:
     heartbeat.start()
 
     queue: set[Path] = set(_iter_supported_files())
+    removed: set[Path] = set()
     queue_lock = threading.Lock()
+    last_reconcile: float | None = None
     observer = None
     if Observer is not None:
         observer = Observer()
-        observer.schedule(_EventHandler(queue, queue_lock), str(WATCH_DIR), recursive=True)
+        observer.schedule(_EventHandler(queue, queue_lock, removed), str(WATCH_DIR), recursive=True)
         observer.start()
 
     logger.info("Watching %s for RAG ingestion into collection %s", WATCH_DIR, QDRANT_COLLECTION)
@@ -561,7 +736,17 @@ def main() -> None:
                     queue.update(_iter_supported_files())
                 pending = list(queue)
                 queue.clear()
+                gone = list(removed)
+                removed.clear()
+            reconcile_now = an_indexed_file_is_gone(gone, state, stale_meta)
             ingest_pending(pending, state, seen, backoff, stale_meta)
+            if (reconcile_now or last_reconcile is None
+                    or time.monotonic() - last_reconcile >= RECONCILE_INTERVAL_SEC):
+                last_reconcile = time.monotonic()
+                try:
+                    reconcile_index(state, stale_meta, seen)
+                except Exception:
+                    logger.exception("Reconcile failed; it runs again next interval")
             time.sleep(SCAN_INTERVAL_SEC)
     finally:
         stop_event.set()
