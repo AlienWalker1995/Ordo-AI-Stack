@@ -217,7 +217,7 @@ dashboard iframe expects that prefix).
 
 | Service | Host port | Notes |
 |---------|-----------|-------|
-| caddy | `${CADDY_BIND}:443`, `:8443`–`:8450` | The only host-published ports in the stack (seven total: the `:443` front door plus one per UI service; the `:8443`–`:8450` range skips `:8445` and `:8448`). Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
+| caddy | `${CADDY_BIND}:443`, `:8443`–`:8450` | The only host-published ports in the stack (seven total: the `:443` front door plus one per UI service; the `:8443`–`:8450` range skips `:8445` and `:8448`). Bound to the operator's `CADDY_BIND`: a tailnet address, or `0.0.0.0` for LAN reachability on a network with no forwarded ports (see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
 | oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`site: SSO_ALLOWED_EMAILS`); one domain-scoped session covers every Caddy port except Hermes's `:8447` |
 | open-webui | — | Reached at `https://<tailnet>:8443/` (its own port, served at its compiled root); needs inference-engine-gpu, model-gateway, qdrant |
 | dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs ops-controller |
@@ -278,7 +278,7 @@ ordo-ai-stack/
 │   ├── ops-controller/  # audit.log
 │   ├── qdrant/          # Vector DB storage
 │   └── rag-input/       # Drop documents here
-├── secrets/             # README plus a tracked SOPS-encrypted .env.sops; the operator's store is a private repo or Infisical
+├── secrets/             # README only; the operator's store is a private repo or Infisical
 ├── ordo.example.yaml    # Tracked template; copy to ordo.yaml and edit
 ├── ordo.yaml            # Operator-real source (gitignored)
 ├── out/                 # `ordo render` output: docker-compose.yml, .env, secrets.env (never hand-edited)

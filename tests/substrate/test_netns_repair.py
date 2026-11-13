@@ -72,10 +72,10 @@ def _repair(backend, managed=(), budget=None):
 
 def test_own_members_are_recreated_and_managed_members_restarted():
     backend = _Scripted({"ordo": [_row()],
-                         "nas-stack": [_row(service="qbittorrent", name="qbittorrent", owner="gluetun")]})
-    assert _repair(backend, ["nas-stack"]).sweep() == ["ordo/ordo-tailnet-dash-1", "nas-stack/qbittorrent"]
+                         "media-stack": [_row(service="qbittorrent", name="qbittorrent", owner="gluetun")]})
+    assert _repair(backend, ["media-stack"]).sweep() == ["ordo/ordo-tailnet-dash-1", "media-stack/qbittorrent"]
     assert backend.recreated == ["tailnet-dash"]
-    assert backend.foreign_restarted == [("nas-stack", "qbittorrent")]
+    assert backend.foreign_restarted == [("media-stack", "qbittorrent")]
 
 
 def test_an_owner_that_is_down_leaves_the_member_counted_as_an_orphan():
@@ -104,12 +104,12 @@ def test_a_lifecycle_error_from_foreign_restart_is_counted_and_the_sweep_goes_on
                     "docker start 'qbittorrent' failed: Error response from daemon: cannot join "
                     "network namespace of a non running container")
 
-    backend = LifecycleFail({"nas-stack": [_row(service="qbittorrent", name="qbittorrent", owner="gluetun"),
+    backend = LifecycleFail({"media-stack": [_row(service="qbittorrent", name="qbittorrent", owner="gluetun"),
                                            _row(service="prowlarr", name="prowlarr", owner="gluetun")]})
-    repair = _repair(backend, ["nas-stack"])
-    assert repair.sweep() == ["nas-stack/prowlarr"]  # the second orphan is still reached
+    repair = _repair(backend, ["media-stack"])
+    assert repair.sweep() == ["media-stack/prowlarr"]  # the second orphan is still reached
     assert repair.stats() == {"repaired": 1, "failed": 1, "orphans": 1}  # the failed one stays down
-    assert backend.foreign_restarted == [("nas-stack", "qbittorrent"), ("nas-stack", "prowlarr")]
+    assert backend.foreign_restarted == [("media-stack", "qbittorrent"), ("media-stack", "prowlarr")]
 
 
 def test_the_budget_stops_a_member_that_keeps_falling_over():
@@ -133,7 +133,7 @@ def test_an_unreadable_managed_project_does_not_stop_ordos_own_sweep():
             return super().netns_rows(project)
 
     backend = Broken({"ordo": [_row()]})
-    assert _repair(backend, ["nas-stack"]).sweep() == ["ordo/ordo-tailnet-dash-1"]
+    assert _repair(backend, ["media-stack"]).sweep() == ["ordo/ordo-tailnet-dash-1"]
 
 
 def test_inspect_documents_parse_into_rows():
@@ -159,10 +159,10 @@ def test_a_managed_project_in_the_fake_is_parsed_like_the_real_one():
               "HostConfig": {"NetworkMode": "container:aaa", "RestartPolicy": {"Name": "unless-stopped"}},
               "Config": {"Labels": {"com.docker.compose.service": "prowlarr"}}}
     owner = {"Id": "aaa", "Name": "/gluetun", "State": {"Status": "running"}, "HostConfig": {}, "Config": {}}
-    backend.foreign["nas-stack"] = {"prowlarr": ({"name": "prowlarr"}, member), "gluetun": ({"name": "gluetun"}, owner)}
-    repair = NetnsRepair(backend, "ordo", lambda: ["nas-stack"], log=lambda _line: None)
-    assert repair.sweep() == ["nas-stack/prowlarr"]
-    assert backend.foreign_restarts == [("nas-stack", "prowlarr")]
+    backend.foreign["media-stack"] = {"prowlarr": ({"name": "prowlarr"}, member), "gluetun": ({"name": "gluetun"}, owner)}
+    repair = NetnsRepair(backend, "ordo", lambda: ["media-stack"], log=lambda _line: None)
+    assert repair.sweep() == ["media-stack/prowlarr"]
+    assert backend.foreign_restarts == [("media-stack", "prowlarr")]
 
 
 def test_metrics_report_the_sweep():

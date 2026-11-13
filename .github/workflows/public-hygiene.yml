@@ -1,0 +1,35 @@
+name: Public hygiene
+
+# This repo is public. A pull request publishes its files, its commits (messages and author
+# addresses) and its own title and body; this checks all of them for anything that identifies the
+# operator or their deployment (docs/canonical/adr-0002-nothing-published-identifies-the-operator.md). `edited` is in the trigger
+# list so a changed title or body is checked again.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    name: Public hygiene
+    runs-on: ubuntu-24.04
+    steps:
+      # The head commit, not GitHub's merge commit: the check walks the PR's own commits.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      # Standard library only, so no install step. Every value from the event is passed through
+      # the environment, never interpolated into the script. The denylist secret is not available
+      # to a pull request from a fork; the generic shapes are still checked there.
+      - name: Nothing published identifies the operator
+        env:
+          ORDO_HYGIENE_DENYLIST: ${{ secrets.ORDO_HYGIENE_DENYLIST }}
+          ORDO_HYGIENE_PR_TITLE: ${{ github.event.pull_request.title }}
+          ORDO_HYGIENE_PR_BODY: ${{ github.event.pull_request.body }}
+          ORDO_HYGIENE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/ci/public_hygiene.py --base "$ORDO_HYGIENE_BASE"

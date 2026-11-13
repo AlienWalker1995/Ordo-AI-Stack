@@ -1420,7 +1420,7 @@ class DockerBackend:
 
         The same call samples every running container on the host, so `containers` keeps each
         reading by container name too: the dashboard shows the CPU and memory of other compose
-        projects' containers (nas-stack and the like) from it.
+        projects' containers (media-stack and the like) from it.
         """
         by_name = {r["name"]: r for r in self._project_ps()}
         proc = subprocess.run(

@@ -5,6 +5,7 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **A guard against publishing anything that identifies the operator.** `scripts/ci/public_hygiene.py` (standard library only) checks tracked files and their paths, commit messages, commit author addresses and a pull request's title and body for a concrete tailnet id, an email outside the placeholder domains, a LAN or tailnet host address, a user's home path, a chat-platform id and any tracked secret-shaped file (`*.sops`, keys, `.env`), plus the operator's own names from a denylist kept outside the repo (`ORDO_HYGIENE_DENYLIST`, a repository secret in CI). It runs in `.githooks/pre-push` (enable with `git config core.hooksPath .githooks`), in the new `Public hygiene` workflow on every pull request and title or body edit, and in the Pytest job. Findings name the place and the kind of thing, never the match. The policy is `docs/canonical/adr-0002-nothing-published-identifies-the-operator.md`.
 - **MiniMax-H3-Image is the stack's default image model, local and keyless.** A new data-only `image-gen` plugin (beside `song-gen`) declares it: the Comfy-Org repack's int8 DiT and fp16 VAE pinned by revision and sha256, plus the NVFP4 text encoder the MiniMax-H3 video models already use, and the repo-owned workflow `scripts/comfyui/workflows/minimax-h3-image.json` (6 steps, cfg 1, about 4 MP; one graph for text to image and for editing up to 16 pictures). Hermes gets a `comfyui` image_gen backend (`services/hermes/plugins/image_gen/comfyui`) that runs that workflow through the GPU gate, so `image_generate` takes the GPU lease like any render; the boot hook selects it once (`image_gen.provider: comfyui`) when the `image-gen` plugin is enabled and `COMFYUI_URL` is set, and only if no provider is chosen yet. Upstream's default, FAL, needed a paid key the stack does not have, so the tool had no working provider. Needs ComfyUI v0.45.0 or later. The model's licence (MiniMax-H3-Image Community License) excludes the US, EU, UK and South Korea.
 - **Hand-edited image files page the operator.** An image can declare the paths it bakes in and nothing may change at run time (`LABEL ordo.immutable-paths="..."`); the Hermes image declares `/opt/hermes`. ops-controller's `/metrics` reports `ordo_container_immutable_files_changed{service}` from `docker diff` (directories and interpreter-written bytecode caches left out, but a rewritten `.pyc` whose source is untouched counts, so a bytecode-only hotfix still pages; one reading serves up to 5 minutes and is re-taken at once when any container of the project is recreated, since a diff takes seconds), and `ImmutableFilesModified` pages when it is above zero for 2 minutes. On 2026-11-06 the agent patched three upstream Hermes modules in its running container as root; nothing noticed, and the next recreate would have silently undone it.
 
@@ -16,6 +17,7 @@ All notable changes to this project are documented here. The format is loosely b
 - **Hermes Agent pinned to v0.23.0** (upstream `nousresearch/hermes-agent:stable`, by digest). Also drops the temporary `GATEWAY_HEALTH_URL` dashboard workaround, which only compensated for the 0.21.7-0.22.0 bug where the gateway's own launcher was not recognised as a running gateway; that recognition now ships upstream, so the dashboard reports gateway status directly.
 
 ### Removed
+- **The tracked `secrets/.env.sops`.** `.gitignore` already said only `secrets/README.md` is tracked; the encrypted file had been force-added. The operator's store is the private SOPS file `site: SECRETS_SOURCE` names. Fixture and example names taken from the operator's own projects were replaced with generic ones.
 - **The GPU pin's 503 hook in the model gateway.** It existed only so a client using `local-chat-gpu`
   as its primary could fail over to its own chain; clients now use `local-chat` and the gateway
   routes, and which deployment served a request is visible in Langfuse, the response header,
@@ -271,7 +273,7 @@ All notable changes to this project are documented here. The format is loosely b
   `tests/substrate/test_secret_scoping.py` ENV_SPEC).
 - **One secret store: `ordo secrets`.** Every secret value lives in one SOPS (age) encrypted
   dotenv file in a private repo, named by `site: SECRETS_SOURCE` (documented default
-  `../ordo-personal/secrets/ordo.env.sops`). `ordo secrets materialize` writes `out/secrets.env`
+  `../ordo-secrets/secrets.env.sops`). `ordo secrets materialize` writes `out/secrets.env`
   (exactly the keys the render needs) and the agent's file secrets (`out/secrets/*`) from it;
   `set KEY --from-stdin|--generate`, `rotate KEY...|--internal`, `list` and a one-time `import` edit
   or show it by key name only, and print the `ordo recreate --reading` that applies a change.

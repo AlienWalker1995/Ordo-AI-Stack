@@ -84,7 +84,7 @@ the socket path, not in Hermes' good intentions.
 - Deploy target for Hermes-built apps = **local throwaway port** (operator choice 2026-08-09),
   not tracked edge services. Reboot-durability is explicitly not required for these.
 - The proxy is a project-buildable image, pinned by build sha (not `:latest`) per repo policy.
-- This does not touch the min-max / public stacks.
+- This does not touch the operator's other compose projects.
 
 ## Validation
 

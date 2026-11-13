@@ -50,3 +50,7 @@ services/ninfer/** text eol=lf
 services/comfyui/nodes/** text=auto eol=lf
 # Alloy reads its config from a bind mount (monitoring/alloy/config.alloy).
 *.alloy text eol=lf
+
+# Git hooks run under a POSIX shell on every platform, and inside Linux containers that share this
+# checkout: a CRLF hook fails at its first `set` line.
+.githooks/* text eol=lf

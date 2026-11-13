@@ -5,7 +5,7 @@ production. One declarative source (`ordo.yaml`) renders into `./out/`, and serv
 rendered output — edits to *derived* config never survive a re-render, so drift is structurally
 impossible.
 
-The stack runs entirely from `C:\dev\ordo-ai-stack` (`main` is the production branch) as compose
+The stack runs entirely from its checkout (`main` is the production branch) as compose
 project **`ordo`** (the service count follows the enabled plugins: count the services in
 `out/docker-compose.yml` after `ordo render`) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
 render substrate lives at the repo root (there is no `v2/` directory — there is one Ordo).
@@ -256,7 +256,7 @@ direct fix for the #1 pain — now proven in production, not just in test.
 | `tests/substrate/` | mocked-profile render (5090 + CPU-only), drift-revert, ctx consistency, plugin gating/deps, scheduler co-run/FIFO/evict, and per-defect-class regression guards from the parity audits (run below) |
 
 ## Operating this stack
-The rendered services run under compose project `ordo` from `C:\dev\ordo-ai-stack`, all reached through
+The rendered services run under compose project `ordo` from the checkout, all reached through
 the edge: Caddy is the **only** service that publishes host ports, one port per UI surface on
 `${CADDY_TAILNET_HOSTNAME}`. The port map (which service, which port, how each signs in) lives in [configuration.md's Network Ports](configuration.md#network-ports).
 
@@ -269,7 +269,7 @@ working. This
 retires the subpath-rewrite class of workaround (Open WebUI root-catchall, Hermes header-based
 base injection, codebase-memory nginx rewrites) in favor of giving every
 prebuilt SPA the root it was actually compiled for. One data root at
-`C:\dev\ordo-ai-stack\data`; stateful services (the Hermes brain included) keep their state on
+`data/` in the checkout; stateful services (the Hermes brain included) keep their state on
 named volumes. Secrets come from one store (a SOPS file in a private repo, or Infisical), materialized
 into gitignored `out\secrets.env` by `ordo secrets materialize`; see
 [runbooks/secrets.md](runbooks/secrets.md).

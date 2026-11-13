@@ -1,0 +1,41 @@
+#!/bin/sh
+# Refuse a push that would publish something identifying the operator: tracked files, commit
+# messages and author addresses (scripts/ci/public_hygiene.py; policy in
+# docs/canonical/adr-0002-nothing-published-identifies-the-operator.md). A push is the moment a leak becomes public, and CI can
+# only report it afterwards, so this is the check that prevents one.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+# The operator's names:    git config ordo.hygieneDenylistFile /path/outside/this/repo/denylist.txt
+#                          (or set ORDO_HYGIENE_DENYLIST_FILE). Without it only generic shapes are checked.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+
+if [ -z "${ORDO_HYGIENE_DENYLIST:-}" ] && [ -z "${ORDO_HYGIENE_DENYLIST_FILE:-}" ]; then
+    configured=$(git config --get ordo.hygieneDenylistFile || true)
+    if [ -n "$configured" ]; then
+        # Git for Windows runs this hook in a POSIX shell, but its Python wants a Windows path.
+        if command -v cygpath >/dev/null 2>&1; then
+            configured=$(cygpath -w "$configured")
+        fi
+        export ORDO_HYGIENE_DENYLIST_FILE="$configured"
+    fi
+fi
+
+python=""
+for candidate in python3 python; do
+    if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)" >/dev/null 2>&1; then
+        python=$candidate
+        break
+    fi
+done
+if [ -z "$python" ]; then
+    echo "pre-push: no Python 3.9+ found, so the public-repo check cannot run. Push refused." >&2
+    exit 1
+fi
+
+# Commits not yet on the remote's main. Without that ref (a fresh clone mid-setup) only the tree is checked.
+if base=$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null); then
+    exec "$python" "$root/scripts/ci/public_hygiene.py" --base "$base"
+fi
+exec "$python" "$root/scripts/ci/public_hygiene.py"
