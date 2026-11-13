@@ -1,0 +1,6 @@
+# The canonical docs are the source of truth and change only by the repository owner's hand
+# (docs/canonical/adr-0003-canonical-docs-change-only-by-the-owner.md). The same goes for the test
+# that checks them and for this file.
+/docs/canonical/                @AlienWalker1995
+/tests/test_canonical_docs.py   @AlienWalker1995
+/.github/CODEOWNERS             @AlienWalker1995

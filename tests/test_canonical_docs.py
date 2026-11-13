@@ -10,25 +10,29 @@ Every doc carries frontmatter:
     verified_against: <commit sha>   (the main commit it was checked against)
     superseded_by: <file>.md         (only when status is superseded; must exist here)
 
-The index links every doc. Changes to this folder are merged by the operator, never auto-merged;
-the hold lives in the reviewer's merge gate, not in this repo.
+The index links every doc, and every relative link in a doc points at a file that exists. Changes
+to this folder are the repository owner's alone (.github/CODEOWNERS, ADR-0003).
 """
 import datetime
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
-CANONICAL = Path(__file__).resolve().parent.parent / "docs" / "canonical"
-DOCS = sorted(CANONICAL.glob("*.md"))
+ROOT = Path(__file__).resolve().parent.parent
+CANONICAL = ROOT / "docs" / "canonical"
+DOCS = sorted(CANONICAL.rglob("*.md"))
+# A relative markdown link: [text](target), target without a scheme. The anchor is not checked.
+RELATIVE_LINK = re.compile(r"\]\((?![a-z][a-z0-9+.-]*:|#)([^)#\s]+)")
 REQUIRED_KEYS = {"authority", "status", "owner", "last_verified", "verified_against"}
 STATUSES = {"current", "superseded"}
 
 
 def frontmatter(path: Path) -> dict:
     text = path.read_text(encoding="utf-8")
-    match = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
+    match = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n", text, re.DOTALL)
     assert match, f"{path.name}: no YAML frontmatter at the top"
     data = yaml.safe_load(match.group(1))
     assert isinstance(data, dict), f"{path.name}: frontmatter is not a mapping"
@@ -62,8 +66,34 @@ def test_each_doc_declares_its_authority_and_verification(path: Path):
         assert "superseded_by" not in meta, f"{path.name}: only a superseded doc has superseded_by"
 
 
+def _git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+
+
+def _has_full_history() -> bool:
+    """False in a shallow clone or outside git, where an older commit cannot be looked up."""
+    return _git("rev-parse", "--is-shallow-repository").stdout.strip() == "false"
+
+
+@pytest.mark.parametrize("path", DOCS, ids=lambda p: p.name)
+def test_verified_against_is_a_commit_in_this_history(path: Path):
+    """A sha that only looks like one proves nothing: it has to be a commit HEAD descends from."""
+    if not _has_full_history():
+        pytest.skip("shallow or non-git checkout: the commit cannot be looked up")
+    sha = str(frontmatter(path)["verified_against"])
+    reachable = _git("merge-base", "--is-ancestor", f"{sha}^{{commit}}", "HEAD")
+    assert reachable.returncode == 0, f"{path.name}: verified_against {sha} is not a commit in this history"
+
+
+@pytest.mark.parametrize("path", DOCS, ids=lambda p: p.name)
+def test_every_relative_link_resolves(path: Path):
+    text = path.read_text(encoding="utf-8")
+    broken = [target for target in RELATIVE_LINK.findall(text) if not (path.parent / target).exists()]
+    assert not broken, f"{path.name}: links to files that do not exist: {broken}"
+
+
 def test_the_index_links_every_doc():
     index = (CANONICAL / "index.md").read_text(encoding="utf-8")
-    linked = set(re.findall(r"\]\(([^)#]+\.md)", index))
-    unlinked = [p.name for p in DOCS if p.name != "index.md" and p.name not in linked]
+    linked = {(CANONICAL / target).resolve() for target in RELATIVE_LINK.findall(index)}
+    unlinked = [str(p.relative_to(CANONICAL)) for p in DOCS if p.name != "index.md" and p.resolve() not in linked]
     assert not unlinked, f"index.md does not link {unlinked}"

@@ -44,4 +44,5 @@ One decision per record: status, context, decision, consequences, and the backlo
 
 - [ADR-0001: The agent holds no Docker socket](adr-0001-agent-holds-no-docker-socket.md) – The agent's Docker work moves to ops-controller; what replaces each use of the socket, and the four cards that get there.
 - [ADR-0002: Nothing published from this repo identifies the operator](adr-0002-nothing-published-identifies-the-operator.md) – What may never appear in files, commits or PR text, and the checker that enforces it.
+- [ADR-0003: Canonical docs change only by the owner's hand; the vault is the document plane](adr-0003-canonical-docs-change-only-by-the-owner.md) – Why the source of truth lives in git and not the vault, how the owner-only rule is enforced, and the vault's operator and agent zones.
 
