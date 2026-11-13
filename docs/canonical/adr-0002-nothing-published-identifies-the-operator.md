@@ -67,7 +67,7 @@ The pre-push hook is the only one that prevents a leak; the other two report one
 The checker has two layers:
 
 1. **Generic shapes**, written in the checker: a concrete tailnet id, an email address outside the placeholder domains, a LAN or tailnet host address, a user's home path, a 17 to 20 digit chat id, and any tracked file shaped like a secret store.
-2. **The operator's denylist**: their own names, one regular expression per line. It lives outside this repo. CI reads it from the `ORDO_HYGIENE_DENYLIST` repository secret; the hook reads the file named by `git config ordo.hygieneDenylistFile` (or `ORDO_HYGIENE_DENYLIST_FILE`).
+2. **The operator's denylist**: their own names, one regular expression per line, written as plain substrings. A word boundary is the wrong tool here: in source text a name often follows an escape letter or an underscore, where a boundary does not match and the name slips through. It lives outside this repo. CI reads it from the `ORDO_HYGIENE_DENYLIST` repository secret; the hook reads the file named by `git config ordo.hygieneDenylistFile` (or `ORDO_HYGIENE_DENYLIST_FILE`).
 
 A finding names the file, the line and the kind of thing found. It never prints the match, because the log it is printed to is public.
 

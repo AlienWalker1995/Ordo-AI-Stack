@@ -71,6 +71,13 @@ def test_the_denylist_is_read_from_the_environment(monkeypatch, tmp_path):
     assert hygiene.findings("cd my-other-project", hygiene.operator_denylist())
 
 
+def test_a_plain_substring_denylist_catches_a_name_after_an_escape_letter_or_underscore():
+    """Why the denylist holds plain substrings: these are the shapes a word boundary let through."""
+    denylist = [hygiene.re.compile("myproject", hygiene.re.IGNORECASE)]
+    for text in (r'line = "a\tmyproject\tb"', r'pattern = r"\bmyproject\b"', "myproject_backup"):
+        assert hygiene.findings(text, denylist), text
+
+
 @pytest.mark.parametrize("name,shaped", [
     ("secrets/.env.sops", True), ("certs/edge.key", True), (".env", True), ("app/.env.prod", True),
     (".env.example", False), ("docs/runbooks/secrets.md", False), ("secrets/README.md", False),

@@ -11,7 +11,8 @@ Two layers:
   tailnet host address, a user's home path, a chat-platform id, and any tracked file shaped like
   a secret store.
 - The operator's own names (host, domain, other projects, private repo), which cannot be written
-  here without publishing them. They come from outside the repo, one regular expression per line:
+  here without publishing them. They come from outside the repo, one regular expression per line
+  (plain substrings: a word boundary misses a name that follows an escape letter or an underscore):
   the ORDO_HYGIENE_DENYLIST variable (CI sets it from a repository secret), or the file named by
   ORDO_HYGIENE_DENYLIST_FILE.
 
