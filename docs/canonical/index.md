@@ -34,6 +34,7 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 - [Orchestration Layer](component-orchestration-layer.md) – Multi-service workflow coordination (target architecture; implementation evolves with the repo).
 - [Dashboard UI](component-dashboard-ui.md) – Ops dashboard: Overview, Services, Models, Performance and Logs pages.
 - [Security & Trust Model](security-and-trust-model.md) – Threat model, auth tiers, SSRF, secret handling.
+- [Decision: the agent holds no Docker socket](decision-agent-docker-access.md) – Why the agent's socket goes, what replaces each use of it, and the order of work.
 - [Environment Variables Reference](appendix-env-vars.md) – All env vars, services, defaults.
 - [Rollback Procedures](appendix-rollback.md) – Per-component rollback playbook.
 - [Open WebUI](https://docs.openwebui.com/) – Day-to-day chat interface (`:8443` through the edge); not owned by this repo but wired into the stack via compose.
