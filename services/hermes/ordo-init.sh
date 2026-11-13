@@ -70,7 +70,7 @@ hermes_config model.default local-chat
 hermes_config model.context_length "$CONTEXT_WINDOW"
 # Per-turn budgets, monitorable from .env. model.max_tokens: output cap per call (match
 # LLAMACPP_N_PREDICT); agent.max_turns: tool-loop ceiling; agent.gateway_timeout: wall-clock cap
-# on one turn (distinct from the stream-stale detector, HERMES_STREAM_STALE_TIMEOUT).
+# on one turn (distinct from the stream-stale detector, providers.custom.stale_timeout_seconds below).
 hermes_config model.max_tokens "${HERMES_MAX_TOKENS:-65536}"
 hermes_config agent.max_turns "${HERMES_MAX_TURNS:-90}"
 hermes_config agent.gateway_timeout "${HERMES_GATEWAY_TIMEOUT:-3600}"
@@ -152,6 +152,21 @@ if [ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ]; then
         as_hermes "$HERMES_BIN" plugins enable langfuse >/dev/null
         as_hermes touch "$LANGFUSE_MARK"
     fi
+fi
+
+# The image_generate tool's provider: the stack's own ComfyUI running MiniMax-H3-Image, but only
+# while the image-gen plugin is enabled (IMAGE_GEN_ENABLED). ComfyUI alone is not enough: without
+# the image-gen weights every call would take the GPU lease, evicting the chat model, only for
+# ComfyUI to reject the graph. Upstream's default is FAL, which needs a paid key this stack does not
+# have. Selected once, behind its own sentinel, and only when no provider is chosen yet, so an
+# operator's choice in `hermes tools` (before or after this) is kept.
+IMAGE_GEN_MARK="$HERMES_HOME/.ordo-image-gen-seeded"
+if [ "${IMAGE_GEN_ENABLED:-}" = "1" ] && [ -n "${COMFYUI_URL:-}" ] && [ ! -f "$IMAGE_GEN_MARK" ]; then
+    # Unset (`config get` fails) and set-but-empty both count as "no provider chosen".
+    if [ -z "$(as_hermes "$HERMES_BIN" config get image_gen.provider 2>/dev/null)" ]; then
+        hermes_config image_gen.provider comfyui
+    fi
+    as_hermes touch "$IMAGE_GEN_MARK"
 fi
 
 # Register the repo-owned skills (/opt/ordo-skills) as a skills.external_dirs entry.

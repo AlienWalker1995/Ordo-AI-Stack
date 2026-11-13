@@ -2,7 +2,7 @@
 // and the strip counts, against the live-shaped table fixture.
 import { describe, expect, it } from 'vitest'
 import {
-  displayIdentifier, groupByProject, projectNote, sectionOrder, severity, sortRows, statusCounts,
+  displayIdentifier, groupByProject, projectCounts, projectNote, sectionOrder, severity, sortRows, statusCounts,
 } from '../src/pages/servicesModel.js'
 import { fixture } from './mockApi.js'
 
@@ -129,12 +129,12 @@ describe('sortRows', () => {
 
   it('defaults to severity then name, with finished jobs last', () => {
     expect(sortRows(ordo()).map((r) => r.name)).toEqual([
-      'Codebase Memory', 'caddy', 'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU fallback)', 'llama.cpp (GPU)',
+      'Codebase Memory', 'caddy', 'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU)', 'llama.cpp (GPU)',
       'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI', 'ops-controller', 'Qdrant', 'evals',
     ])
     // Descending flips the health order but keeps the jobs last.
     expect(sortRows(ordo(), { dir: 'desc' }).map((r) => r.name)).toEqual([
-      'caddy', 'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU fallback)', 'llama.cpp (GPU)', 'mcp-searxng',
+      'caddy', 'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU)', 'llama.cpp (GPU)', 'mcp-searxng',
       'model-gateway', 'N8N', 'Open WebUI', 'ops-controller', 'Qdrant', 'Codebase Memory', 'evals',
     ])
   })
@@ -154,11 +154,11 @@ describe('sortRows', () => {
     })
     expect(sortRows(evicted).map((r) => r.name)).toEqual([
       'Codebase Memory', 'caddy', 'ops-controller', 'llama.cpp (GPU)', 'ComfyUI', 'Hermes Agent',
-      'llama.cpp (CPU fallback)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI', 'Qdrant', 'evals',
+      'llama.cpp (CPU)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI', 'Qdrant', 'evals',
     ])
     // Descending flips the health order but keeps the lent row behind the running ones.
     expect(sortRows(evicted, { dir: 'desc' }).map((r) => r.name)).toEqual([
-      'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU fallback)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI',
+      'ComfyUI', 'Hermes Agent', 'llama.cpp (CPU)', 'mcp-searxng', 'model-gateway', 'N8N', 'Open WebUI',
       'Qdrant', 'llama.cpp (GPU)', 'caddy', 'ops-controller', 'Codebase Memory', 'evals',
     ])
   })
@@ -262,5 +262,23 @@ describe('statusCounts', () => {
       row({ verdict: 'failed' }),
       row({ verdict: 'up' }),
     ])).toEqual({ total: 5, running: 1, failed: 1, unhealthy: 0, stopped: 0, jobs: 0 })
+  })
+})
+
+describe('projectCounts', () => {
+  it("counts each project's top-level rows and their failures, Ordo's project first", () => {
+    const rows = [
+      { id: 'a', project: 'nas-stack', verdict: 'up', parent: null },
+      { id: 'b', project: 'nas-stack', verdict: 'failed', parent: null },
+      { id: 'g', project: 'ordo', verdict: 'up', group_verdict: 'unhealthy', parent: null },
+      { id: 'g1', project: 'ordo', verdict: 'unhealthy', parent: 'g' },
+      { id: 'c', project: 'adguard', verdict: 'up', parent: null },
+      { id: 'x', project: null, verdict: 'up', parent: null },
+    ]
+    expect(projectCounts(rows)).toEqual([
+      { project: 'ordo', count: 1, failing: 1 },
+      { project: 'adguard', count: 1, failing: 0 },
+      { project: 'nas-stack', count: 2, failing: 1 },
+    ])
   })
 })

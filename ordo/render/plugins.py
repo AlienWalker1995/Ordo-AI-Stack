@@ -8,7 +8,8 @@ self-declare NVIDIA-only.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+import re
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -172,6 +173,15 @@ class PluginService:
     # they join Caddy's netns and hit its port listeners on loopback. Mutually exclusive with
     # `networks:` — the renderer omits the network attachment when this is set.
     network_mode: str = ""
+    # The networks the service joins. `stack` is the stack network every service shares; any other
+    # name is a network private to this plugin (`<project>-<plugin>-<name>`, internal: no egress),
+    # joined only by the plugin's services that list the same name. A service that must be reachable
+    # by one peer and nobody else (the log shipper's read-only Docker API proxy) lists only its
+    # private network. Default: the stack network alone.
+    networks: tuple[str, ...] = ("stack",)
+    # compose `group_add`: extra groups for the container's user, e.g. "0" so a non-root image can
+    # open Docker Desktop's root:root, mode-660 socket without running as root.
+    group_add: tuple[str, ...] = ()
     # compose `entrypoint` - REPLACES the image's baked ENTRYPOINT (`command` only replaces CMD).
     # Exec form (a list) so there is no shell word-splitting ambiguity; a shell one-liner is
     # written explicitly as ["sh", "-c", "…"]. Needed by images that must run a setup step before
@@ -196,6 +206,13 @@ class PluginService:
     # The model this service serves, if any (ordo/render/engines.py). The render stamps it on the
     # service as `ordo.serves.*` labels; the registry, metrics and dashboard read those labels.
     serves: Serves | None = None
+
+    def compose_networks(self, stack_net: str, private_net: Callable[[str], str]) -> list[str] | None:
+        """The compose networks this service joins, or None for the default (the stack network
+        alone). `private_net(name)` names a plugin-private network."""
+        if self.networks == (STACK_NETWORK,):
+            return None
+        return [stack_net if n == STACK_NETWORK else private_net(n) for n in self.networks]
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PluginService:
@@ -239,6 +256,8 @@ class PluginService:
             local_port=LocalPort.from_manifest(d.get("local_port"), where),
             shm_size=str(d.get("shm_size", "")),
             network_mode=str(d.get("network_mode", "")),
+            networks=parse_networks(where, d.get("networks"), network_mode=str(d.get("network_mode", ""))),
+            group_add=tuple(str(g) for g in (d.get("group_add", []) or [])),
             entrypoint=[str(e) for e in (d.get("entrypoint", []) or [])],
             security_opt=[str(o) for o in (d.get("security_opt", []) or [])],
             ulimits=dict(d.get("ulimits", {}) or {}),
@@ -246,6 +265,28 @@ class PluginService:
             restart=_restart_policy(name, d.get("restart", "")),
             serves=Serves.from_manifest(d.get("serves"), where),
         )
+
+
+STACK_NETWORK = "stack"
+_PRIVATE_NETWORK_NAME = re.compile(r"[a-z][a-z0-9-]{0,30}")
+
+
+def parse_networks(where: str, raw: Any, *, network_mode: str) -> tuple[str, ...]:
+    """Parse a service's `networks: [stack, <private name>, ...]` (default: the stack network)."""
+    if raw is None:
+        return (STACK_NETWORK,)
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{where}: `networks` must be a non-empty list of network names")
+    names = tuple(str(n) for n in raw)
+    if network_mode:
+        raise ValueError(f"{where}: `networks` and `network_mode` cannot both be set")
+    if len(set(names)) != len(names):
+        raise ValueError(f"{where}: `networks` lists a network twice: {list(names)}")
+    bad = [n for n in names if n != STACK_NETWORK and not _PRIVATE_NETWORK_NAME.fullmatch(n)]
+    if bad:
+        raise ValueError(f"{where}: private network names must be lowercase letters, digits and "
+                         f"hyphens, starting with a letter: {bad}")
+    return names
 
 
 def parse_derived_env(where: str, d: Mapping[str, Any]) -> tuple[str, ...]:

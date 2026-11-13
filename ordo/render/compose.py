@@ -22,6 +22,7 @@ process broker starts/stops these against the scheduler.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +40,12 @@ if TYPE_CHECKING:
 # enabled MCP servers render as `mcp-<id>` services alongside these, from the manifests.
 _CORE = ["inference-engine-gpu", "litellm-db", "model-gateway", "model-gateway-keys",
          "ops-controller", "dashboard"]
+
+# Core services that are parts of another core service rather than services of their own: the
+# gateway's database and its one-shot key provisioner. The dashboard's Services page lists them
+# under the gateway's row (RenderedConfig.service_groups), the way a plugin's containers list under
+# the plugin's.
+CORE_SERVICE_PARTS = {"model-gateway": ("litellm-db", "model-gateway-keys")}
 
 # How `ordo backup` saves the named volumes the core services own (ordo/render/backup_policy.py);
 # the plugin and agent manifests declare theirs under `backup:`. The model stores are re-derivable
@@ -90,6 +97,13 @@ def _mcp_net(project: str) -> str:
     can reach an MCP server directly; the servers reach the stack only if they also join
     `<project>-net`). `internal: true` at the top level = no default gateway, no egress."""
     return f"{project}-mcp-net"
+
+def plugin_private_net(project: str, plugin_id: str, name: str) -> str:
+    """A network private to one plugin (a service's `networks:` entry other than `stack`): only the
+    plugin's services that list the same name join it. Internal, so it gives no egress; a service
+    that needs the stack or the internet also lists `stack`."""
+    return f"{project}-{plugin_id}-{name}"
+
 
 def gated_upstream_net(project: str, service: str) -> str:
     """The private network of a gate-enforced service: shared by that service and its admission
@@ -387,6 +401,16 @@ _MODEL_GATEWAY_CONFIG_BIND = "${BASE_PATH:?BASE_PATH must be set}/out/model-gate
 # new key grant) changes their config hash and the changed set (ordo/render/changed_set.py) recreates
 # them, from the host's `ordo apply` and from ops-controller's post-render step alike.
 RENDERED_CONFIG_LABEL = "ordo.rendered-config"
+
+# Every service's container log, rotated: at most 5 files of 20 MB. Without it Docker's json-file
+# log grows without bound (one container's reached 378 MB, on a disk at 87%), and damage never ages
+# out: an unclean power-off (2026-11-07) left a run of NUL bytes in every running container's log,
+# where Docker's reader stops, so `docker logs --since` (ops-controller's engine metrics, Alloy)
+# returned nothing for those containers. A rotated log drops the damaged file within a few rotations.
+CONTAINER_LOGGING: dict[str, Any] = {
+    "driver": "json-file",
+    "options": {"max-size": "20m", "max-file": "5"},
+}
 MODEL_GATEWAY_CONFIG_READERS = ("model-gateway", "model-gateway-keys")
 
 
@@ -689,6 +713,8 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
         s["command"] = list(ps.command)
     if ps.volumes:
         s["volumes"] = list(ps.volumes)
+    if ps.group_add:
+        s["group_add"] = list(ps.group_add)
     if ps.healthcheck:
         s["healthcheck"] = dict(ps.healthcheck)
     dep = _depends_on(ps.depends_on)
@@ -942,17 +968,26 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                          "can be published on one service only")
     if listeners:
         _mount_edge_cert(svcs["ops-controller"])
+    private_nets: list[str] = []
     for plugin, ps in (plugin_services or []):
         svcs[ps.name] = _plugin_service(ps, plugin, net=net,
                                         nvidia_gpu=nvidia_gpu, primary_uuid=primary_gpu_uuid,
                                         secondary_uuid=secondary_gpu_uuid,
                                         project=project, publish_local_ports=publish_local_ports,
                                         available_env=available_env, edge_ports=edge_ports)
+        joined = ps.compose_networks(net, lambda name, p=plugin: plugin_private_net(project, p.id, name))
+        if joined is not None:
+            svcs[ps.name]["networks"] = joined
+            private_nets.extend(n for n in joined if n != net and n not in private_nets)
         # A service whose GPU use is gate-enforced gets its gate rendered WITH it, from the same
         # declaration. Not opt-in and not a separate manifest entry: the two cannot disagree, and
         # an enabled gated service can never come up without the thing that arbitrates it.
         arb = ps.gpu_arbitration
         if arb is not None and arb.enforcement == "gate" and ps.name in claims:
+            if joined is not None:
+                raise ValueError(
+                    f"{plugin.id}/{ps.name} is gpu_arbitration.enforcement: gate, which decides its "
+                    f"networks itself; it cannot also declare `networks: {list(ps.networks)}`")
             if ps.network_mode:
                 # Sharing another container's namespace would make the upstream reachable by
                 # every peer of that container, voiding the isolation below without a trace.
@@ -978,11 +1013,17 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         for reader in MODEL_GATEWAY_CONFIG_READERS:
             svcs[reader].setdefault("labels", {})[RENDERED_CONFIG_LABEL] = model_gateway_config_digest
 
+    # Last, so every service (core, plugin, gate and MCP) gets it. A copy each: yaml would otherwise
+    # write one shared dict as an anchor and aliases.
+    for service in svcs.values():
+        service["logging"] = copy.deepcopy(CONTAINER_LOGGING)
+
     out: dict[str, Any] = {
         "name": project,
         "services": svcs,
         "networks": {net: {"name": net}, _mcp_net(project): {"name": _mcp_net(project), "internal": True},
-                     **{n: {"name": n} for n in gated_nets}},
+                     **{n: {"name": n} for n in gated_nets},
+                     **{n: {"name": n, "internal": True} for n in private_nets}},
     }
     # Declare any named volumes the plugin services reference (a `src:dst` where src is a bare
     # name, not a ./bind or absolute path) — compose requires them in the top-level `volumes:`.

@@ -45,7 +45,10 @@ COMPOSE = {
     "services": {
         "db": {**SLEEPER, "healthcheck": {"test": ["CMD", "true"], "interval": "1s", "timeout": "5s",
                                           "retries": 3}},
-        "web": {**SLEEPER, "depends_on": ["db"]},
+        # Labelled the Homepage way, so the container list carries its launcher link.
+        "web": {**SLEEPER, "depends_on": ["db"],
+                "labels": {"homepage.name": "Web", "homepage.href": "http://web.example/",
+                           "homepage.description": "The front end"}},
         # A netns owner and its member, in the shape the renderer emits (ordo/render/compose.py):
         # `depends_on.<owner>.restart: true` is what makes compose restart the member with it.
         "owner": dict(SLEEPER),
@@ -368,12 +371,16 @@ def test_list_containers_is_a_bare_list_that_includes_every_project_container(un
     ours = {row["service"]: row for row in listing if row["project"] == unchanged.project}
     assert sorted(ours) == SERVICES
     for service, row in ours.items():
-        assert set(row) == {"name", "status", "image", "project", "service", "health", "status_text"}
+        assert set(row) == {"name", "status", "image", "project", "service", "health", "status_text", "link"}
         assert row["name"] == f"{unchanged.project}-{service}-1"
         assert BUSYBOX.startswith(row["image"]) and row["image"]
     assert (ours["web"]["status"], ours["web"]["health"]) == ("running", None)
     assert (ours["db"]["status"], ours["db"]["health"]) == ("running", "healthy")
     assert ours["job"]["status"] == "exited"
+    # The Homepage labels give a launcher link; an unlabelled container has none.
+    assert ours["web"]["link"] == {"href": "http://web.example/", "name": "Web",
+                                   "description": "The front end", "group": ""}
+    assert ours["db"]["link"] is None
     # docker's Status text: the uptime and the exit code the dashboard's verdict reads.
     assert ours["db"]["status_text"].startswith("Up ") and ours["job"]["status_text"].startswith("Exited (0)")
 
@@ -394,13 +401,19 @@ def test_container_inspect_summarizes_a_project_container(unchanged):
 
 def test_service_stats_covers_every_project_service(unchanged):
     stats = unchanged.backend.service_stats()
-    assert set(stats) == {"gpu", "services", "vram_aggregate_unavailable"}
+    assert set(stats) == {"gpu", "services", "containers", "vram_aggregate_unavailable"}
     assert stats["gpu"] is None and stats["vram_aggregate_unavailable"] is True
     assert sorted(stats["services"]) == SERVICES
     for service, row in stats["services"].items():
         assert set(row) == {"cpu_pct", "mem_gb", "mem_pct", "vram_gb", "vram_pct", "running"}
         assert all(isinstance(row[k], float) and row[k] >= 0 for k in row if k != "running")
         assert row["running"] is (service != "job")
+    # Every running container is measured by name as well (the host's, on real docker).
+    ours = {f"{unchanged.project}-{s}-1" for s in SERVICES if s != "job"}
+    assert ours <= set(stats["containers"])
+    for row in stats["containers"].values():
+        assert set(row) == {"cpu_pct", "mem_gb", "mem_pct"}
+        assert all(isinstance(v, float) and v >= 0 for v in row.values())
 
 
 def test_service_restarts_counts_every_project_container_from_zero(unchanged):

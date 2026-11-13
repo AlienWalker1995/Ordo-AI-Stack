@@ -2,7 +2,7 @@
 // samples into the tiles the band draws. It follows the spec's tile table exactly; a tile whose
 // source is missing is omitted, never drawn as zero (the exact 24 h token count is gap G3, so
 // until it lands the tile estimates from the rate series instead).
-import { clock, formatGb } from '../lib/format.js'
+import { formatGb } from '../lib/format.js'
 
 // Container counts across every project from /api/overview services.by_project (G2): the status
 // line and the Containers-up tile count the same containers, ordo and non-ordo alike.
@@ -37,13 +37,12 @@ export function countContainers(byProject) {
 // request, not the data: derived from the samples it caps nothing when the series is sparse,
 // because then every gap equals or exceeds the true step and the last known rate would be
 // extrapolated across the whole silent span.
-// Null when neither role has two or more samples, so the tile is left undrawn instead of
-// showing a zero.
+// Null when no engine has two or more samples, so the tile is left undrawn instead of showing a zero.
 // One step of the request behind the band's 24 h poll: the backend's max(60, hours * 3600 // 288).
 const SERIES_STEP_S = Math.max(60, Math.floor((24 * 3600) / 288))
 
-/** @param {{ gpu?: [number, number][], cpu?: [number, number][] } | undefined} [series] */
-export function tokensFromSeries(series) {
+/** @param {{ series?: Record<string, [number, number][]> } | undefined} [perf] */
+export function tokensFromSeries(perf) {
   const integrate = (points) => {
     if (!Array.isArray(points) || points.length < 2) return null
     let sum = 0
@@ -56,7 +55,7 @@ export function tokensFromSeries(series) {
     }
     return sum
   }
-  const parts = [integrate(series?.gpu), integrate(series?.cpu)].filter((v) => v != null)
+  const parts = Object.values(perf?.series || {}).map(integrate).filter((v) => v != null)
   return parts.length ? parts.reduce((a, b) => a + b, 0) : null
 }
 
@@ -69,24 +68,14 @@ export function formatTokens(value) {
   return `~${Math.round(value)}`
 }
 
-// The median speed per chat role, passed through untouched (p50, n, provisional, model): the
-// Median primitive renders the provisional mark, the tile only needs the evidence beside it.
-/** @param {{ gpu?: object, cpu?: object } | undefined} [chat] */
-export function speedByRole(chat) {
-  const out = {}
-  for (const role of ['gpu', 'cpu']) {
-    const m = chat?.[role]
-    if (m && typeof m.p50 === 'number') out[role] = m
-  }
-  return out
-}
-
-// VRAM on the first GPU that reports usable totals (the resident-model card, gpus[0]).
-/** @param {Array<object> | undefined} [gpus] */
-export function vramFacts(gpus) {
-  const gpu = Array.isArray(gpus)
-    ? gpus.find((g) => g && typeof g.vram_total_gb === 'number' && g.vram_total_gb > 0)
-    : null
+// VRAM on the card the chat model lives on (`model`, a registry model id listed in the card's
+// tenants), else on the biggest card that reports usable totals (gpus come biggest first).
+/** @param {Array<object> | undefined} [gpus] @param {string | undefined} [model] */
+export function vramFacts(gpus, model) {
+  const usable = Array.isArray(gpus)
+    ? gpus.filter((g) => g && typeof g.vram_total_gb === 'number' && g.vram_total_gb > 0)
+    : []
+  const gpu = usable.find((g) => model && (g.tenants || []).includes(model)) || usable[0]
   if (!gpu || typeof gpu.vram_used_gb !== 'number') return null
   const pctUsed = Math.max(0, Math.min(100, (gpu.vram_used_gb / gpu.vram_total_gb) * 100))
   return {
@@ -110,13 +99,6 @@ export function diskFacts(host) {
     usedGb: host.disk_used_gb ?? null,
     totalGb: host.disk_total_gb ?? null,
   }
-}
-
-// The median's evidence as a tooltip: how many samples, over what span.
-function medianEvidence(m) {
-  if (!m.n) return 'No samples yet'
-  const span = m.first_ts && m.last_ts ? `, ${clock(m.first_ts)} to ${clock(m.last_ts)}` : ''
-  return `${m.n} sample${m.n !== 1 ? 's' : ''}${span}`
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -146,9 +128,11 @@ export function groupActivity(items) {
         last.severity = item.severity
       }
       if (typeof item.duration_s === 'number') last.duration_s = (last.duration_s ?? 0) + item.duration_s
-      if (item.evicted_chat) last.evicted_chat = true
+      for (const name of item.evicted || []) {
+        if (!last.evicted.includes(name)) last.evicted = [...last.evicted, name]
+      }
     } else {
-      groups.push({ ...item, count: 1, oldestTs: item.ts })
+      groups.push({ ...item, evicted: item.evicted || [], count: 1, oldestTs: item.ts })
     }
   }
   return groups
@@ -201,15 +185,36 @@ export function activityDaySummary(items, now = Date.now()) {
   return `Today: ${parts.join(' · ')}`
 }
 
-const ENGINE_LABEL = { gpu: 'GPU', cpu: 'CPU fallback', none: 'None' }
+// How an engine's device reads. A device the stack does not name yet reads as itself.
+export const DEVICE_LABEL = { gpu: 'GPU', cpu: 'CPU' }
 
-// The six tiles of the KPI band, in the spec's order. Each is omitted when its source is
-// missing, so the band draws fewer tiles rather than placeholder zeros.
+/** @param {string | null | undefined} device */
+export function deviceLabel(device) {
+  return DEVICE_LABEL[device] || device || 'Unknown'
+}
+
+/** @param {number | null | undefined} value */
+function tps(value) {
+  return value >= 100 ? Math.round(value).toLocaleString() : value.toFixed(1)
+}
+
+// The model every chat consumer calls, as the backend decided it (overview.chat): the engine
+// answering, or the one a stand-in answers for. Only when nobody answers does it fall back to the
+// first chat engine that stands in for nothing.
+/** @param {{ model?: { model?: string, fallback_for?: string | null } | null } | undefined} chat @param {Array<object> | undefined} engines */
+export function primaryChatModel(chat, engines) {
+  const answering = chat?.model
+  if (answering?.model) return answering.fallback_for || answering.model
+  return (engines || []).find((e) => e.kind === 'chat' && !e.fallback_for)?.model
+}
+
+// The tiles of the KPI band, in the spec's order. Each is omitted when its source is missing, so
+// the band draws fewer tiles rather than placeholder zeros.
 /**
- * @param {{ services?: object, chat?: object, gpus?: Array<object>, host?: object } | undefined} overview
- * @param {{ gpu?: [number, number][], cpu?: [number, number][] } | undefined} series
+ * @param {{ services?: object, chat?: object, engines?: Array<object>, gpus?: Array<object>, host?: object } | undefined} overview
+ * @param {{ series?: Record<string, [number, number][]> } | undefined} perf
  */
-export function kpiTiles(overview, series) {
+export function kpiTiles(overview, perf) {
   const tiles = []
   const containers = countContainers(overview?.services?.by_project)
   if (containers) {
@@ -226,42 +231,46 @@ export function kpiTiles(overview, series) {
       title: 'services.by_project from /api/overview',
     })
   }
-  const engine = overview?.chat?.engine
-  if (ENGINE_LABEL[engine]) {
-    const chat = overview.chat
-    const active = engine === 'cpu' ? chat.cpu : chat.gpu
+  const chat = overview?.chat
+  if (chat && chat.state !== 'unknown') {
+    const answering = chat.model
     tiles.push({
-      key: 'engine',
-      label: 'Chat engine',
-      value: ENGINE_LABEL[engine],
-      sub: chat.reason || active?.model || '',
-      tone: engine === 'none' ? 'danger' : engine === 'cpu' ? 'warning' : 'fg',
-      title: 'chat.engine from /api/overview',
+      key: 'chat',
+      label: 'Chat answered by',
+      // Starting: the chat model's own engine is loading (after a restart or a model switch);
+      // nobody answers yet, but nothing is wrong.
+      value: chat.state === 'starting' ? 'Starting' : answering ? deviceLabel(answering.device) : 'Nobody',
+      sub: chat.state === 'fallback' ? `${answering.model} standing in · ${chat.reason}`
+        : chat.state === 'starting' ? `${answering.model} on ${deviceLabel(answering.device)} is loading`
+          : chat.state === 'none' ? chat.reason
+            : answering?.model || '',
+      tone: chat.state === 'none' ? 'danger' : chat.state === 'fallback' || chat.state === 'starting' ? 'warning' : 'fg',
+      title: 'chat from /api/overview',
     })
+    const speed = answering?.speeds?.generation_tps
+    if (typeof speed === 'number') {
+      tiles.push({
+        key: 'speed',
+        label: 'Chat speed',
+        value: tps(speed),
+        unit: 'tok/s',
+        sub: 'while generating, last hour',
+        sparkline: perf?.series?.[answering.engine],
+        title: `${answering.engine}: tokens over time spent generating (ordo_engine_*)`,
+      })
+    }
   }
-  const speeds = speedByRole(overview?.chat)
-  if (speeds.gpu) {
-    const m = speeds.gpu
-    tiles.push({
-      key: 'speed',
-      label: 'GPU chat speed',
-      median: { value: m.p50, n: m.n || 0, provisional: !!m.provisional, title: medianEvidence(m) },
-      sub: m.provisional ? '' : m.n ? `${m.n} samples` : '',
-      sparkline: Array.isArray(series?.gpu) ? series.gpu : undefined,
-      title: 'chat.gpu.p50 from /api/overview',
-    })
-  }
-  const tokens = tokensFromSeries(series)
+  const tokens = tokensFromSeries(perf)
   if (tokens != null) {
     tiles.push({
       key: 'tokens',
       label: 'Tokens generated, 24 h',
       value: formatTokens(tokens),
       sub: 'estimated from 5 min rates',
-      title: 'integrated /api/perf/series gpu and cpu samples',
+      title: 'integrated /api/perf/series samples, every engine',
     })
   }
-  const vram = vramFacts(overview?.gpus)
+  const vram = vramFacts(overview?.gpus, primaryChatModel(overview?.chat, overview?.engines))
   if (vram) {
     // The GB figure leads so it survives truncation on a phone; the holders part is omitted
     // when the GPU has neither tenants nor borrowers, or the line would end in a dangling colon.
@@ -278,7 +287,7 @@ export function kpiTiles(overview, series) {
             vram.utilPct != null ? `${vram.utilPct}% compute` : '', holders]
         .filter(Boolean).join(' · '),
       tone: vram.pct >= 95 ? 'warning' : 'fg',
-      title: 'gpus[0] from /api/overview',
+      title: 'the chat model\'s GPU from /api/overview',
     })
   }
   const disk = diskFacts(overview?.host)
@@ -295,4 +304,41 @@ export function kpiTiles(overview, series) {
     })
   }
   return tiles
+}
+
+// The Live work panel from GET /api/work (live_work.py) and the Overview's engines. Each request in
+// flight names the engine it runs on the way the engines list does (its model and device), falling
+// back to the gateway's deployment name for an engine the registry does not list.
+/** @param {{ inflight?: any[], recent?: { window_s?: number, callers?: any[] }, engines?: Record<string, any> } | null | undefined} work @param {any[]} engines */
+export function liveWork(work, engines) {
+  const byService = new Map((engines || []).map((e) => [e.engine, e]))
+  const where = (deployment) => {
+    const engine = byService.get(deployment)
+    return engine ? `${engine.model} on ${deviceLabel(engine.device)}` : (deployment || 'an unknown engine')
+  }
+  const running = (work?.inflight || []).map((r) => ({
+    id: r.call_id,
+    caller: r.caller || 'unknown',
+    where: where(r.deployment),
+    promptTokens: r.prompt_tokens,
+    runningS: r.running_s,
+    fallback: !!r.fallback,
+  }))
+  // Prefill progress is read only for an engine that serves it (the CPU fallback's /slots). A slot
+  // stays `processing` while it generates too (llama.cpp: any state but idle), so a prompt already
+  // read in full is generation, not prefill, and is left out.
+  const prefill = Object.entries(work?.engines || {})
+    .filter(([, e]) => e?.prefill?.available && e.prefill.processing && e.prefill.prompt_tokens > 0
+      && e.prefill.processed + e.prefill.cached < e.prefill.prompt_tokens)
+    .map(([service, e]) => ({
+      where: where(service),
+      done: e.prefill.processed + e.prefill.cached,
+      total: e.prefill.prompt_tokens,
+    }))
+  return {
+    running,
+    prefill,
+    windowS: work?.recent?.window_s ?? 300,
+    callers: work?.recent?.callers || [],
+  }
 }

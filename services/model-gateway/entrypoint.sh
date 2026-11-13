@@ -64,7 +64,7 @@ fi
 # reasoning_effort is also dropped on the OpenAI /v1/chat/completions path (the Anthropic
 # /v1/messages path is handled by the reasoning_effort_gate callback): LiteLLM maps an
 # Anthropic `thinking` budget to an OpenAI-style reasoning_effort ("high"/"minimal"/...), but
-# the Qwen3.6 chat template only accepts xhigh/medium/low, so "high"/"minimal" raise a Jinja
+# the GPU model's Qwen3.8 chat template on NInfer (re-checked 2026-11-09) only accepts none/low/medium/xhigh, so "high"/"minimal"/"max" raise a Jinja
 # exception and 400 the request. Dropping the field lets the backend use its own default.
 case "${GATEWAY_DROP_TOOL_STRICT:-}" in
   true) GPU_ADDITIONAL_DROP_PARAMS='["tools[*].function.strict", "reasoning_effort"]' ;;

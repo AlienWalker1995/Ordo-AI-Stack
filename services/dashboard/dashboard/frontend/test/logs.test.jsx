@@ -2,10 +2,10 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ToastProvider, useToast } from '../src/components/Toast.jsx'
 import { formatElapsed } from '../src/lib/format.js'
-import LogsPage from '../src/pages/LogsPage.jsx'
+import LogsPage, { dependencySummary, worstFirst } from '../src/pages/LogsPage.jsx'
 import ModelsPage from '../src/pages/ModelsPage.jsx'
 import ServicesPage from '../src/pages/ServicesPage.jsx'
-import { mockApi } from './mockApi.js'
+import { fixture, mockApi } from './mockApi.js'
 import { renderInShell } from './renderInShell.jsx'
 
 const sample = {
@@ -39,8 +39,13 @@ describe('LogsPage', () => {
     renderInShell(<LogsPage />)
     expect((await screen.findAllByText('Failing')).length).toBeGreaterThan(0)
     // Each PROBE target is its own row, in the table as in the cards.
-    const [statusTable] = screen.getAllByRole('table')
+    // Only the failing rows show until the rest are asked for.
+    let [statusTable] = screen.getAllByRole('table')
     expect(within(statusTable).getByText('langfuse')).toBeTruthy()
+    expect(within(statusTable).queryByText('open-webui')).toBeNull()
+    expect(screen.getByText('2 failing · 1 OK')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Show all 3' }))
+    ;[statusTable] = screen.getAllByRole('table')
     expect(within(statusTable).getByText('open-webui')).toBeTruthy()
     expect(screen.getAllByText('DEP-QDRANT-TIMEOUT').length).toBeGreaterThan(0)
     expect(screen.getAllByText('abc123').length).toBeGreaterThan(0)
@@ -129,5 +134,36 @@ describe('toast diagnostics', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Run a benchmark' }))
     await screen.findByRole('button', { name: 'Dismiss notification: Benchmark failed: Model gateway answered HTTP 503' })
     expect(toastTexts()[0]).toContain('DEP-GATEWAY-HTTP5XX · Trace trace77')
+  })
+})
+
+describe('the dependency list', () => {
+  it('puts failing dependencies first, not-seen-yet last, and keeps the order within each status', () => {
+    const rows = [
+      { dep: 'OPS', status: 'ok' }, { dep: 'GATEWAY', status: 'unknown' },
+      { dep: 'PROBE', target: 'a', status: 'failing' }, { dep: 'QDRANT', status: 'ok' },
+      { dep: 'PROBE', target: 'b', status: 'failing' },
+    ]
+    expect(worstFirst(rows).map((r) => r.target || r.dep)).toEqual(['a', 'b', 'OPS', 'QDRANT', 'GATEWAY'])
+  })
+
+  it('says how long ago, with the exact time on hover', async () => {
+    const now = Date.now() / 1000
+    mockApi({ 'GET /api/diagnostics': { ...fixture('/api/diagnostics'),
+      dependencies: [{ dep: 'OPS', target: null, status: 'ok', last_ok: now - 120, last_failure: null, consecutive_failures: 0 }] } })
+    renderInShell(<LogsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Show all 1' }))
+    const [when] = await screen.findAllByText('2 min ago')
+    expect(when.tagName).toBe('TIME')
+    expect(when.getAttribute('title')).toBe(new Date((now - 120) * 1000).toLocaleString())
+  })
+})
+
+describe('the dependency summary', () => {
+  it('reads at a glance', () => {
+    const row = (status) => ({ dep: 'X', status })
+    expect(dependencySummary([row('ok'), row('ok'), row('unknown')])).toBe('All 2 OK · 1 not seen yet')
+    expect(dependencySummary([row('failing'), row('ok'), row('unknown')])).toBe('1 failing · 1 OK · 1 not seen yet')
+    expect(dependencySummary([row('ok')])).toBe('All 1 OK')
   })
 })

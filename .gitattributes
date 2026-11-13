@@ -48,3 +48,5 @@ services/ninfer/** text eol=lf
 # The repo-owned ComfyUI node packs are copied verbatim into a Linux container at boot
 # (scripts/comfyui/boot.sh): keep their text files LF on every checkout. Fonts stay binary.
 services/comfyui/nodes/** text=auto eol=lf
+# Alloy reads its config from a bind mount (monitoring/alloy/config.alloy).
+*.alloy text eol=lf

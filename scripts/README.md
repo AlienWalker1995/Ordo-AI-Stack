@@ -48,6 +48,7 @@ the rendered config at startup, so there is no hot reload: apply a change with
 | Script | Purpose |
 |--------|---------|
 | `comfyui/workflows/minimax-music3.json` | The Music3 workflow the `song-gen` plugin declares (`workflow:` in `services/song-gen/plugin.yaml`, which also lists the model URLs under `weights:`). |
+| `comfyui/workflows/minimax-h3-image.json` | The MiniMax-H3-Image workflow (text to image and editing) the `image-gen` plugin declares (`services/image-gen/plugin.yaml`, which also lists the pinned model URLs and sha256s). Hermes' `image_generate` tool runs it through the GPU gate. |
 
 There is no ComfyUI model downloader script. Add a model with the `download_comfyui_model` MCP
 tool (`services/comfyui-mcp`, arguments `url` + `category`), which has ops-controller

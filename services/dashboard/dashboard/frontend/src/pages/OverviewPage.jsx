@@ -1,15 +1,16 @@
 // Overview: is it healthy, what is happening, what needs me. One screen, answered in that order.
-//   GET /api/overview        status line, GPUs and who holds them, chat engine, attention, host
+//   GET /api/overview        status line, GPUs and who holds them, every model engine, attention, host
 //   GET /api/drift           what `ordo doctor` would flag (ops-controller's read-only GET /doctor)
 //   GET /api/activity        renders, GPU leases and operator actions, newest first
-//   GET /api/perf/series     tokens generated per second by each chat server, last 24 h
-//   GET /api/models          which model file each role loads now
+//   GET /api/perf/series     tokens generated per second by each engine, last 24 h
 import { useRef, useState } from 'react'
 import { usePolling } from '../api.js'
 import { api } from '../api.js'
-import { Banner, BTN, Chip, Dot, Median, Meter, Panel, Skeleton, Sparkline, StatTile, Unavailable } from '../components/ui.jsx'
+import ModelEngines from '../components/ModelEngines.jsx'
+import { errorMeta, useToast } from '../components/Toast.jsx'
+import { Banner, BTN, Chip, Dot, Median, Meter, Panel, Skeleton, StatTile, Unavailable } from '../components/ui.jsx'
 import { clock, formatDuration, formatGb, pct, timeAgo } from '../lib/format.js'
-import { ACTIVITY_CATEGORIES, activityDaySummary, filterActivity, groupActivity, kpiTiles } from './overviewModel.js'
+import { ACTIVITY_CATEGORIES, activityDaySummary, filterActivity, groupActivity, kpiTiles, liveWork } from './overviewModel.js'
 
 const LEVEL_TONE = { ok: 'ok', warning: 'warning', critical: 'critical', unknown: 'unknown' }
 
@@ -99,91 +100,6 @@ function GpuCard({ gpu }) {
   )
 }
 
-// Both chat servers share one time axis so their histories line up.
-/** @returns {[number, number] | undefined} */
-function seriesDomain(series) {
-  const stamps = [...(series?.gpu || []), ...(series?.cpu || [])].map((p) => p[0])
-  return stamps.length ? [Math.min(...stamps), Math.max(...stamps)] : undefined
-}
-
-// The median's evidence as a tooltip: how many samples, over what span.
-function medianTitle(m) {
-  if (!m.n) return 'No samples yet'
-  const span = m.first_ts && m.last_ts ? `, ${clock(m.first_ts)} to ${clock(m.last_ts)}` : ''
-  return `${m.n} sample${m.n !== 1 ? 's' : ''}${span}`
-}
-
-// The analyst's panel: how the models are doing and being used. Speed by role with its history,
-// the combined token trend, the per-caller table when live work tracking lands (gap G4), and the
-// files each role loads now.
-/** @param {{ chat: object, series: object | null, models: object | null, modelsError: boolean }} props */
-function ModelUsage({ chat, series, models, modelsError }) {
-  const domain = seriesDomain(series)
-  return (
-    <div className="grid gap-4">
-      <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
-        {[
-          { key: 'gpu', label: 'GPU', tone: 'accent', points: series?.gpu },
-          { key: 'cpu', label: 'CPU fallback', tone: 'warning', points: series?.cpu },
-        ].map((s) => {
-          // The median comes from the ROLE series (a model swap does not reset it); the label
-          // names the file the server loads now.
-          const m = chat[s.key] || {}
-          return (
-            <div key={s.key} className="grid gap-1">
-              <span className="text-caption text-muted">{s.label} · median speed</span>
-              <Median value={m.p50} n={m.n} provisional={m.provisional} title={medianTitle(m)} />
-              {series?.available === false
-                ? <span className="text-caption text-muted">History needs the monitoring profile</span>
-                : <Sparkline points={s.points} tone={s.tone} domain={domain}
-                             label={`${s.label} tokens generated, last 24 hours${m.model ? `, ${m.model}` : ''}`} />}
-              <span className="truncate text-micro text-muted"
-                    title={m.model ? `${m.model}, output over the last 24 h` : undefined}>
-                {m.model || 'Output over the last 24 h'}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-      <div className="grid gap-1">
-        <span className="text-caption text-muted">Tokens per hour, last 24 h</span>
-        {series?.available === false
-          ? <span className="text-caption text-muted">History needs the monitoring profile</span>
-          : <Sparkline points={series?.gpu || []} height={48} domain={domain}
-                       compare={{ points: series?.cpu || [], tone: 'warning', label: 'CPU fallback' }}
-                       label="GPU and CPU fallback tokens generated per second, last 24 hours" />}
-        <span className="flex gap-3 text-micro text-muted">
-          <span className="inline-flex items-center gap-1"><Dot tone="info" /> GPU</span>
-          <span className="inline-flex items-center gap-1"><Dot tone="warning" /> CPU fallback</span>
-        </span>
-      </div>
-      <Unavailable>Per-caller usage arrives with live work tracking.</Unavailable>
-      <ActiveModels models={models} modelsError={modelsError} />
-    </div>
-  )
-}
-
-// Which file each role loads now, from /api/models: the "what is running" line.
-/** @param {{ models: object | null, modelsError: boolean }} props */
-function ActiveModels({ models, modelsError }) {
-  if (!models) {
-    return modelsError
-      ? <p className="text-caption text-muted">Active models unavailable.</p>
-      : <Skeleton className="h-4 w-40" />
-  }
-  const parts = []
-  if (models.gpu?.catalog_id) {
-    parts.push(models.gpu.ctx ? `${models.gpu.catalog_id} · ${Math.round(models.gpu.ctx / 1000)}k ctx` : models.gpu.catalog_id)
-  }
-  if (models.cpu?.file) parts.push(`CPU ${models.cpu.file}`)
-  if (models.embed?.file) parts.push(`embeddings ${models.embed.file}`)
-  if (!parts.length) return <p className="text-caption text-muted">Active models unavailable.</p>
-  return (
-    <p className="truncate text-caption text-fg-muted" title={parts.join(' · ')}>
-      <span className="text-muted">Active:</span> {parts.join(' · ')}
-    </p>
-  )
-}
 
 // The attention thresholds the backend applies to these meters (console._RAM_WARN_PCT,
 // _DISK_WARN_PCT): until /api/overview exposes them (gap G6) the page keeps the same numbers.
@@ -244,26 +160,79 @@ function Capacity({ gpus, host, knowledge }) {
 const SEVERITY_TONE = { critical: 'critical', warning: 'warning' }
 
 // Promoted to full width directly under the status line: what needs a person, most severe first.
-// Rendered only when non-empty; when nothing needs attention the status line already says so.
+// Each item can be dismissed: it leaves the list and the status line's count until its condition
+// clears, then the backend forgets the dismissal so a recurrence is listed again. Dismissed items
+// stay one click away under the list. Rendered only when there is something to show; when nothing
+// needs attention the status line already says so.
 // A container item links to #services, which applies no project filter yet; the filter arrives
 // with the Services filters slice.
-function AttentionStrip({ items }) {
-  if (!items.length) return null
+const LINK_BUTTON = 'shrink-0 rounded-sm text-caption font-semibold'
+
+function AttentionRow({ item, action }) {
+  return (
+    <li className="grid grid-cols-[auto_1fr] items-baseline gap-x-2.5 gap-y-1 sm:grid-cols-[auto_1fr_auto]">
+      <Dot tone={SEVERITY_TONE[item.severity] || 'warning'} label={item.severity} />
+      <span className="min-w-0 break-words text-body text-fg">
+        {item.title}
+        {item.detail && <span className="ml-2 text-caption text-muted">{item.detail}</span>}
+      </span>
+      <span className="col-start-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 sm:col-start-auto sm:justify-end">
+        {item.service && (
+          <a href="#services" className={LINK_BUTTON + ' text-accent-soft hover:text-accent'}>View in Services</a>
+        )}
+        {action}
+      </span>
+    </li>
+  )
+}
+
+function AttentionStrip({ items, dismissed = [], onChanged }) {
+  const toast = useToast()
+  const [showDismissed, setShowDismissed] = useState(false)
+  const [pending, setPending] = useState(null)
+  if (!items.length && !dismissed.length) return null
+
+  const act = async (verb, item) => {
+    setPending(item.id)
+    try {
+      await api.post(`/api/attention/${verb}`, { id: item.id })
+      await onChanged()
+    } catch (e) {
+      toast(`Could not ${verb} "${item.title}": ${e.message}`, 'error', errorMeta(e))
+    } finally {
+      setPending(null)
+    }
+  }
+  const button = (verb, label, item) => (
+    <button type="button" disabled={pending === item.id} onClick={() => act(verb, item)}
+            aria-label={`${label} ${item.title}`}
+            className={LINK_BUTTON + ' text-muted hover:text-fg disabled:opacity-40'}>
+      {label}
+    </button>
+  )
+
   return (
     <section aria-labelledby="attention-heading" className="grid gap-2 rounded-md border border-border-subtle bg-bg-elevated p-4">
       <h2 id="attention-heading" className="sr-only">Needs attention</h2>
-      {items.map((a) => (
-        <div key={a.title} className="grid grid-cols-[auto_1fr_auto] items-baseline gap-x-2.5">
-          <Dot tone={SEVERITY_TONE[a.severity] || 'warning'} label={a.severity} />
-          <span className="min-w-0 break-words text-body text-fg">
-            {a.title}
-            {a.detail && <span className="ml-2 text-caption text-muted">{a.detail}</span>}
-          </span>
-          {a.service && (
-            <a href="#services" className="shrink-0 text-caption font-semibold text-accent-soft hover:text-accent">View in Services</a>
+      {items.length > 0 && (
+        <ul className="grid gap-2">
+          {items.map((a) => <AttentionRow key={a.id} item={a} action={button('dismiss', 'Dismiss', a)} />)}
+        </ul>
+      )}
+      {dismissed.length > 0 && (
+        <div className={'grid gap-2' + (items.length ? ' border-t border-border-subtle pt-2' : '')}>
+          <button type="button" aria-expanded={showDismissed} aria-controls="attention-dismissed"
+                  onClick={() => setShowDismissed((v) => !v)}
+                  className={LINK_BUTTON + ' justify-self-start text-muted hover:text-fg'}>
+            {dismissed.length} dismissed {showDismissed ? '(hide)' : '(show)'}
+          </button>
+          {showDismissed && (
+            <ul id="attention-dismissed" className="grid gap-2 opacity-70">
+              {dismissed.map((a) => <AttentionRow key={a.id} item={a} action={button('restore', 'Restore', a)} />)}
+            </ul>
           )}
         </div>
-      ))}
+      )}
     </section>
   )
 }
@@ -292,7 +261,7 @@ const CATEGORY_LABEL = { all: 'All', render: 'Renders', gpu: 'GPU leases', servi
 // the lease's duration and eviction note when the row is a GPU lease (a run of leases reads its
 // GPU time in all). A single lease's own start to end rides in the tooltip: the row's clock is the
 // event's stamp, and the duration says how long the GPU was out.
-/** @param {{ g: { ts: number, oldestTs: number, count: number, kind: string, title: string, severity: string, holder?: string | null, started?: number | null, ended?: number | null, duration_s?: number | null, evicted_chat?: boolean } }} props */
+/** @param {{ g: { ts: number, oldestTs: number, count: number, kind: string, title: string, severity: string, holder?: string | null, started?: number | null, ended?: number | null, duration_s?: number | null, evicted?: string[] } }} props */
 function ActivityRow({ g }) {
   const lease = g.kind === 'gpu'
   const duration = lease && g.duration_s != null
@@ -301,7 +270,7 @@ function ActivityRow({ g }) {
     ? `${clock(g.started)} to ${clock(g.ended)}` : ''
   const runSpan = g.count > 1 ? `${clock(g.oldestTs)} to ${clock(g.ts)}` : ''
   const tooltip = [g.title, g.count > 1 ? `${g.count} times` : '', leaseSpan || runSpan, duration,
-    g.evicted_chat ? 'chat model evicted' : ''].filter(Boolean).join(' · ')
+    g.evicted?.length ? `${g.evicted.join(', ')} stopped for it` : ''].filter(Boolean).join(' · ')
   return (
     <li className="grid grid-cols-[3.25rem_auto_minmax(0,1fr)] items-center gap-2.5">
       <time className="font-mono text-caption tabular-nums text-muted" title={timeAgo(g.ts)}>{clock(g.ts)}</time>
@@ -310,7 +279,7 @@ function ActivityRow({ g }) {
         {g.title}
         {g.count > 1 && <span className="text-caption text-muted"> ×{g.count}</span>}
         {duration && <span className="text-caption text-muted"> · {duration}</span>}
-        {g.evicted_chat && <span className="text-caption text-warning"> · chat model evicted</span>}
+        {g.evicted?.length > 0 && <span className="text-caption text-warning"> · {g.evicted.join(', ')} stopped for it</span>}
         {runSpan && <span className="text-caption text-muted"> · {runSpan}</span>}
       </span>
     </li>
@@ -352,6 +321,113 @@ function ActivityFeed({ items, expanded, onShowMore }) {
   )
 }
 
+const APP_STATUS = {
+  up: { tone: 'ok', label: 'up' },
+  down: { tone: 'critical', label: 'down' },
+  unknown: { tone: 'unknown', label: 'status unknown' },
+}
+
+// The launcher: every web UI there is to open, grouped, one click each. The list is the
+// overview's `apps` (catalog cards with an Open link, and containers labelled the Homepage way).
+function AppLauncher({ apps }) {
+  if (!apps.length) return null
+  const groups = []
+  for (const app of apps) {
+    const last = groups[groups.length - 1]
+    if (last && last.name === app.group) last.apps.push(app)
+    else groups.push({ name: app.group, apps: [app] })
+  }
+  return (
+    <div className="grid gap-4">
+      {groups.map((g, i) => (
+        <section key={g.name} aria-labelledby={`apps-group-${i}`} className="grid gap-2">
+          <h3 id={`apps-group-${i}`} className="text-label text-muted">{g.name}</h3>
+          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {g.apps.map((a) => {
+              const status = APP_STATUS[a.status] || APP_STATUS.unknown
+              return (
+                <li key={`${a.name} ${a.url}`} className="min-w-0">
+                  <a href={a.url} target="_blank" rel="noreferrer"
+                     className="grid h-full min-w-0 grid-cols-[auto_1fr] items-baseline gap-x-2.5 gap-y-0.5 rounded-sm border border-border-subtle bg-bg px-3 py-2.5 no-underline transition-colors hover:border-accent/40 hover:bg-surface-hover">
+                    <Dot tone={status.tone} />
+                    <span className="truncate text-body font-semibold text-fg">
+                      {a.name}<span className="sr-only">, {status.label}</span>
+                    </span>
+                    {a.description && <span className="col-start-2 truncate text-caption text-muted" title={a.description}>{a.description}</span>}
+                  </a>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+const count = (n) => (n == null ? '?' : n.toLocaleString())
+
+// Live work: who has the local engines busy right now, and each caller's last few minutes, from
+// the model gateway's request events (GET /api/work). In memory on the dashboard, so it starts
+// empty after a restart, which is right for a live view.
+function LiveWork({ work, error, engines }) {
+  if (!work) {
+    return error ? <Unavailable>Live work is unavailable: {error.message}</Unavailable> : <Skeleton className="h-16 w-full" />
+  }
+  const { running, prefill, windowS, callers } = liveWork(work, engines)
+  const minutes = Math.round(windowS / 60)
+  return (
+    <div className="grid gap-4">
+      <section aria-labelledby="live-now" className="grid gap-2">
+        <h3 id="live-now" className="text-label text-muted">
+          {running.length ? `${running.length} request${running.length === 1 ? '' : 's'} running` : 'Nothing running now'}
+        </h3>
+        {running.length > 0 && (
+          <ul className="grid gap-1.5">
+            {running.map((r) => (
+              <li key={r.id} className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <Dot tone="info" label="running" />
+                <span className="text-body text-fg">{r.caller}</span>
+                <span className="min-w-0 truncate font-mono text-caption text-fg-muted">{r.where}</span>
+                {r.fallback && <Chip tone="warning" title="The chat model was busy or away, so the fallback took it">Fallback</Chip>}
+                <span className="ml-auto text-caption tabular-nums text-muted">
+                  {count(r.promptTokens)} prompt tokens · {formatDuration(r.runningS)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {prefill.map((p) => (
+          <div key={p.where} className="grid gap-1">
+            <span className="text-caption text-muted">
+              Reading the prompt on {p.where}: {count(p.done)} of {count(p.total)} tokens
+            </span>
+            <Meter value={Math.min(100, (100 * p.done) / p.total)} label={`Prompt read on ${p.where}`} />
+          </div>
+        ))}
+      </section>
+      <section aria-labelledby="live-recent" className="grid gap-2">
+        <h3 id="live-recent" className="text-label text-muted">Last {minutes} minutes, by caller</h3>
+        {callers.length ? (
+          <ul className="grid divide-y divide-border-subtle">
+            {callers.map((c) => (
+              <li key={c.caller} className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-0.5 py-1.5 first:pt-0 last:pb-0">
+                <span className="text-body text-fg">{c.caller}</span>
+                <span className="text-caption tabular-nums text-fg-muted">{count(c.requests)} request{c.requests === 1 ? '' : 's'}</span>
+                {c.errors > 0 && <span className="text-caption tabular-nums text-danger">{count(c.errors)} failed</span>}
+                <span className="text-caption tabular-nums text-muted">
+                  {count(c.prompt_tokens)} in · {count(c.completion_tokens)} out
+                </span>
+                <span className="ml-auto text-caption tabular-nums text-muted">median {c.p50_latency_s.toFixed(1)} s</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-caption text-muted">No requests in the last {minutes} minutes.</p>}
+      </section>
+    </div>
+  )
+}
+
 export default function OverviewPage() {
   const overview = usePolling(() => api.get('/api/overview'), 5000)
   // The feed starts at the endpoint's default (25 items); "Show more" widens it to the cap (100)
@@ -363,7 +439,7 @@ export default function OverviewPage() {
   const series = usePolling(() => api.get('/api/perf/series'), 60000)
   // Slower than the overview: each call runs the open-webui probe inside its container.
   const drift = usePolling(() => api.get('/api/drift'), 60000)
-  const models = usePolling(() => api.get('/api/models'), 60000)
+  const work = usePolling(() => api.get('/api/work'), 5000)
   const o = overview.data
   const driftCount = drift.data?.available ? drift.data.findings.length : 0
 
@@ -382,17 +458,25 @@ export default function OverviewPage() {
   return (
     <div className="grid gap-4 [&>*]:min-w-0">
       <StatusLine overview={o} driftCount={driftCount} lastUpdated={overview.lastUpdated} />
-      <AttentionStrip items={o.attention} />
+      <AttentionStrip items={o.attention} dismissed={o.attention_dismissed} onChanged={overview.refresh} />
       <Drift drift={drift.data} />
       <KpiBand tiles={kpiTiles(o, series.data)} />
+      {(o.apps || []).length > 0 && (
+        <Panel title="Apps">
+          <AppLauncher apps={o.apps} />
+        </Panel>
+      )}
       <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-        <Panel title="Model usage">
-          <ModelUsage chat={o.chat} series={series.data} models={models.data} modelsError={!!models.error} />
+        <Panel title="Model engines">
+          <ModelEngines engines={o.engines || []} series={series.data} ratesAvailable={o.rates_available !== false} />
         </Panel>
         <Panel title="Capacity">
           <Capacity gpus={o.gpus} host={o.host} knowledge={o.knowledge} />
         </Panel>
       </div>
+      <Panel title="Live work">
+        <LiveWork work={work.data} error={work.error} engines={o.engines || []} />
+      </Panel>
       <Panel title="Activity">
         {activity.data ? <ActivityFeed items={activity.data.items} expanded={activityExpanded} onShowMore={showMoreActivity} />
           : activity.error ? <Unavailable>Activity is unavailable.</Unavailable>

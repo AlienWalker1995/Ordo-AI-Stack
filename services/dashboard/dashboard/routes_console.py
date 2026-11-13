@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from pathlib import Path
@@ -15,9 +16,10 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
-from dashboard import console
+from dashboard import attention_store, console, diagnostics
+from dashboard.services_catalog import load_service_groups
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["console"])
@@ -34,20 +36,27 @@ LLAMACPP_EMBED_URL = os.environ.get("LLAMACPP_EMBED_URL", "http://inference-engi
 # The Grafana dashboard the Performance page embeds (monitoring/grafana/dashboards), kiosk mode.
 GRAFANA_EMBED_PATH = "/grafana/d/ordo-llm-gpu/ordo-performance?orgId=1&kiosk&theme=dark&refresh=10s"
 
-# Tokens generated per second by each chat server, one series per `job` label. A rate over a
-# counter rather than an instantaneous gauge, because a gauge goes stale when a server is evicted
-# and a sparkline of stale samples draws a flat line that never happened.
-# GPU: the gateway's output-token counter for the deployment at inference-engine-gpu:8080, the same expression
-# as the Grafana GPU panels. It holds for either engine there; llama.cpp's own counter does not,
-# because NInfer serves none of llama.cpp's token counters. Relabelled job="inference-engine-gpu" so both series parse alike.
-# CPU: the llama.cpp CPU fallback's own counter.
-_GPU_TOKEN_RATE_QUERY = (
-    'label_replace(sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() '
-    '(max by (model_id) (litellm_deployment_latency_per_output_token_count'
-    '{api_base="http://inference-engine-gpu:8080/v1"}) * 0 + 1)), "job", "inference-engine-gpu", "", "")'
-)
-_CPU_TOKEN_RATE_QUERY = 'sum by (job) (rate(llamacpp:tokens_predicted_total{job="inference-engine-cpu"}[5m]))'
-_TOKEN_RATE_QUERY = f"{_GPU_TOKEN_RATE_QUERY} or {_CPU_TOKEN_RATE_QUERY}"
+# Model-engine figures, from ops-controller's ordo_engine_* family (ordo/control/engine_metrics.py):
+# every engine the registry lists, read the engine's own way, labelled by `engine` (its service).
+# Nothing here names an engine. Speeds divide tokens by the time spent on them, so a queue does not
+# read as a slow model; prompt work excludes prefix-cache hits.
+_ENGINE_RATE_QUERIES = {
+    # tokens generated per second now (5 minute rate)
+    "output_tps": "sum by (engine) (rate(ordo_engine_output_tokens_total[5m]))",
+    # tokens per second while generating, over the last hour
+    "generation_tps": ("sum by (engine) (increase(ordo_engine_output_tokens_total[1h]))"
+                       " / sum by (engine) (increase(ordo_engine_output_seconds_total[1h]))"),
+    # prompt tokens per second while computing prompts, over the last hour
+    "prompt_tps": ("sum by (engine) (increase(ordo_engine_prompt_tokens_processed_total[1h]))"
+                   " / sum by (engine) (increase(ordo_engine_prompt_seconds_total[1h]))"),
+    # share of prompt tokens reused from the prefix cache, over the last hour
+    "cache_reuse": ("sum by (engine) (increase(ordo_engine_prompt_tokens_cached_total[1h]))"
+                    " / (sum by (engine) (increase(ordo_engine_prompt_tokens_cached_total[1h]))"
+                    " + sum by (engine) (increase(ordo_engine_prompt_tokens_processed_total[1h])))"),
+    "waiting": "sum by (engine) (ordo_engine_requests_waiting)",
+}
+# The history the Overview draws: tokens generated per second, one series per engine.
+_ENGINE_OUTPUT_SERIES_QUERY = "sum by (engine) (rate(ordo_engine_output_tokens_total[5m]))"
 
 # A switch is one ops-controller call that renders and recreates the changed set in one compose
 # call (600s at most there, DockerBackend.recreate_services), so this outlasts it.
@@ -89,7 +98,6 @@ async def _get_json(url: str, timeout: float = 10.0, *, dep: str) -> dict | None
     dependency answered — it is up, so it marks ok and still returns None. The dep must be
     named: PROBE keeps its status per target, so a bare "PROBE" would raise from
     diagnostics._status_key on the success path instead of degrading."""
-    from dashboard import diagnostics
     from dashboard.app import _get_http_client
 
     target = urlsplit(url).path or url
@@ -147,12 +155,6 @@ async def _rag() -> dict:
     return await rag_status()
 
 
-async def _throughput() -> dict:
-    from dashboard.app import throughput_stats
-
-    return await throughput_stats()
-
-
 async def _disk_files() -> list[dict]:
     from dashboard.app import _scan_gguf_models
 
@@ -208,13 +210,40 @@ def _status_line(status_gpu: dict | None, attention: list[dict], host_containers
 # overview + activity
 # ---------------------------------------------------------------------------------------------
 
+async def _engine_rates() -> dict[str, dict] | None:
+    """engine -> {output_tps, generation_tps, prompt_tps, cache_reuse, waiting}, from Prometheus.
+    None when Prometheus cannot be read at all (the monitoring profile is off, or it is down); a
+    figure whose own query failed, or that has no samples yet (an engine idle for the window), is
+    absent from its engine's dict."""
+    names = list(_ENGINE_RATE_QUERIES)
+    answers = await asyncio.gather(*(
+        _get_json(f"{PROMETHEUS_URL}/api/v1/query?{urlencode({'query': _ENGINE_RATE_QUERIES[n]})}",
+                  timeout=10.0, dep="PROMETHEUS")
+        for n in names))
+    answered = [(n, a) for n, a in zip(names, answers, strict=True) if a and a.get("status") == "success"]
+    if not answered:
+        return None
+    # A figure whose query failed is left out of every engine; the others still show.
+    rates: dict[str, dict] = {}
+    for name, answer in answered:
+        for result in answer.get("data", {}).get("result", []):
+            engine = result.get("metric", {}).get("engine")
+            try:
+                value = float(result["value"][1])
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+            if engine and math.isfinite(value):
+                rates.setdefault(engine, {})[name] = round(value, 3 if name == "cache_reuse" else 1)
+    return rates
+
+
 @router.get("/overview")
 async def overview() -> dict:
-    status, services, registry, hardware, cards, rag, throughput, served, host_containers, managed = \
+    status, services, registry, hardware, cards, rag, rates, host_containers, managed, history = \
         await asyncio.gather(
             _ops_json("/status"), _ops_json("/services"), _ops_json("/registry/models"),
-            _hardware(), _service_cards(), _rag(), _throughput(), _served(),
-            _host_containers(), _ops_json("/projects"),
+            _hardware(), _service_cards(), _rag(), _engine_rates(),
+            _host_containers(), _ops_json("/projects"), _ops_json("/jobs/history"),
         )
     status_gpu = (status or {}).get("gpu") if status else None
     containers = _containers(services)
@@ -224,26 +253,155 @@ async def overview() -> dict:
                                        control_plane_up=services is not None,
                                        host_containers=host_containers, managed=managed)
     host_rows = [r for r in rows if r["project"] != console.ORDO_PROJECT]
-    attention = console.build_attention(cards, containers, hardware, status_gpu, host_rows=host_rows)
-    engine = console.chat_engine(status_gpu, containers)
-    medians = console.chat_medians(throughput, served, _registry(registry))
+    every_item = console.build_attention(cards, containers, hardware, status_gpu, host_rows=host_rows,
+                                         leases=(history or {}).get("history"))
+    attention, dismissed = await _apply_dismissals(every_item, _sources_read(
+        cards=cards, services=services, host_containers=host_containers, managed=managed,
+        hardware=hardware, history=history))
+    names = console.service_names(cards)
+    engines = console.model_engines(_registry(registry), containers, status_gpu, rates, names)
     return {
         "status": _status_line(status_gpu, attention, host_containers_down=host_containers is None),
         # A one-shot job that finished ("done", exit 0) is not a service that should be up.
         "services": console.service_counts(rows),
         # Whether the rows outside the ordo project could be read at all.
         "host_containers": "up" if host_containers is not None else "down",
-        "gpus": console.gpu_cards((hardware or {}).get("gpus") or [], _registry(registry), status_gpu),
-        "chat": {**engine, **medians},
+        "gpus": console.gpu_cards((hardware or {}).get("gpus") or [], _registry(registry), status_gpu, names),
+        # Every model engine, and who answers local-chat now. `rates_available` is False when the
+        # speeds could not be read (Prometheus is part of the monitoring profile).
+        "engines": engines,
+        "chat": console.chat_summary(engines, status_gpu),
+        "rates_available": rates is not None,
         "attention": attention,
+        # Items a person dismissed; each comes back on its own once its condition clears.
+        "attention_dismissed": dismissed,
         "host": {k: (hardware or {}).get(k) for k in
                  ("cpu_pct", "ram_used_gb", "ram_total_gb", "ram_pct",
                   "disk_used_gb", "disk_total_gb", "disk_pct")},
         "knowledge": {"documents": (rag or {}).get("points_count") if (rag or {}).get("ok") else None},
-        "links": [{"name": c["name"], "url": c["open_url"]} for c in cards
-                  if c.get("open_url") and not c.get("background")],
+        # Every web UI to open: catalog cards with an Open link and Homepage-labelled containers.
+        "apps": console.launcher_apps(cards, host_containers),
         "generated_at": time.time(),
     }
+
+
+# ---------------------------------------------------------------------------------------------
+# attention dismissals
+# ---------------------------------------------------------------------------------------------
+
+def _dismissals_path() -> Path:
+    from dashboard.app import DASHBOARD_DATA_PATH
+
+    return DASHBOARD_DATA_PATH / attention_store.FILE_NAME
+
+
+# Serialises the read-modify-write of the dismissals file between overview polls and clicks.
+_dismissals_lock = asyncio.Lock()
+
+
+def _sources_read(*, cards, services, host_containers, managed, hardware, history) -> set[str]:
+    """The attention sources (console.ATTENTION_SOURCES) this poll actually read. A source that
+    failed reports none of its conditions, which must not read as every one of them clearing."""
+    hardware = hardware or {}
+    read = {
+        "cards": bool(cards),
+        "services": services is not None,
+        # A foreign container's verdict comes from the host list, or the managed project's own row.
+        "host": host_containers is not None and managed is not None,
+        # hardware_stats always answers, with None for a metric it could not read.
+        "disk": hardware.get("disk_pct") is not None,
+        "memory": hardware.get("ram_pct") is not None,
+        "history": history is not None,
+    }
+    return {source for source, ok in read.items() if ok}
+
+
+def _load_and_prune(items: list[dict], read: set[str]) -> dict:
+    path = _dismissals_path()
+    dismissed = attention_store.load(path)
+    kept = console.prune_dismissals(dismissed, items, read)
+    if kept != dismissed:
+        try:
+            attention_store.save(path, kept)
+            diagnostics.mark_ok("FS")
+        except OSError as e:
+            # Degrade, don't 500: this poll's answer is still right, and the next one prunes again.
+            diagnostics.record_failure("FS", "UNWRITABLE", f"{type(e).__name__}: {e.strerror or e}",
+                                       target=attention_store.FILE_NAME, elapsed_ms=0)
+    return kept
+
+
+def _dismiss(item_id: str) -> None:
+    path = _dismissals_path()
+    dismissed = attention_store.load(path)
+    dismissed[item_id] = time.time()
+    try:
+        attention_store.save(path, dismissed)
+        # A write that lands means the volume answers again: clear the recorded failure the
+        # way the polls' pruning does.
+        diagnostics.mark_ok("FS")
+    except OSError as e:
+        # A failed write on a click surfaces to the person who clicked: answer it like the
+        # other dependency failures in this file (503 + clear detail), and record it in
+        # diagnostics so an unwritable volume is visible even when the polls' pruning
+        # removes nothing.
+        diagnostics.record_failure("FS", "UNWRITABLE", f"{type(e).__name__}: {e.strerror or e}",
+                                   target=attention_store.FILE_NAME, elapsed_ms=0)
+        raise HTTPException(status_code=503, detail="The data volume could not be written, so the item is still listed")
+
+
+def _restore(item_id: str) -> None:
+    path = _dismissals_path()
+    dismissed = attention_store.load(path)
+    if dismissed.pop(item_id, None) is not None:
+        try:
+            attention_store.save(path, dismissed)
+            # A write that lands means the volume answers again: clear the recorded failure
+            # the way the polls' pruning does.
+            diagnostics.mark_ok("FS")
+        except OSError as e:
+            # Same as _dismiss: 503 + clear detail, and the failure lands in diagnostics.
+            diagnostics.record_failure("FS", "UNWRITABLE", f"{type(e).__name__}: {e.strerror or e}",
+                                       target=attention_store.FILE_NAME, elapsed_ms=0)
+            raise HTTPException(status_code=503, detail="The data volume could not be written, so the item is still dismissed")
+
+
+async def _apply_dismissals(items: list[dict], read: set[str]) -> tuple[list[dict], list[dict]]:
+    # File I/O runs off the event loop: this is on every overview poll.
+    async with _dismissals_lock:
+        dismissed = await asyncio.to_thread(_load_and_prune, items, read)
+    return console.split_dismissed(items, dismissed)
+
+
+class AttentionBody(BaseModel):
+    id: str = Field(min_length=1, max_length=300)
+
+    @field_validator("id")
+    @classmethod
+    def _names_a_known_kind(cls, value: str) -> str:
+        # Only ids build_attention can produce: a junk or mistyped id would never be pruned (its
+        # source is unknown), so the dismissals file would keep it for good.
+        kind = value.split(":", 1)[0]
+        if kind not in console.ATTENTION_SOURCES:
+            raise ValueError(f"not an attention item id: its kind {kind!r} is not one of "
+                             f"{sorted(console.ATTENTION_SOURCES)}")
+        return value
+
+
+@router.post("/attention/dismiss")
+async def dismiss_attention(body: AttentionBody) -> dict:
+    """Hide one attention item until its condition clears."""
+    async with _dismissals_lock:
+        await asyncio.to_thread(_dismiss, body.id)
+    return {"ok": True}
+
+
+@router.post("/attention/restore")
+async def restore_attention(body: AttentionBody) -> dict:
+    """List a dismissed item again."""
+    async with _dismissals_lock:
+        await asyncio.to_thread(_restore, body.id)
+    return {"ok": True}
 
 
 @router.get("/drift")
@@ -258,9 +416,13 @@ async def activity(limit: int = Query(25, ge=1, le=100)) -> dict:
     history, audit, renders = await asyncio.gather(
         _ops_json("/jobs/history"), _ops_json("/audit?limit=100"), _comfy_json("/history?max_items=40"),
     )
+    # Card names come from the static catalog: this polls every 15 s, and probing every service's
+    # health only to name a lease holder would cost a request per service per poll.
+    from dashboard.services_catalog import visible_services
+
     items = console.merge_activity(
         (history or {}).get("history", []), (audit or {}).get("entries", []),
-        console.summarise_renders(renders or {}, 40), limit,
+        console.summarise_renders(renders or {}, 40), limit, names=console.service_names(visible_services()),
     )
     return {"items": items}
 
@@ -278,7 +440,7 @@ async def services_table() -> dict:
     control_plane_up = services is not None
     rows = console.build_service_table(cards, _containers(services), (status or {}).get("gpu"),
                                        control_plane_up=control_plane_up, host_containers=host_containers,
-                                       managed=managed)
+                                       managed=managed, groups=load_service_groups())
     # host_containers: whether the rows outside the ordo project could be read at all.
     return {"rows": rows, "control_plane": "up" if control_plane_up else "down",
             "host_containers": "up" if host_containers is not None else "down"}
@@ -290,12 +452,20 @@ async def services_table() -> dict:
 
 @router.get("/models")
 async def models() -> dict:
-    model_config, served, disk, throughput = await asyncio.gather(
-        _ops_json("/model-config"), _served(), _disk_files(), _throughput(),
+    """The engines (the registry's, as on the Overview, without speeds: the Overview carries
+    those), the catalog and the model files on disk."""
+    model_config, served, disk, registry, services, status = await asyncio.gather(
+        _ops_json("/model-config"), _served(), _disk_files(), _ops_json("/registry/models"),
+        _ops_json("/services"), _ops_json("/status"),
     )
     if model_config is None:
         raise HTTPException(status_code=503, detail="The control plane is not answering")
-    return console.model_slots(model_config, served, disk, throughput)
+    status_gpu = (status or {}).get("gpu") if status else None
+    from dashboard.services_catalog import visible_services
+
+    engines = console.model_engines(_registry(registry), _containers(services), status_gpu, None,
+                                    console.service_names(visible_services()))
+    return {"engines": engines, **console.model_files(model_config, served, disk)}
 
 
 class SwitchBody(BaseModel):
@@ -400,19 +570,20 @@ async def _delete(name: str) -> dict:
 
 @router.get("/perf/series")
 async def perf_series(hours: int = Query(24, ge=1, le=168)) -> dict:
+    """Tokens generated per second by every measured engine, keyed by engine (its service)."""
     end = int(time.time())
     start = end - hours * 3600
     step = max(60, hours * 3600 // 288)
-    query = urlencode({"query": _TOKEN_RATE_QUERY, "start": start, "end": end, "step": step})
+    query = urlencode({"query": _ENGINE_OUTPUT_SERIES_QUERY, "start": start, "end": end, "step": step})
     data = await _get_json(f"{PROMETHEUS_URL}/api/v1/query_range?{query}", timeout=15.0, dep="PROMETHEUS")
     if not data or data.get("status") != "success":
-        return {"available": False, "gpu": [], "cpu": []}
-    series: dict[str, list[list[Any]]] = {"gpu": [], "cpu": []}
+        return {"available": False, "series": {}}
+    series: dict[str, list[list[Any]]] = {}
     for result in data.get("data", {}).get("result", []):
-        key = {"inference-engine-gpu": "gpu", "inference-engine-cpu": "cpu"}.get(result.get("metric", {}).get("job"))
-        if key:
-            series[key] = [[int(t), round(float(v), 2)] for t, v in result.get("values", [])]
-    return {"available": True, **series}
+        engine = result.get("metric", {}).get("engine")
+        if engine:
+            series[engine] = [[int(t), round(float(v), 2)] for t, v in result.get("values", [])]
+    return {"available": True, "series": series}
 
 
 @router.get("/perf/grafana")

@@ -27,7 +27,7 @@ describe('the Drift callout', () => {
   ])('is absent with %s', async (_name, answer) => {
     mockApi({ 'GET /api/drift': answer })
     renderInShell(<OverviewPage />)
-    await screen.findByRole('heading', { name: 'Model usage' })
+    await screen.findByRole('heading', { name: 'Model engines' })
     expect(screen.queryByRole('heading', { name: 'Drift' })).toBeNull()
   })
 })
@@ -35,7 +35,7 @@ describe('the Drift callout', () => {
 // The header's summary counts drift with what needs attention, so it never reads "All systems
 // normal" above a Drift callout.
 describe('the status line with drift', () => {
-  const calm = () => ({ ...fixture('/api/overview'), attention: [], status: { level: 'ok', text: 'All systems normal' } })
+  const calm = () => ({ ...fixture('/api/overview'), attention: [], attention_dismissed: [], status: { level: 'ok', text: 'All systems normal' } })
 
   it('counts a drift finding when nothing else needs attention', async () => {
     mockApi({ 'GET /api/overview': calm })
@@ -67,7 +67,7 @@ describe('the status line with drift', () => {
     // Empty attention plus a drift finding: withDrift rebuilds the count from zero, and the gap
     // note must survive that path too (the backend line would otherwise read "Host containers
     // could not be read" and get replaced by a bare count).
-    mockApi({ 'GET /api/overview': () => ({ ...fixture('/api/overview'), attention: [], host_containers: 'down' }) })
+    mockApi({ 'GET /api/overview': () => ({ ...fixture('/api/overview'), attention: [], attention_dismissed: [], host_containers: 'down' }) })
     renderInShell(<OverviewPage />)
     await screen.findByRole('heading', { name: 'Drift' })
     expect(screen.getByText('1 thing needs you · host containers unread')).toBeTruthy()

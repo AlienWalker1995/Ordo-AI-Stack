@@ -1,34 +1,17 @@
-// Models: what each chat server is running, switching the GPU model the one safe way, and the
-// model files on disk.
-//   GET  /api/models                slots (gpu, cpu, embed), catalog (installed, active), files (in_use)
+// Models: what each engine is running, switching the GPU model the one safe way, and the model
+// files on disk.
+//   GET  /api/models                engines (the registry's, as on the Overview), catalog
+//                                   (installed, active), files (in_use)
 //   POST /api/models/switch         catalog id -> render -> recreate what the render changed
 //   POST /api/models/delete         refuses a file any server depends on
 //   POST /api/throughput/benchmark  a short generation against local-chat
 import { useState } from 'react'
 import { api, usePolling } from '../api.js'
+import ModelEngines from '../components/ModelEngines.jsx'
 import { BTN, BTN_DANGER, BTN_PRIMARY, Chip, INPUT, Panel, Skeleton, Unavailable } from '../components/ui.jsx'
 import { useHostSteps } from '../components/HostSteps.jsx'
 import { errorMeta, useToast } from '../components/Toast.jsx'
 import { formatBytes, formatRate } from '../lib/format.js'
-
-function Slot({ title, file, children }) {
-  return (
-    <div className="grid content-start gap-1.5 rounded-sm border border-border-subtle bg-bg p-3">
-      <span className="text-micro font-bold uppercase tracking-[0.12em] text-muted">{title}</span>
-      <span className="break-all font-mono text-caption text-fg">{file || 'Not reported'}</span>
-      {children}
-    </div>
-  )
-}
-
-function Speed({ p50, n = 0, provisional = false }) {
-  return (
-    <span className="text-caption text-muted">
-      Median speed <span className="font-mono tabular-nums text-fg">{formatRate(p50)}</span> tok/s
-      {provisional && <span className="text-warning"> · {n} sample{n !== 1 ? 's' : ''}, provisional</span>}
-    </span>
-  )
-}
 
 function SwitchModel({ data, onSwitched }) {
   const toast = useToast()
@@ -59,17 +42,33 @@ function SwitchModel({ data, onSwitched }) {
   }
 
   return (
-    <div className="grid gap-2">
-      <label htmlFor="model-switch" className="text-label text-muted">Switch the GPU model</label>
+    <div className="grid gap-2 [&>*]:min-w-0">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <label htmlFor="model-switch" className="text-label text-muted">Switch the GPU model</label>
+        {data.active_model && (
+          <span className="text-caption text-muted">Running <code className="text-fg-muted">{data.active_model}</code></span>
+        )}
+      </div>
       <div className="flex flex-wrap gap-2">
         <select id="model-switch" className={INPUT + ' min-w-0 flex-1 basis-64'} value={choice} disabled={busy}
                 onChange={(e) => setChoice(e.target.value)}>
           <option value="">Choose a model from the catalog…</option>
-          {data.catalog.map((c) => (
-            <option key={c.id} value={c.id} disabled={!c.installed || c.active}>
-              {c.id}{c.active ? ' (running)' : !c.installed ? ' (not downloaded)' : ''}
-            </option>
-          ))}
+          {/* What can be switched to comes first; the rest of the catalog is listed under it so
+              its ids stay discoverable, but cannot be picked. */}
+          {installed.length > 0 && (
+            <optgroup label="Downloaded">
+              {installed.map((c) => (
+                <option key={c.id} value={c.id} disabled={c.active}>{c.id}{c.active ? ' (running)' : ''}</option>
+              ))}
+            </optgroup>
+          )}
+          {data.catalog.some((c) => !c.installed) && (
+            <optgroup label="Not downloaded">
+              {data.catalog.filter((c) => !c.installed).map((c) => (
+                <option key={c.id} value={c.id} disabled>{c.id}</option>
+              ))}
+            </optgroup>
+          )}
         </select>
         <button type="button" className={BTN_PRIMARY} disabled={busy || !target} onClick={run}>
           {busy ? 'Switching…' : 'Switch'}
@@ -201,24 +200,9 @@ export default function ModelsPage() {
   return (
     <div className="grid gap-4 [&>*]:min-w-0">
       <Panel title="Running now">
-        <div className="grid gap-3 md:grid-cols-3 [&>*]:min-w-0">
-          <Slot title="GPU chat" file={d.gpu.file}>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {d.gpu.catalog_id && <Chip>{d.gpu.catalog_id}</Chip>}
-              {!d.gpu.loaded && <Chip tone="warning" title="A render has the GPU, or the server is restarting">Not loaded now</Chip>}
-            </div>
-            <Speed p50={d.gpu.p50} n={d.gpu.n} provisional={d.gpu.provisional} />
-            {d.gpu.ctx && <span className="text-caption text-muted">Context <span className="font-mono tabular-nums text-fg">{d.gpu.ctx.toLocaleString()}</span> tokens</span>}
-          </Slot>
-          <Slot title="CPU fallback" file={d.cpu.file}>
-            <span className="text-caption text-muted">Answers chat while a render has the GPU.</span>
-            <Speed p50={d.cpu.p50} n={d.cpu.n} provisional={d.cpu.provisional} />
-          </Slot>
-          <Slot title="Embeddings" file={d.embed.file}>
-            <span className="text-caption text-muted">Indexes documents for search.</span>
-          </Slot>
-        </div>
-        <div className="mt-4 grid gap-4 border-t border-border-subtle pt-4">
+        {/* The same engines as the Overview, without their speeds (the Overview carries those). */}
+        <ModelEngines engines={d.engines || []} compact />
+        <div className="mt-4 grid gap-4 border-t border-border-subtle pt-4 [&>*]:min-w-0">
           <SwitchModel data={d} onSwitched={models.refresh} />
           <Benchmark />
         </div>

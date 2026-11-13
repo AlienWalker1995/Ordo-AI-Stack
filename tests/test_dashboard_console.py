@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -35,17 +36,30 @@ HW_GPUS = [
     {"index": 1, "uuid": BIG, "name": "NVIDIA GeForce RTX 5090", "vram_total_gb": 34.2,
      "vram_used_gb": 29.6, "utilization_pct": 0, "temp_c": 57},
 ]
+_MEASURED = {"format": "llamacpp", "path": "/metrics", "port": 8080}
+_UNMEASURED = {"format": "none", "path": "/metrics", "port": None}
 REGISTRY = {
-    "comfyui": {"id": "comfyui", "kind": "comfyui", "service": "comfyui", "gpu_uuid": BIG},
+    "comfyui": {"id": "comfyui", "kind": "image", "service": "comfyui", "gpu_uuid": BIG, "device": "gpu",
+                "metrics": _UNMEASURED, "fallback_for": None},
     "local-chat": {"id": "local-chat", "kind": "chat", "service": "inference-engine-gpu", "gpu_uuid": BIG,
+                   "device": "gpu", "metrics": _MEASURED, "fallback_for": None,
                    "source": {"file": GPU_FILE}, "config": {"ctx": 106496, "mmproj": f"/models/{MMPROJ_FILE}"}},
-    "local-embed": {"id": "local-embed", "kind": "embedding", "service": "inference-engine-embed", "gpu_uuid": BIG},
-    "voice-stt": {"id": "voice-stt", "kind": "stt", "service": "stt", "gpu_uuid": SMALL},
-    "voice-tts": {"id": "voice-tts", "kind": "tts", "service": "tts", "gpu_uuid": SMALL},
+    "local-chat-cpu": {"id": "local-chat-cpu", "kind": "chat", "service": "inference-engine-cpu", "gpu_uuid": None,
+                       "device": "cpu", "metrics": _MEASURED, "fallback_for": "local-chat",
+                       "source": {"file": CPU_FILE}, "config": {"ctx": 200000}},
+    "local-embed": {"id": "local-embed", "kind": "embedding", "service": "inference-engine-embed", "gpu_uuid": BIG,
+                    "device": "gpu", "metrics": _UNMEASURED, "fallback_for": None},
+    "voice-stt": {"id": "voice-stt", "kind": "stt", "service": "stt", "gpu_uuid": SMALL, "device": "gpu",
+                  "metrics": _UNMEASURED, "fallback_for": None},
+    "voice-tts": {"id": "voice-tts", "kind": "tts", "service": "tts", "gpu_uuid": SMALL, "device": "gpu",
+                  "metrics": _UNMEASURED, "fallback_for": None},
 }
-IDLE = {"state": "idle", "running": [], "queued": [], "evicted_residents": {}, "rejected": []}
+# The service catalog's card names (console.service_names), as the dashboard shows them.
+NAMES = {"comfyui": "ComfyUI", "inference-engine-gpu": "llama.cpp (GPU)"}
+IDLE = {"state": "idle", "running": [], "queued": [], "idle_cached": {"inference-engine-gpu": 27.5},
+        "evicted_residents": {}, "rejected": []}
 RENDERING = {"state": "busy", "running": [{"id": "gate-comfyui", "kind": "media", "vram_gb": 31.8}],
-             "queued": [], "evicted_residents": {"inference-engine-gpu": 27.5}, "rejected": []}
+             "queued": [], "idle_cached": {}, "evicted_residents": {"inference-engine-gpu": 27.5}, "rejected": []}
 
 
 def containers(**states):
@@ -71,8 +85,15 @@ def test_gpu_names_drop_the_vendor_boilerplate(raw, short):
 
 
 def test_a_gate_lease_is_named_after_the_service_it_guards():
-    assert console.lease_label("gate-comfyui") == "ComfyUI"
-    assert console.lease_label("reel-render-42") == "reel-render-42"
+    assert console.lease_label("gate-comfyui") == "comfyui"
+    assert console.lease_label("gate-comfyui", NAMES) == "ComfyUI"
+    assert console.lease_label("reel-render-42", NAMES) == "reel-render-42"
+
+
+def test_service_names_come_from_the_catalog_cards():
+    cards = [{"id": "comfyui", "name": "ComfyUI"}, {"id": "gpu-card", "ops_service": "inference-engine-gpu",
+                                                     "name": "NInfer (GPU)"}, {"id": "nameless"}]
+    assert console.service_names(cards) == {"comfyui": "ComfyUI", "inference-engine-gpu": "NInfer (GPU)"}
 
 
 @pytest.mark.parametrize("state, health, status, verdict", [
@@ -102,49 +123,108 @@ def test_uptime_is_read_from_the_status_text(status, uptime):
     assert console.uptime_from_status(status) == uptime
 
 
-# --- GPUs and the chat engine ---
+# --- GPUs and the model engines ---
 
-def test_gpu_cards_list_tenants_per_card_biggest_first():
+def test_gpu_cards_list_the_models_on_each_card_biggest_first():
     cards = console.gpu_cards(HW_GPUS, REGISTRY, IDLE)
     assert [c["name"] for c in cards] == ["RTX 5090", "GTX 1070"]
     big, small = cards
     assert big["borrowed_by"] == []
-    assert "GPU chat" in big["tenants"] and "ComfyUI" in big["tenants"]
-    assert small["tenants"] == ["Whisper", "Kokoro"]
+    assert big["tenants"] == ["comfyui", "local-chat", "local-embed"]
+    assert small["tenants"] == ["voice-stt", "voice-tts"]
     assert big["vram_used_gb"] == 29.6 and big["temp_c"] == 57
 
 
-def test_a_render_shows_as_borrowing_the_resident_models_gpu():
-    big = console.gpu_cards(HW_GPUS, REGISTRY, RENDERING)[0]
+def test_a_render_borrows_the_card_a_scheduled_resident_lives_on():
+    big, small = console.gpu_cards(HW_GPUS, REGISTRY, RENDERING, NAMES)
     assert big["borrowed_by"] == ["ComfyUI"]
+    assert small["borrowed_by"] == []      # no scheduled resident lives there
 
 
-def test_chat_runs_on_the_gpu_when_nothing_has_borrowed_it():
-    assert console.chat_engine(IDLE, containers())["engine"] == "gpu"
+def _engines(status=IDLE, rates=None, **states):
+    return {e["model"]: e for e in console.model_engines(REGISTRY, containers(**states), status, rates, NAMES)}
 
 
-def test_chat_falls_back_to_cpu_while_a_render_holds_the_gpu():
-    engine = console.chat_engine(RENDERING, containers(inference_engine_gpu={"state": "exited", "status": "Exited (137) 1 minute ago"}))
-    assert engine["engine"] == "cpu"
-    assert "ComfyUI" in engine["reason"]
+def test_every_registry_model_is_an_engine_chat_first():
+    engines = console.model_engines(REGISTRY, containers(), IDLE, None, NAMES)
+    assert [e["model"] for e in engines][:2] == ["local-chat", "local-chat-cpu"]
+    assert {e["model"] for e in engines} == set(REGISTRY)
+    chat = engines[0]
+    assert chat["device"] == "gpu" and chat["file"] == GPU_FILE and chat["ctx"] == 106496
+    assert chat["state"] == "serving" and chat["measured"] is True
 
 
-def test_chat_falls_back_to_cpu_when_the_gpu_server_is_down():
-    engine = console.chat_engine(IDLE, containers(inference_engine_gpu={"state": "exited", "status": "Exited (1) 1 minute ago"}))
-    assert engine["engine"] == "cpu"
-    assert "not running" in engine["reason"]
+def test_an_engine_on_a_lent_gpu_is_lent_not_down():
+    engines = _engines(RENDERING, inference_engine_gpu={"state": "exited", "status": "Exited (137) 1 minute ago"})
+    assert engines["local-chat"]["state"] == "lent"
+    assert engines["local-chat"]["reason"] == "GPU lent to ComfyUI"
+    assert engines["local-chat-cpu"]["standing_in"] is True
 
 
-def test_no_chat_engine_when_both_servers_are_down():
-    engine = console.chat_engine(IDLE, containers(
+def test_a_crashed_engine_is_down():
+    engines = _engines(inference_engine_gpu={"state": "exited", "status": "Exited (1) 1 minute ago"})
+    assert engines["local-chat"]["state"] == "down"
+    assert engines["local-chat-cpu"]["standing_in"] is True
+
+
+def test_a_fallback_is_not_standing_in_while_the_model_it_covers_serves():
+    assert _engines()["local-chat-cpu"]["standing_in"] is False
+
+
+def test_speeds_are_attached_to_measured_engines_only():
+    rates = {"inference-engine-gpu": {"generation_tps": 160.2}, "comfyui": {"output_tps": 9.0}}
+    engines = _engines(rates=rates)
+    assert engines["local-chat"]["speeds"] == {"generation_tps": 160.2}
+    assert engines["comfyui"]["speeds"] is None          # not measured, whatever Prometheus says
+    assert _engines(rates=None)["local-chat"]["speeds"] is None
+
+
+def test_chat_is_answered_by_its_own_engine_when_it_serves():
+    summary = console.chat_summary(console.model_engines(REGISTRY, containers(), IDLE, None), IDLE)
+    assert summary["state"] == "primary" and summary["model"]["model"] == "local-chat"
+
+
+def test_chat_is_answered_by_the_stand_in_while_the_gpu_is_lent():
+    engines = console.model_engines(REGISTRY, containers(inference_engine_gpu={
+        "state": "exited", "status": "Exited (137) now"}), RENDERING, None, NAMES)
+    summary = console.chat_summary(engines, RENDERING)
+    assert summary["state"] == "fallback" and summary["model"]["model"] == "local-chat-cpu"
+    assert summary["reason"] == "GPU lent to ComfyUI"
+
+
+def test_no_one_answers_chat_when_both_engines_are_down():
+    engines = console.model_engines(REGISTRY, containers(
         inference_engine_gpu={"state": "exited", "status": "Exited (1) now"},
-        inference_engine_cpu={"state": "exited", "status": "Exited (1) now"},
-    ))
-    assert engine["engine"] == "none"
+        inference_engine_cpu={"state": "exited", "status": "Exited (1) now"}), IDLE, None)
+    assert console.chat_summary(engines, IDLE)["state"] == "none"
+
+
+def test_chat_whose_engine_is_starting_reads_starting_not_nobody():
+    # The minute after a restart or a model switch: the health check has not passed yet.
+    engines = console.model_engines(REGISTRY, containers(
+        inference_engine_gpu={"state": "running", "health": "starting", "status": "Up 20 seconds (health: starting)"},
+        inference_engine_cpu={"state": "exited", "status": "Exited (0) now"}), IDLE, None)
+    summary = console.chat_summary(engines, IDLE)
+    assert summary["state"] == "starting" and summary["model"]["model"] == "local-chat"
+
+
+def test_a_serving_stand_in_answers_while_the_engine_starts():
+    engines = console.model_engines(REGISTRY, containers(
+        inference_engine_gpu={"state": "running", "health": "starting", "status": "Up 20 seconds (health: starting)"}),
+        IDLE, None)
+    summary = console.chat_summary(engines, IDLE)
+    assert summary["state"] == "fallback" and summary["model"]["model"] == "local-chat-cpu"
 
 
 def test_unknown_control_plane_state_is_reported_not_guessed():
-    assert console.chat_engine(None, {})["engine"] == "unknown"
+    assert console.chat_summary([], None)["state"] == "unknown"
+
+
+def test_the_engine_list_names_no_service():
+    """Engines come from the registry; console.py keeps no table of engine services."""
+    source = (Path(console.__file__)).read_text(encoding="utf-8")
+    for name in ("inference-engine-gpu", "inference-engine-cpu", "inference-engine-embed"):
+        assert name not in source, f"console.py names {name}"
 
 
 # --- attention ---
@@ -176,10 +256,70 @@ def test_a_disk_below_the_threshold_is_not_an_alert():
     assert items == []
 
 
-def test_a_rejected_gpu_job_is_an_alert():
-    status = {**IDLE, "rejected": [{"id": "big-render", "reason": "needs 40 GB"}]}
-    items = console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, status)
-    assert items and "big-render" in items[0]["title"]
+def test_a_gpu_job_rejected_within_a_day_is_an_alert():
+    # The lease history stamps a rejection with `ended` (ordo/control/scheduler.py).
+    leases = [{"id": "big-render", "outcome": "rejected", "started": None, "ended": 1000.0},
+              {"id": "small-render", "outcome": "completed", "started": 900.0, "ended": 950.0}]
+    items = console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, IDLE,
+                                    leases=leases, now=1000.0 + 3600)
+    assert items == [{"id": "gpu-rejected:big-render:1000", "severity": "warning",
+                      "title": "GPU job big-render was rejected",
+                      "detail": "it needs more VRAM than the GPU has", "service": None}]
+
+
+def test_a_gpu_job_rejected_more_than_a_day_ago_is_left_to_the_activity_timeline():
+    leases = [{"id": "big-render", "outcome": "rejected", "started": None, "ended": 1000.0}]
+    now = 1000.0 + console.REJECTION_ALERT_WINDOW_S + 1
+    assert console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, IDLE,
+                                   leases=leases, now=now) == []
+
+
+def test_the_schedulers_untimed_rejected_list_is_not_an_alert():
+    # /status `rejected` is bare ids restored from the scheduler snapshot with no time on them, so
+    # a rejection from weeks ago would stand in the list forever. The history is the source.
+    status = {**IDLE, "rejected": ["big-render"]}
+    assert console.build_attention([], {}, {"disk_pct": 10, "ram_pct": 10}, status) == []
+
+
+def test_every_attention_item_has_a_stable_id_naming_its_condition():
+    cards = [{"id": "webui", "name": "Open WebUI", "ok": False, "error": "HTTP 502"}]
+    rows = containers(qdrant={"state": "running", "health": "unhealthy", "status": "Up 2 hours (unhealthy)"},
+                      n8n={"state": "exited", "health": None, "status": "Exited (1) 1 minute ago"})
+    host_rows = [{"name": "web-dev-1", "project": "site", "verdict": "failed", "status": "Exited (255)"}]
+    items = console.build_attention(cards, rows, {"disk_pct": 95, "ram_pct": 95}, IDLE, host_rows=host_rows)
+    # A foreign container's ids are prefixed, so one sharing an ordo service's name never shares
+    # its dismissal.
+    assert sorted(i["id"] for i in items) == ["disk:critical", "failed:n8n", "host-failed:web-dev-1", "memory",
+                                              "probe-down:webui", "unhealthy:qdrant"]
+
+
+def test_a_dismissed_item_is_split_out_until_its_condition_clears():
+    items = [{"id": "disk", "severity": "warning"}, {"id": "host-failed:web-dev-1", "severity": "critical"}]
+    shown, hidden = console.split_dismissed(items, {"host-failed:web-dev-1": 5.0})
+    assert [i["id"] for i in shown] == ["disk"]
+    assert [i["id"] for i in hidden] == ["host-failed:web-dev-1"]
+    # Once web-dev-1 is fixed its dismissal is forgotten, so a later failure is listed again.
+    every_source = set(console.ATTENTION_SOURCES.values())
+    assert console.prune_dismissals({"host-failed:web-dev-1": 5.0, "disk": 6.0}, [items[0]],
+                                    every_source) == {"disk": 6.0}
+
+
+def test_dismissing_the_disk_warning_does_not_hide_the_disk_going_critical():
+    warning = console.build_attention([], {}, {"disk_pct": 82, "ram_pct": 10}, IDLE)
+    assert [i["id"] for i in warning] == ["disk:warning"]
+    dismissed = {"disk:warning": 1.0}
+    critical = console.build_attention([], {}, {"disk_pct": 97, "ram_pct": 10}, IDLE)
+    shown, hidden = console.split_dismissed(critical, dismissed)
+    assert [i["id"] for i in shown] == ["disk:critical"] and hidden == []
+    # The warning's dismissal is forgotten now that its condition is gone.
+    assert console.prune_dismissals(dismissed, critical, set(console.ATTENTION_SOURCES.values())) == {}
+
+
+def test_a_dismissal_outlives_a_poll_that_could_not_read_its_source():
+    dismissed = {"disk": 1.0, "host-failed:web-dev-1": 2.0, "gpu-rejected:big:9": 3.0, "unknown-kind": 4.0}
+    # The disk metric and the history failed this poll; the host list was read and web-dev-1 is fine.
+    assert console.prune_dismissals(dismissed, [], {"cards", "services", "host", "memory"}) == {
+        "disk": 1.0, "gpu-rejected:big:9": 3.0, "unknown-kind": 4.0}
 
 
 def test_a_model_evicted_for_a_render_is_not_an_alert():
@@ -258,7 +398,7 @@ def test_activity_merges_sources_newest_first_and_drops_read_only_noise():
         # Reading another project's logs is audited, but it changes nothing.
         {"ts": 1790171750.0, "caller": "dashboard", "action": "project.logs", "target": "media/web", "result": "ok"},
     ]
-    items = console.merge_activity(leases, audit, console.summarise_renders(HISTORY, 10), limit=10)
+    items = console.merge_activity(leases, audit, console.summarise_renders(HISTORY, 10), limit=10, names=NAMES)
     titles = [i["title"] for i in items]
     assert titles[0].startswith("Render failed")
     assert any(t == "Restarted n8n" for t in titles)
@@ -286,7 +426,7 @@ def _audit(action, target="", **fields):
     (_audit("restart", "n8n", result="error", status=500), "Restarted n8n (failed)"),
 ])
 def test_activity_titles_every_recorded_verb(entry, title):
-    [item] = console.merge_activity([], [entry], [], limit=10)
+    [item] = console.merge_activity([], [entry], [], limit=10, names=NAMES)
     assert item["title"] == title
     assert item["severity"] == ("info" if entry["result"] == "ok" else "warning")
 
@@ -296,13 +436,13 @@ def test_activity_leaves_lease_calls_to_the_lease_history():
     # repeat it several times over.
     audit = [_audit("lease.request", "train-lora"), _audit("lease.heartbeat", "train-lora"),
              _audit("lease.release", "train-lora")]
-    assert console.merge_activity([], audit, [], limit=10) == []
+    assert console.merge_activity([], audit, [], limit=10, names=NAMES) == []
 
 
 def test_activity_is_capped():
     audit = [{"ts": float(i), "caller": "dashboard", "action": "restart", "target": f"s{i}", "result": "ok"}
              for i in range(40)]
-    assert len(console.merge_activity([], audit, [], limit=25)) == 25
+    assert len(console.merge_activity([], audit, [], limit=25, names=NAMES)) == 25
 
 
 def test_gate_leases_are_visible_with_holder_and_duration():
@@ -310,7 +450,7 @@ def test_gate_leases_are_visible_with_holder_and_duration():
     # held it, when, and for how long.
     leases = [{"id": "gate-comfyui", "kind": "media", "started": 1790171000.0,
                "ended": 1790171180.0, "outcome": "completed"}]
-    [item] = console.merge_activity(leases, [], [], limit=10)
+    [item] = console.merge_activity(leases, [], [], limit=10, names=NAMES)
     assert item["title"] == "GPU lent to ComfyUI"
     assert item["kind"] == "gpu"
     assert item["severity"] == "ok"
@@ -318,14 +458,14 @@ def test_gate_leases_are_visible_with_holder_and_duration():
     assert item["started"] == 1790171000.0
     assert item["ended"] == 1790171180.0
     assert item["duration_s"] == 180
-    assert item["evicted_chat"] is False
+    assert item["evicted"] == []
 
 
 def test_rejected_gate_lease_reads_as_rejected_without_a_duration():
     # Rejected before it started: no start stamp, so no duration, and the row says why.
     leases = [{"id": "gate-comfyui", "kind": "media", "submitted": 100.0, "started": None,
                "ended": 200.0, "outcome": "rejected"}]
-    [item] = console.merge_activity(leases, [], [], limit=10)
+    [item] = console.merge_activity(leases, [], [], limit=10, names=NAMES)
     assert item["title"] == "GPU lent to ComfyUI (rejected)"
     assert item["severity"] == "warning"
     assert item["duration_s"] is None
@@ -335,7 +475,7 @@ def test_rejected_gate_lease_reads_as_rejected_without_a_duration():
 def test_non_gate_lease_keeps_its_title_and_carries_the_same_fields():
     leases = [{"id": "train-lora", "kind": "train", "started": 100.0, "ended": 700.0,
                "outcome": "completed"}]
-    [item] = console.merge_activity(leases, [], [], limit=10)
+    [item] = console.merge_activity(leases, [], [], limit=10, names=NAMES)
     assert item["title"] == "GPU lease train-lora completed"
     assert item["holder"] == "train-lora"
     assert item["duration_s"] == 600
@@ -344,30 +484,29 @@ def test_non_gate_lease_keeps_its_title_and_carries_the_same_fields():
 def test_every_activity_item_carries_the_lease_fields():
     # One shape for every kind, so the page can read holder/duration without per-kind guards.
     audit = [_audit("restart", "n8n")]
-    items = console.merge_activity([], audit, [], limit=10)
+    items = console.merge_activity([], audit, [], limit=10, names=NAMES)
     [item] = items
     assert set(item) == {"ts", "kind", "title", "severity", "holder", "started", "ended",
-                         "duration_s", "evicted_chat"}
+                         "duration_s", "evicted"}
     assert (item["holder"], item["started"], item["ended"], item["duration_s"]) == (None, None, None, None)
-    assert item["evicted_chat"] is False
+    assert item["evicted"] == []
 
 
 @pytest.mark.parametrize("record, evicted", [
-    ({"evicted": ["inference-engine-gpu"]}, True),               # the broker put the chat model away for it
-    ({"evicted": ["inference-engine-gpu", "whisper"]}, True),
-    ({"evicted": ["whisper"]}, False),               # another resident, the chat model stayed
-    ({"evicted": []}, False),
-    ({}, False),                                     # a record from before the broker kept this
+    ({"evicted": ["inference-engine-gpu"]}, ["llama.cpp (GPU)"]),   # the broker put the chat model away for it
+    ({"evicted": ["inference-engine-gpu", "whisper"]}, ["llama.cpp (GPU)", "whisper"]),
+    ({"evicted": []}, []),
+    ({}, []),                                        # a record from before the broker kept this
 ])
-def test_lease_says_whether_the_chat_model_was_out_from_its_own_record(record, evicted):
+def test_lease_says_which_residents_were_out_from_its_own_record(record, evicted):
     # The broker records which residents were out of the GPU as the lease started; the feed
     # reads that, never a guess from nearby restarts.
     leases = [{"id": "gate-comfyui", "kind": "media", "started": 1790171000.0,
                "ended": 1790171200.0, "outcome": "completed", **record}]
     restart_after = {**_audit("restart", "inference-engine-gpu"), "ts": 1790171300.0}
-    items = console.merge_activity(leases, [restart_after], [], limit=10)
+    items = console.merge_activity(leases, [restart_after], [], limit=10, names=NAMES)
     [item] = [i for i in items if i["kind"] == "gpu"]
-    assert item["evicted_chat"] is evicted
+    assert item["evicted"] == evicted
 
 
 # --- models ---
@@ -398,33 +537,10 @@ SERVED = {"gpu": GPU_FILE, "cpu": CPU_FILE, "embed": EMBED_FILE}
 THROUGHPUT = {"models": {GPU_FILE: {"p50": 22.2, "sample_count": 500}, CPU_FILE: {"p50": 2.7, "sample_count": 217}}}
 
 
-def test_chat_medians_come_from_the_role_series_not_the_file_names():
-    """A model swap changes the file name, not the role: the median survives it, and the label
-    names the file the server loads now."""
-    tp = {"roles": {"gpu-chat": {"p50": 48.6, "n": 512, "first_ts": 1, "last_ts": 2,
-                                 "model": "old-file.gguf"},
-                    "cpu-fallback": {"p50": 9.2, "n": 3, "first_ts": 1, "last_ts": 2,
-                                     "model": "cpu.gguf"}}}
-    m = console.chat_medians(tp, {"gpu": "new-file.gguf", "cpu": "cpu.gguf"}, {})
-    assert m["gpu"]["p50"] == 48.6 and m["gpu"]["n"] == 512
-    assert m["gpu"]["model"] == "new-file.gguf"
-    assert m["cpu"]["p50"] == 9.2 and m["cpu"]["n"] == 3
-    # A role with no series yet reads as unknown, never as zero.
-    empty = console.chat_medians({}, {"gpu": "f.gguf", "cpu": None}, {})
-    assert empty["gpu"]["p50"] is None and empty["gpu"]["n"] == 0
-    assert empty["cpu"]["model"] is None
-
-
-def test_model_slots_come_from_what_each_server_loaded():
-    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, THROUGHPUT)
-    assert m["gpu"]["file"] == GPU_FILE and m["gpu"]["catalog_id"] == "qwen3.8-27b-turbo-fable-q6"
-    assert m["gpu"]["p50"] == 22.2 and m["gpu"]["ctx"] == 106496
-    assert m["cpu"]["file"] == CPU_FILE and m["cpu"]["p50"] == 2.7
-    assert m["embed"]["file"] == EMBED_FILE
 
 
 def test_catalog_entries_without_a_file_on_disk_are_not_installed():
-    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, THROUGHPUT)
+    m = console.model_files(MODEL_CONFIG, SERVED, DISK)
     by_id = {c["id"]: c for c in m["catalog"]}
     assert by_id["qwen3.8-27b-turbo-fable-q6"]["installed"] is True
     assert by_id["qwen3.8-27b-turbo-fable-q6"]["active"] is True
@@ -432,7 +548,7 @@ def test_catalog_entries_without_a_file_on_disk_are_not_installed():
 
 
 def test_files_in_use_by_any_server_are_marked_and_the_rest_are_not():
-    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, THROUGHPUT)
+    m = console.model_files(MODEL_CONFIG, SERVED, DISK)
     used = {f["name"]: f["in_use"] for f in m["files"]}
     assert used[GPU_FILE] and used[CPU_FILE] and used[EMBED_FILE] and used[MMPROJ_FILE]
     assert used["old-experiment.gguf"] is False
@@ -459,10 +575,6 @@ def test_after_a_switch_the_new_projector_is_in_use_and_the_old_one_is_not():
     assert "new-vision.gguf" in used and MMPROJ_FILE not in used
 
 
-def test_a_server_that_did_not_answer_and_has_no_declaration_leaves_its_slot_unknown():
-    m = console.model_slots({**MODEL_CONFIG, "active_file": None},
-                            {"gpu": None, "cpu": CPU_FILE, "embed": None}, DISK, THROUGHPUT)
-    assert m["gpu"]["file"] is None and m["gpu"]["catalog_id"] == "qwen3.8-27b-turbo-fable-q6"
 
 
 def test_served_file_is_the_basename_of_what_llama_server_reports():
@@ -677,10 +789,6 @@ def test_an_evicted_gpu_models_file_is_still_in_use():
     assert GPU_FILE in console.in_use_files(served_mid_render, MODEL_CONFIG)
 
 
-def test_the_gpu_slot_falls_back_to_the_rendered_model_while_the_server_is_evicted():
-    m = console.model_slots(MODEL_CONFIG, {"gpu": None, "cpu": CPU_FILE, "embed": EMBED_FILE},
-                            DISK, THROUGHPUT)
-    assert m["gpu"]["file"] == GPU_FILE and m["gpu"]["p50"] == 22.2 and m["gpu"]["loaded"] is False
 
 
 def test_a_probe_only_card_takes_its_state_from_the_probe_and_offers_no_controls():
@@ -757,14 +865,127 @@ def test_an_unanswered_doctor_is_unavailable_not_clean(doctor):
     assert console.drift(doctor) == {"available": False, "findings": []}
 
 
-def test_medians_say_whether_they_are_provisional():
-    """The threshold lives in one place: the backend decides, the page only renders the flag."""
-    tp = {"roles": {"gpu-chat": {"p50": 48.6, "n": 512, "first_ts": 1, "last_ts": 2, "model": "a"},
-                    "cpu-fallback": {"p50": 9.2, "n": 3, "first_ts": 1, "last_ts": 2, "model": "b"}},
-          "models": {"a.gguf": {"p50": 48.6, "sample_count": 512}, "b.gguf": {"p50": 9.2, "sample_count": 3}}}
-    m = console.chat_medians(tp, {"gpu": "a.gguf", "cpu": "b.gguf"}, {})
-    assert m["gpu"]["provisional"] is False and m["cpu"]["provisional"] is True
-    slots = console.model_slots({"active_file": "a.gguf"}, {"gpu": "a.gguf", "cpu": "b.gguf", "embed": None}, [], tp)
-    assert slots["gpu"]["provisional"] is False and slots["cpu"]["provisional"] is True
-    # no samples at all is not provisional, it is absent
-    assert console.chat_medians({}, {"gpu": None, "cpu": None}, {})["cpu"]["provisional"] is False
+
+
+# ---- one row per service: a group's containers list under its main row ----
+
+def _svc(name, state="running", health="healthy", status="Up 1 hour (healthy)"):
+    return {"id": name, "name": f"ordo-{name}-1", "state": state, "health": health, "status": status}
+
+
+LANGFUSE_CARD = {**PROBE_CARD, "plugin": "langfuse"}
+STT_CARD = {"id": "stt", "name": "Speech-to-Text", "plugin": "voice", "ops_service": "stt", "ok": True}
+TTS_CARD = {"id": "tts", "name": "Text-to-Speech", "plugin": "voice", "ops_service": "tts", "ok": True}
+GROUP_SERVICES = {
+    "langfuse-web": _svc("langfuse-web"),
+    "langfuse-db": _svc("langfuse-db"),
+    "langfuse-minio-lifecycle": _svc("langfuse-minio-lifecycle", "exited", None, "Exited (0) 2 hours ago"),
+    "stt": _svc("stt"), "tts": _svc("tts"),
+    "prometheus": _svc("prometheus"), "grafana": _svc("grafana"),
+    "evals": ORDO_SERVICES["evals"],
+}
+GROUPS = [
+    {"id": "langfuse", "name": "Langfuse", "services": ["langfuse-web", "langfuse-db", "langfuse-minio-lifecycle"]},
+    {"id": "voice", "name": "Voice", "services": ["stt", "tts"]},
+    {"id": "monitoring", "name": "Monitoring", "services": ["prometheus", "grafana"]},
+]
+
+
+def _grouped(services=GROUP_SERVICES, groups=GROUPS):
+    return _by_id(console.build_service_table([LANGFUSE_CARD, STT_CARD, TTS_CARD], services, groups=groups))
+
+
+def test_a_services_containers_list_under_its_one_card():
+    rows = _grouped()
+    for part in ("ordo:langfuse-web", "ordo:langfuse-db", "ordo:langfuse-minio-lifecycle"):
+        assert rows[part]["parent"] == "link:langfuse"
+    assert rows["link:langfuse"]["parent"] is None
+    # A finished one-shot job is not a problem: the service reads as running.
+    assert rows["link:langfuse"]["group_verdict"] == "up"
+    assert rows["ordo:evals"]["parent"] is None and rows["ordo:evals"]["group_verdict"] is None
+
+
+def test_a_group_without_a_single_card_gets_a_row_of_its_own():
+    rows = _grouped()
+    for gid, name, parts in (("voice", "Voice", ["stt", "tts"]), ("monitoring", "Monitoring", ["prometheus", "grafana"])):
+        main = rows[f"group:{gid}"]
+        assert main["name"] == name and main["control"] == "group" and main["actions"] == []
+        assert main["container"] is None and main["verdict"] == "up" and main["parent"] is None
+        assert {i for i, r in rows.items() if r["parent"] == f"group:{gid}"} == {f"ordo:{p}" for p in parts}
+
+
+def test_a_failed_part_shows_on_its_services_row():
+    services = {**GROUP_SERVICES, "langfuse-db": _svc("langfuse-db", "exited", None, "Exited (1) 5 minutes ago"),
+                "grafana": _svc("grafana", "running", "unhealthy", "Up 1 hour (unhealthy)")}
+    rows = _grouped(services)
+    assert rows["link:langfuse"]["verdict"] == "up"  # the card's own probe still passes
+    assert rows["link:langfuse"]["group_verdict"] == "failed"
+    assert rows["group:monitoring"]["verdict"] == "unhealthy"
+
+
+def test_without_groups_every_container_is_its_own_row():
+    rows = _grouped(groups=[])
+    assert not any(r["parent"] for r in rows.values())
+    assert not any(i.startswith("group:") for i in rows)
+
+
+def test_grouping_leaves_the_container_counts_alone():
+    counts = console.service_counts(list(_grouped().values()))
+    ungrouped = console.service_counts(list(_grouped(groups=[]).values()))
+    assert counts == ungrouped
+
+
+# --- the launcher's apps ---
+
+def _labelled(name, href, *, group="", description="", label_name="", status="running", status_text="Up 1 day",
+              health=None, project="nas-stack"):
+    return {"name": name, "status": status, "image": name, "project": project, "service": name,
+            "health": health, "status_text": status_text,
+            "link": {"href": href, "name": label_name, "description": description, "group": group}}
+
+
+def test_apps_come_from_cards_with_an_open_link_and_labelled_containers():
+    cards = [{"id": "webui", "name": "Open WebUI", "open_url": "https://chat/", "ok": True, "description": "Chat"},
+             {"id": "qdrant", "name": "Qdrant", "open_url": None, "ok": True},
+             {"id": "bridge", "name": "Bridge", "open_url": "https://bridge/", "ok": True, "background": True},
+             {"id": "comfyui", "name": "ComfyUI", "open_url": "https://comfy/", "ok": False}]
+    host = [_labelled("radarr", "http://radarr/", group="Automation", label_name="Radarr"),
+            _labelled("jellyfin", "http://jf/", group="Media", label_name="Jellyfin", description="Media server"),
+            {"name": "plain", "status": "running", "project": "x", "link": None}]
+    apps = console.launcher_apps(cards, host)
+    assert [(a["group"], a["name"]) for a in apps] == [
+        ("Ordo", "ComfyUI"), ("Ordo", "Open WebUI"), ("Automation", "Radarr"), ("Media", "Jellyfin")]
+    assert apps[0]["status"] == "down" and apps[1]["description"] == "Chat"
+
+
+def test_a_labelled_container_without_a_name_or_group_falls_back_to_its_own():
+    [app] = console.launcher_apps([], [_labelled("ugly-name-1", "http://x/", project="stack")])
+    assert (app["name"], app["group"]) == ("ugly-name-1", "stack")
+
+
+def test_a_labelled_containers_status_follows_its_verdict():
+    host = [_labelled("a", "http://a/", status="exited", status_text="Exited (1) 1 hour ago"),
+            _labelled("b", "http://b/", health="unhealthy", status_text="Up 1 hour (unhealthy)"),
+            _labelled("c", "http://c/", health="starting", status_text="Up 5 seconds (health: starting)")]
+    assert [a["status"] for a in console.launcher_apps([], host)] == ["down", "down", "unknown"]
+
+
+def test_no_cards_and_no_host_list_is_no_apps():
+    assert console.launcher_apps([], None) == []
+
+
+def test_only_http_links_become_apps():
+    host = [_labelled("evil", "javascript:alert(1)"), _labelled("ftp", "ftp://files/"),
+            _labelled("ok", "HTTPS://fine.example/", label_name="Fine")]
+    cards = [{"id": "x", "name": "X", "open_url": "data:text/html,hi", "ok": True}]
+    assert [a["name"] for a in console.launcher_apps(cards, host)] == ["Fine"]
+
+
+def test_groups_differing_only_in_case_are_one_group():
+    host = [_labelled("a", "http://a/", group="Media", label_name="A"),
+            _labelled("b", "http://b/", group="media", label_name="B")]
+    assert [a["group"] for a in console.launcher_apps([], host)] == ["Media", "Media"]
+
+
+def test_model_files_names_the_active_catalog_model():
+    assert console.model_files(MODEL_CONFIG, SERVED, DISK)["active_model"] == "qwen3.8-27b-turbo-fable-q6"

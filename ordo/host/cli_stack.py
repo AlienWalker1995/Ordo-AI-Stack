@@ -345,6 +345,12 @@ def cmd_build(args: argparse.Namespace) -> int:
                             dry_run=args.dry_run)
 
 
+def cmd_prune_images(args: argparse.Namespace) -> int:
+    """`ordo prune-images`: retention for first-party builds and superseded upstream pulls
+    (ordo/host/images.py)."""
+    return images.run_prune(args.out, dry_run=args.dry_run)
+
+
 def cmd_backup(args: argparse.Namespace) -> int:
     """`ordo backup`: the config and every stateful volume to one archive (ordo/host/backup.py)."""
     dest = Path(args.backup_dir).expanduser() if args.backup_dir else backup.DEFAULT_BACKUP_DIR

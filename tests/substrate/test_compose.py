@@ -355,11 +355,57 @@ def test_mcp_healthcheck_defaults_to_the_renderer_probe_unless_overridden():
     assert searxng != expected and searxng["test"][1] == "node"
 
 
-def test_only_ops_controller_and_agent_mount_the_docker_socket():
+def test_only_ops_controller_the_agent_and_the_log_proxy_mount_the_docker_socket():
     c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
     with_sock = sorted(n for n, s in c["services"].items()
                        if any("/var/run/docker.sock" in v for v in s.get("volumes", []) or []))
-    assert with_sock == ["agent", "ops-controller"]
+    assert with_sock == ["agent", "docker-socket-proxy", "ops-controller"]
+
+
+def test_the_log_proxy_is_read_only_and_reachable_by_alloy_alone():
+    """Inspect carries every container's environment, and an "all of /containers" grant would also allow
+    /containers/{id}/archive (any file in any container). So the proxy allows only the paths Alloy calls,
+    only GET/HEAD, only from Alloy, and never sits on the stack network every service shares."""
+    import re
+
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    proxy = c["services"]["docker-socket-proxy"]
+    allow = {a.partition("=")[0]: a.partition("=")[2] for a in proxy["command"] if a.startswith("-allow")}
+    assert set(allow) == {"-allowfrom", "-allowHEAD", "-allowGET", "-allowhealthcheck"}
+    assert allow["-allowfrom"] == "alloy"
+    get = re.compile(allow["-allowGET"])
+    for path in ("/v1.47/containers/json", "/containers/abc123/logs", "/v1.47/containers/abc123/json", "/networks"):
+        assert get.fullmatch(path), path
+    for path in ("/containers/abc123/archive", "/containers/abc123/export", "/images/json", "/info", "/secrets"):
+        assert not get.fullmatch(path), path
+    assert "/var/run/docker.sock:/var/run/docker.sock:ro" in proxy["volumes"]
+    assert proxy["group_add"] == ["0"]  # the socket's group, instead of running the proxy as root
+    (private,) = proxy["networks"]
+    assert c["networks"][private]["internal"] is True
+    peers = sorted(n for n, s in c["services"].items() if private in (s.get("networks") or []))
+    assert peers == ["alloy", "docker-socket-proxy"]
+
+
+def test_loki_is_reachable_by_alloy_and_grafana_alone():
+    """Loki runs without auth and with its admin API on, and it holds every container's logs (and any
+    secret that leaked into one), so only its writer and its reader may reach it."""
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    (private,) = c["services"]["loki"]["networks"]
+    assert c["networks"][private]["internal"] is True
+    peers = sorted(n for n, s in c["services"].items() if private in (s.get("networks") or []))
+    assert peers == ["alloy", "grafana", "loki"]
+    assert "ordo-net" in c["services"]["grafana"]["networks"], "Caddy and Prometheus still reach Grafana"
+    assert "ordo-net" not in c["services"]["alloy"]["networks"], "Alloy calls only the proxy and Loki"
+
+
+def test_a_service_cannot_declare_networks_and_network_mode():
+    import pytest
+
+    from ordo.render.plugins import PluginService
+    with pytest.raises(ValueError, match="network_mode"):
+        PluginService.from_dict({"name": "x", "image": "i", "networks": ["stack"], "network_mode": "service:caddy"})
+    with pytest.raises(ValueError, match="lowercase"):
+        PluginService.from_dict({"name": "x", "image": "i", "networks": ["Bad_Name"]})
 
 
 def test_model_without_backend_image_runs_the_hosts_cuda_build(tmp_path):
@@ -785,3 +831,50 @@ def test_services_the_control_plane_recreates_have_no_project_relative_binds():
     relative_env = [f"{k}={v}" for k, v in rc.env.items() if isinstance(v, str) and v.startswith("./")]
     assert offenders == []
     assert relative_env == []
+
+
+def test_every_service_rotates_its_container_log():
+    """Unrotated json-file logs grew without bound, and the NUL run an unclean power-off left in them
+    (2026-11-07) never aged out, so `docker logs --since` stayed empty for those containers."""
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    assert len(c["services"]) > 20, "plugin, gate and MCP services rendered too"
+    for name, service in c["services"].items():
+        assert service["logging"] == {"driver": "json-file", "options": {"max-size": "20m", "max-file": "5"}}, name
+    first, second = list(c["services"].values())[:2]
+    assert first["logging"] is not second["logging"], "one dict per service, no yaml anchors"
+
+
+def test_a_gate_enforced_service_cannot_declare_networks():
+    """The gate decides a gated service's networks (a private upstream network only it joins), so a
+    manifest that also lists `networks:` is refused rather than silently overridden."""
+    import dataclasses
+
+    import pytest
+
+    from ordo.render import gpu
+
+    rc = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY)
+    claim = gpu.gated_claims(rc.gpu_inventory())[0]
+    plugin, service = next((p, s) for p in REGISTRY.plugins for s in p.services if s.name == claim.service)
+    declared = dataclasses.replace(service, networks=("stack", "private"))
+    with pytest.raises(ValueError, match="networks"):
+        compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[],
+                               plugin_services=[(plugin, declared)], gpu_claims={claim.service: claim})
+
+
+def test_service_groups_name_the_containers_of_one_service():
+    """The dashboard's Services page lists a service's containers under one row; the manifest says
+    which containers those are: a plugin's own, its admission gate, and a core service's parts."""
+    rc = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY)
+    groups = {g["id"]: g for g in rc.manifest()["service_groups"]}
+    rendered = set(rc.compose_dict()["services"])
+    assert groups["monitoring"]["name"] == "Monitoring"
+    assert set(groups["monitoring"]["services"]) == {
+        s.name for p in REGISTRY.plugins if p.id == "monitoring" for s in p.services}
+    assert "comfyui-gate" in groups["comfyui"]["services"]
+    assert groups["model-gateway"]["services"] == ["model-gateway", "litellm-db", "model-gateway-keys"]
+    for group in groups.values():
+        assert len(group["services"]) >= 2 and set(group["services"]) <= rendered
+    # A container belongs to one service at most.
+    listed = [s for g in groups.values() for s in g["services"]]
+    assert len(listed) == len(set(listed))

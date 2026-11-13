@@ -421,6 +421,34 @@ class RenderedConfig:
         return gpu.inventory(self.hardware, self.plugin_services,
                              resident_vram_gb=self.resident_vram_gb())
 
+    def service_groups(self, rendered: set[str]) -> list[dict[str, Any]]:
+        """The rendered containers that together make up one service, for the dashboard's Services
+        page, which lists them under one row. A plugin's containers are one group (its services,
+        plus the admission gate render adds in front of a gated one), and so is a core service with
+        its parts (compose.CORE_SERVICE_PARTS). Only groups of two or more rendered containers are
+        listed: a single container is its own row already.
+
+        `name` is the plugin's name without its parenthetical ("Voice (STT + TTS)" -> "Voice"),
+        shown when no single dashboard card stands for the group."""
+        members: dict[str, list[str]] = {}
+        names: dict[str, str] = {}
+        for plugin, ps in self.plugin_services:
+            names[plugin.id] = plugin.name.split(" (")[0].strip()
+            group = members.setdefault(plugin.id, [])
+            group.append(ps.name)
+            arb = ps.gpu_arbitration
+            if arb is not None and arb.enforcement == "gate":
+                group.append(gpu.gate_service_name(ps.name))
+        for owner, parts in compose.CORE_SERVICE_PARTS.items():
+            members[owner] = [owner, *parts]
+            names[owner] = owner
+        groups = []
+        for owner in sorted(members):
+            services = [s for s in members[owner] if s in rendered]
+            if len(services) >= 2:
+                groups.append({"id": owner, "name": names[owner], "services": services})
+        return groups
+
     def manifest(self) -> dict[str, Any]:
         doc = self.compose_dict()
         return {
@@ -453,6 +481,8 @@ class RenderedConfig:
             "backup": {volume: self.backup[volume] for volume in (doc.get("volumes") or {})
                        if volume in self.backup},
             "warnings": self.warnings,
+            # Which containers make up one service: the Services page nests them under one row.
+            "service_groups": self.service_groups(set(doc.get("services") or {})),
             **self._dashboard_sign_in(),
             # What this render was made from. ops-controller refuses to re-render over a render made
             # from different inputs, so its baked copy cannot silently revert the checkout's changes.

@@ -1,12 +1,13 @@
 // Command palette (Ctrl/Cmd+K): jump to a page or open a tool. Keyboard first:
-// arrows move, Enter runs, Escape closes. Services and tool links come from the live overview.
+// arrows move, Enter runs, Escape closes. The apps to open come from the live overview's `apps`,
+// the same list as its launcher.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api.js'
 
 export default function CommandPalette({ open, onClose, pages, onNavigate }) {
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
-  const [links, setLinks] = useState([])
+  const [apps, setApps] = useState([])
   const inputRef = useRef(null)
   const returnTo = useRef(null)
 
@@ -17,7 +18,7 @@ export default function CommandPalette({ open, onClose, pages, onNavigate }) {
     setIndex(0)
     inputRef.current?.focus()
     let cancelled = false
-    api.get('/api/overview').then((o) => { if (!cancelled) setLinks(o.links || []) }).catch(() => {})
+    api.get('/api/overview').then((o) => { if (!cancelled) setApps(o.apps || []) }).catch(() => {})
     return () => {
       cancelled = true
       returnTo.current?.focus?.()
@@ -26,8 +27,8 @@ export default function CommandPalette({ open, onClose, pages, onNavigate }) {
 
   const commands = useMemo(() => [
     ...pages.map((p) => ({ id: `page-${p.id}`, label: `Go to ${p.label}`, hint: 'Page', run: () => onNavigate(p.id) })),
-    ...links.map((l) => ({ id: `link-${l.url}`, label: `Open ${l.name}`, hint: 'Tool', run: () => window.open(l.url, '_blank', 'noopener') })),
-  ], [pages, links, onNavigate])
+    ...apps.map((a) => ({ id: `app-${a.url}`, label: `Open ${a.name}`, hint: a.group, run: () => window.open(a.url, '_blank', 'noopener') })),
+  ], [pages, apps, onNavigate])
 
   const q = query.trim().toLowerCase()
   const matches = q ? commands.filter((c) => c.label.toLowerCase().includes(q)) : commands

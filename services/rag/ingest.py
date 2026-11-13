@@ -62,6 +62,24 @@ RETRY_FIRST_SECONDS = 60.0
 RETRY_MAX_SECONDS = 3600.0
 HEARTBEAT_PATH = Path("/tmp/rag-ingestion.heartbeat")
 
+# Authority: which source wins when two documents disagree (policy: the operator's
+# agent-memory-and-context-poisoning doc). Decided by WHERE a file lives, never by what it claims:
+# a note that writes `authority: canonical` in its own frontmatter is still derived.
+#   canonical  this repo's docs/canonical/ (the PRDs), mounted at stack-docs/; changed only by
+#              operator-merged PRs
+#   ephemeral  the memory vault's inbox/ (unreviewed captures)
+#   derived    everything else (notes, memories, runbooks, other docs)
+CANONICAL_PREFIXES = ("stack-docs/canonical/",)
+# Never indexed: the vault's copies of agent homes (agents/hermes/: thousands of skill files,
+# scripts and configs, refreshed daily by the operator's vault backup). The agent reads its own
+# skills directly; indexing the copy would bury notes under machinery and spend hours embedding it.
+EXCLUDED_PREFIXES = ("memory-vault/agents/",)
+EPHEMERAL_PREFIXES = ("memory-vault/inbox/",)
+# Bumped when the metadata rules change: points stored under an older version get their payload
+# rewritten in place at the next scan (no re-embedding).
+META_VERSION = 1
+FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
+
 SUPPORTED_EXTENSIONS = {
     ".txt",
     ".md",
@@ -150,25 +168,30 @@ def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace").strip()
 
 
-def _indexed_digests() -> dict[str, str]:
-    """{source: digest} of every file in the collection. The store is the record of what is indexed,
-    so a recreated container re-embeds nothing and an emptied store re-embeds everything."""
+def _indexed_digests() -> tuple[dict[str, str], dict[str, str]]:
+    """({source: digest} of every file indexed with current metadata, {source: digest} of the files
+    whose stored metadata predates META_VERSION). The store is the record of what is indexed, so a
+    recreated container re-embeds nothing and an emptied store re-embeds everything."""
     digests: dict[str, str] = {}
-    request = {"limit": 1000, "with_payload": ["source", "digest"], "with_vector": False}
+    stale_meta: dict[str, str] = {}
+    request = {"limit": 1000, "with_payload": ["source", "digest", "meta_version"], "with_vector": False}
     with httpx.Client(timeout=30.0) as client:
         while True:
             r = client.post(f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points/scroll", json=request)
             if r.status_code == 404:
-                return {}
+                return {}, {}
             r.raise_for_status()
             result = r.json().get("result", {})
             for point in result.get("points", []):
                 payload = point.get("payload") or {}
                 if payload.get("source") and payload.get("digest"):
-                    digests[payload["source"]] = payload["digest"]
+                    current = payload.get("meta_version") == META_VERSION
+                    (digests if current else stale_meta)[payload["source"]] = payload["digest"]
             next_offset = result.get("next_page_offset")
             if next_offset is None:
-                return digests
+                for source in digests.keys() & stale_meta.keys():  # one chunk lagging = the file lags
+                    del digests[source]
+                return digests, stale_meta
             request = {**request, "offset": next_offset}
 
 
@@ -283,7 +306,53 @@ def _delete_source(source: str) -> None:
         _delete_points(client, {"must": [_source_condition(source)]})
 
 
-def _upsert_points(source: str, digest: str, chunks: list[str], vectors: list[list[float]]) -> None:
+def _frontmatter(text: str) -> dict[str, str]:
+    """The flat `key: value` lines of a leading YAML frontmatter block, lowercased keys, quotes
+    stripped. Nested values and lists are ignored: only scalar fields are read from it."""
+    match = FRONTMATTER_RE.match(text)
+    if not match:
+        return {}
+    fields: dict[str, str] = {}
+    for line in match.group(1).splitlines():
+        if not line or line[0].isspace() or ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        value = value.strip().strip("'\"")
+        if value:
+            fields[key.strip().lower()] = value
+    return fields
+
+
+def _document_meta(source: str, text: str) -> dict:
+    """The authority, status and last-verified date stored with every chunk of `source`."""
+    if source.startswith(CANONICAL_PREFIXES):
+        authority = "canonical"
+    elif source.startswith(EPHEMERAL_PREFIXES):
+        authority = "ephemeral"
+    else:
+        authority = "derived"
+    fields = _frontmatter(text) if Path(source).suffix.lower() in {".md", ".markdown"} else {}
+    return {
+        "authority": authority,
+        "status": fields.get("status", "current").lower(),
+        "last_verified": fields.get("last_verified") or fields.get("modified") or None,
+        "meta_version": META_VERSION,
+    }
+
+
+def _set_meta(source: str, meta: dict) -> None:
+    """Rewrite the metadata of every stored chunk of `source` in place."""
+    with httpx.Client(timeout=60.0) as client:
+        r = client.post(
+            f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points/payload",
+            params={"wait": "true"},
+            json={"payload": meta, "filter": {"must": [_source_condition(source)]}},
+        )
+        r.raise_for_status()
+
+
+def _upsert_points(source: str, digest: str, chunks: list[str], vectors: list[list[float]],
+                   meta: dict | None = None) -> None:
     """Writes the new version of `source` in requests small enough for Qdrant, then removes every
     other point of that source. A failed write removes what it wrote: its points carry the new digest,
     so a half-written version would read as fully indexed after a restart."""
@@ -304,6 +373,7 @@ def _upsert_points(source: str, digest: str, chunks: list[str], vectors: list[li
                     "chunk_overlap": CHUNK_OVERLAP,
                     "digest": digest,
                     "embed_model": EMBED_MODEL,
+                    **(meta or {}),
                 },
             }
         )
@@ -329,12 +399,17 @@ def _upsert_points(source: str, digest: str, chunks: list[str], vectors: list[li
         })
 
 
+def _is_excluded(source: str) -> bool:
+    return source.startswith(EXCLUDED_PREFIXES)
+
+
 def _iter_supported_files() -> list[Path]:
     """Every file to index. Hidden directories are not entered at all, and names alone decide the
     rest: each extra stat here is a round trip over the 9p mount, repeated on every scan."""
     found: list[Path] = []
     for root, dirnames, filenames in os.walk(WATCH_DIR):
-        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+        dirnames[:] = [name for name in dirnames if not name.startswith(".")
+                       and not _is_excluded(_file_key(Path(root) / name) + "/")]
         for name in filenames:
             path = Path(root) / name
             if not name.startswith(".") and path.suffix.lower() in SUPPORTED_EXTENSIONS:
@@ -342,12 +417,22 @@ def _iter_supported_files() -> list[Path]:
     return sorted(found)
 
 
-def ingest_path(path: Path, state: dict[str, str]) -> bool:
+def ingest_path(path: Path, state: dict[str, str], stale_meta: dict[str, str] | None = None) -> bool:
+    """Index `path` if its content changed. A file whose content is already indexed but whose stored
+    metadata is out of date (listed in `stale_meta`) gets its metadata rewritten, not re-embedded."""
     if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS or _is_hidden(path):
         return False
     source = _file_key(path)
+    if _is_excluded(source):          # watch events still arrive for excluded folders
+        return False
     digest = _sha256(path)
     if state.get(source) == digest:
+        return False
+    if stale_meta is not None and stale_meta.get(source) == digest:
+        _set_meta(source, _document_meta(source, _read_text(path)))
+        del stale_meta[source]
+        state[source] = digest
+        logger.info("Updated metadata of %s", source)
         return False
     text = _strip_image_targets(_read_text(path))
     chunks = _chunk(text, CHUNK_SIZE, CHUNK_OVERLAP)
@@ -363,7 +448,7 @@ def ingest_path(path: Path, state: dict[str, str]) -> bool:
         state[source] = digest
         return False
     vectors = _embed([EMBED_DOCUMENT_PREFIX + chunk for chunk in chunks])
-    _upsert_points(source, digest, chunks, vectors)
+    _upsert_points(source, digest, chunks, vectors, _document_meta(source, text))
     state[source] = digest
     logger.info("Ingested %s (%d chunks)", source, len(chunks))
     return True
@@ -404,7 +489,7 @@ class RetryBackoff:
 
 
 def ingest_pending(paths: list[Path], state: dict[str, str], seen: dict[str, tuple[int, int]],
-                   backoff: RetryBackoff) -> None:
+                   backoff: RetryBackoff, stale_meta: dict[str, str] | None = None) -> None:
     """One pass. `seen` holds the signature of each file already handled, so an unchanged file costs
     a stat. One failing file waits its turn without stopping the others."""
     for path in paths:
@@ -415,7 +500,7 @@ def ingest_pending(paths: list[Path], state: dict[str, str], seen: dict[str, tup
         if seen.get(source) == signature or not backoff.is_due(source, signature):
             continue
         try:
-            ingest_path(path, state)
+            ingest_path(path, state, stale_meta)
         except Exception as exc:
             wait = backoff.record_failure(source, signature)
             logger.exception("Failed to ingest %s: %s (next attempt in %.0f s)", path, exc, wait)
@@ -451,8 +536,9 @@ class _EventHandler(FileSystemEventHandler):
 def main() -> None:
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
     _drop_collection_if_other_model()
-    state = _indexed_digests()
-    logger.info("%d files already indexed in collection %s", len(state), QDRANT_COLLECTION)
+    state, stale_meta = _indexed_digests()
+    logger.info("%d files already indexed in collection %s (%d need a metadata update)",
+                len(state) + len(stale_meta), QDRANT_COLLECTION, len(stale_meta))
     seen: dict[str, tuple[int, int]] = {}
     backoff = RetryBackoff()
     stop_event = threading.Event()
@@ -475,7 +561,7 @@ def main() -> None:
                     queue.update(_iter_supported_files())
                 pending = list(queue)
                 queue.clear()
-            ingest_pending(pending, state, seen, backoff)
+            ingest_pending(pending, state, seen, backoff, stale_meta)
             time.sleep(SCAN_INTERVAL_SEC)
     finally:
         stop_event.set()

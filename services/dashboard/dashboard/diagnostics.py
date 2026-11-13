@@ -30,8 +30,7 @@ logger = logging.getLogger(__name__)
 # COMFYUI and the three llama.cpp servers the _get_json reads (each llama.cpp server has its own dep
 # so one blip cannot flip the healthy siblings' status); QDRANT the collection count; EDGE the caddy
 # tailnet checks (the identity DNS lookup and the cards' edge_check probes); PROBE the hub service
-# liveness checks. FS is reserved for filesystem faults and reads `unknown` in snapshot() until
-# something records it.
+# liveness checks. FS covers the dashboard's own state files (today the Overview's dismissals).
 DEP_MEANINGS = {
     "OPS": "ops-controller, the control plane",
     "GATEWAY": "model-gateway (LiteLLM)",
@@ -44,7 +43,7 @@ DEP_MEANINGS = {
     "QDRANT": "Qdrant, the vector store",
     "EDGE": "the Caddy SSO edge: each card's edge check, and the edge proxy's DNS name",
     "PROBE": "a hub card's liveness check, one per card",
-    "FS": "the filesystem (state files, model dir); reserved",
+    "FS": "the dashboard's own state files on its data volume",
 }
 DEPENDENCIES = tuple(DEP_MEANINGS)
 
@@ -66,6 +65,7 @@ KIND_MEANINGS = {
     "BADPAYLOAD": "the response body could not be parsed as JSON",
     "AUTH": "the dependency rejected the credentials (HTTP 401/403)",
     "NOTCONFIGURED": "the dependency's URL or token is not set",
+    "UNWRITABLE": "a state file could not be written (volume full or read-only)",
 }
 
 _RING_CAP = 200

@@ -1,0 +1,135 @@
+// The colour theme: Auto follows the OS and switches when it does, a pinned choice survives a
+// reload, and the Grafana embed follows the theme the page shows.
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import PerformancePage from '../src/pages/PerformancePage.jsx'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import process from 'node:process'
+import { readThemeChoice, resolveTheme, ThemeProvider, THEME_CHOICES, useTheme } from '../src/lib/theme.jsx'
+import { mockApi } from './mockApi.js'
+
+// A controllable prefers-color-scheme: `os.light` is what the OS says; `os.flip()` changes it.
+function fakeOs(light) {
+  const listeners = new Set()
+  const os = {
+    light,
+    flip() {
+      os.light = !os.light
+      listeners.forEach((fn) => fn())
+    },
+  }
+  vi.stubGlobal('matchMedia', (query) => ({
+    get matches() { return query.includes('light') && os.light },
+    addEventListener: (_type, fn) => listeners.add(fn),
+    removeEventListener: (_type, fn) => listeners.delete(fn),
+  }))
+  return os
+}
+
+function Picker() {
+  const { choice, setChoice, resolved } = useTheme()
+  return (
+    <>
+      <select aria-label="Colour theme" value={choice} onChange={(e) => setChoice(e.target.value)}>
+        {THEME_CHOICES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+      </select>
+      <output aria-label="resolved">{resolved}</output>
+    </>
+  )
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  delete document.documentElement.dataset.theme
+})
+
+describe('the colour theme', () => {
+  it('follows the OS on Auto, including when the OS switches', () => {
+    const os = fakeOs(true)
+    render(<ThemeProvider><Picker /></ThemeProvider>)
+    expect(document.documentElement.dataset.theme).toBe('light')
+    act(() => os.flip())
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(screen.getByLabelText('resolved').textContent).toBe('dark')
+  })
+
+  it('keeps a pinned choice across a reload and ignores the OS while pinned', () => {
+    const os = fakeOs(true)
+    const first = render(<ThemeProvider><Picker /></ThemeProvider>)
+    fireEvent.change(screen.getByLabelText('Colour theme'), { target: { value: 'dark' } })
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    act(() => os.flip())
+    act(() => os.flip())
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    first.unmount()
+
+    render(<ThemeProvider><Picker /></ThemeProvider>)
+    expect(screen.getByLabelText('Colour theme').value).toBe('dark')
+  })
+
+  it('falls back to Auto when storage holds something else', () => {
+    fakeOs(false)
+    localStorage.setItem('ordo.theme', 'neon')
+    render(<ThemeProvider><Picker /></ThemeProvider>)
+    expect(screen.getByLabelText('Colour theme').value).toBe('auto')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+  })
+
+  it('asks Grafana for the theme the page shows', async () => {
+    fakeOs(true)
+    mockApi()
+    render(<ThemeProvider><PerformancePage /></ThemeProvider>)
+    const frame = await screen.findByTitle('Ordo performance (Grafana)')
+    expect(frame.getAttribute('src')).toContain('theme=light')
+    expect(frame.getAttribute('src')).not.toContain('theme=dark')
+  })
+
+  it('gives a consumer outside the provider a harmless default', () => {
+    // Before any ThemeProvider mounts, consumers read the context's default. The typecheck gate
+    // (npm run typecheck) holds its setChoice to the provider's one-argument signature.
+    let ctx
+    function Probe() {
+      ctx = useTheme()
+      return null
+    }
+    render(<Probe />)
+    expect(ctx.choice).toBe('auto')
+    expect(ctx.resolved).toBe('dark')
+    expect(typeof ctx.setChoice).toBe('function')
+    expect(() => ctx.setChoice('light')).not.toThrow()
+  })
+})
+
+// public/theme-init.js runs in <head> before the app, so the first paint already has the palette.
+const INIT_SCRIPT = readFileSync(join(process.cwd(), 'public', 'theme-init.js'), 'utf-8')
+
+describe('the pre-paint theme script', () => {
+  it('agrees with the app for every stored choice and OS preference', () => {
+    for (const stored of [null, 'auto', 'light', 'dark', 'neon']) {
+      for (const osLight of [true, false]) {
+        fakeOs(osLight)
+        localStorage.clear()
+        if (stored !== null) localStorage.setItem('ordo.theme', stored)
+        delete document.documentElement.dataset.theme
+        new Function(INIT_SCRIPT)()
+        expect(document.documentElement.dataset.theme, `stored=${stored} osLight=${osLight}`)
+          .toBe(resolveTheme(readThemeChoice()))
+      }
+    }
+  })
+
+  it('follows the OS when storage is blocked', () => {
+    fakeOs(true)
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
+    new Function(INIT_SCRIPT)()
+    expect(document.documentElement.dataset.theme).toBe('light')
+    vi.restoreAllMocks()
+  })
+
+  it('is loaded by the page as a blocking script in <head>', () => {
+    const html = readFileSync(join(process.cwd(), 'index.html'), 'utf-8')
+    const head = html.slice(0, html.indexOf('</head>'))
+    expect(head).toMatch(/<script src="\/theme-init\.js"><\/script>/)
+  })
+})

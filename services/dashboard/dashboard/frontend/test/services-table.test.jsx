@@ -1,7 +1,9 @@
-// The Services page is one flat list of every container on the host: no group headers, a filter
-// over name and project, and per row exactly the controls its control kind allows.
-import { fireEvent, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+// The Services page groups every container on the host under its service: a service's containers
+// nest beneath its row behind a disclosure toggle, and a filter over name and project opens a
+// service whose container matches. The shared fixture here carries no group rows, so these tests
+// cover the flat fallback and the controls each row's control kind allows.
+import { act, fireEvent, screen, within } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import { INPUT } from '../src/components/ui.jsx'
 import ServicesPage from '../src/pages/ServicesPage.jsx'
 import { fixture, mockApi } from './mockApi.js'
@@ -137,6 +139,21 @@ describe('Services: one flat list', () => {
     expect(none.queryAllByRole('button')).toEqual([])
   })
 
+  it("spells out a project's not-managed reason once, not on every one of its rows", async () => {
+    const table = fixture('/api/services/table')
+    const base = table.rows.find((r) => r.name === 'web-site-web-1')
+    const at = table.rows.indexOf(base)
+    table.rows.splice(at + 1, 0, { ...base, id: 'host:web-site-db-1', name: 'web-site-db-1', container: 'web-site-db-1' })
+    mockApi({ 'GET /api/services/table': table })
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+    expect(within(rowNamed(rows, 'web-site-web-1')).getByText('Not managed: add web-site to managed_projects in ordo.yaml')).toBeTruthy()
+    const second = within(rowNamed(rows, 'web-site-db-1')).getByText(/^Not managed/)
+    expect(second.getAttribute('title')).toBe('add web-site to managed_projects in ordo.yaml')
+    // Screen readers still hear the whole reason.
+    expect(second.textContent).toBe('Not managed: add web-site to managed_projects in ordo.yaml')
+  })
+
   it('restarts a managed container through its project route once confirmed', async () => {
     const path = '/api/ops/projects/media-stack/containers/media-server/restart'
     const api = mockApi({ [`POST ${path}`]: { ok: true, project: 'media-stack', container: 'media-server', action: 'restarted' } })
@@ -161,5 +178,87 @@ describe('Services: one flat list', () => {
 
     await screen.findByText('listening')
     expect(api.sent('GET', path).length).toBeGreaterThan(0)
+  })
+})
+
+describe('Services: CPU and memory of other compose projects', () => {
+  it("reads another project's container from the host-wide stats, by container name", async () => {
+    mockApi()
+    renderInShell(<ServicesPage />)
+    const rows = await tableRows()
+    const media = within(rowNamed(rows, 'media-server'))
+    expect(await media.findByText('4.2%')).toBeTruthy()
+    expect(media.getByText('1.1 GB')).toBeTruthy()
+  })
+})
+
+describe('Services: the project chips', () => {
+  it('shows one project at a time, and All again', async () => {
+    mockApi()
+    renderInShell(<ServicesPage />)
+    const group = await screen.findByRole('group', { name: 'Project' })
+    const all = within(group).getByRole('button', { name: /^All/ })
+    expect(all.getAttribute('aria-pressed')).toBe('true')
+    const before = (await tableRows()).length
+    fireEvent.click(within(group).getByRole('button', { name: /^web-site/ }))
+    const rows = await tableRows()
+    expect(rows.length).toBeLessThan(before)
+    expect(rows.every((r) => within(r).queryByText('web-site'))).toBe(true)
+    fireEvent.click(all)
+    expect((await tableRows()).length).toBe(before)
+  })
+
+  it('marks a project with a failed container', async () => {
+    mockApi()
+    renderInShell(<ServicesPage />)
+    const group = await screen.findByRole('group', { name: 'Project' })
+    expect(within(group).getByRole('button', { name: /^media-stack/ }).textContent).toContain('1 failing')
+  })
+})
+
+describe('Services: the project chips, edge cases', () => {
+  it('counts a container outside any compose project under All', async () => {
+    const table = fixture('/api/services/table')
+    const base = table.rows.find((r) => r.name === 'web-site-web-1')
+    table.rows.push({ ...base, id: 'host:adhoc', name: 'adhoc', container: 'adhoc', project: null, compose: null })
+    mockApi({ 'GET /api/services/table': table })
+    renderInShell(<ServicesPage />)
+    const group = await screen.findByRole('group', { name: 'Project' })
+    const top = table.rows.filter((r) => !r.parent).length
+    expect(within(group).getByRole('button', { name: /^All/ }).textContent).toBe(`All ${top}`)
+  })
+
+  it('keeps the chips while a project is picked, even if it is the last one left', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
+    try {
+      const table = fixture('/api/services/table')
+      let rows = table.rows
+      mockApi({ 'GET /api/services/table': () => ({ ...table, rows }) })
+      renderInShell(<ServicesPage />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      const group = screen.getByRole('group', { name: 'Project' })
+      fireEvent.click(within(group).getByRole('button', { name: /^web-site/ }))
+      // Every other project leaves the host; the next poll (10 s) brings the shorter list.
+      rows = table.rows.filter((r) => r.project === 'web-site')
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+      const still = screen.getByRole('group', { name: 'Project' })
+      expect(within(still).getByRole('button', { name: /^web-site/ }).getAttribute('aria-pressed')).toBe('true')
+      fireEvent.click(within(still).getByRole('button', { name: /^All/ }))
+      expect(screen.queryByRole('group', { name: 'Project' })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the text and the project together from the no-match state', async () => {
+    mockApi()
+    renderInShell(<ServicesPage />)
+    const group = await screen.findByRole('group', { name: 'Project' })
+    const before = (await tableRows()).length
+    fireEvent.click(within(group).getByRole('button', { name: /^web-site/ }))
+    fireEvent.change(screen.getByLabelText('Filter services'), { target: { value: 'nothing-matches-this' } })
+    expect(await screen.findByText('No services match "nothing-matches-this" in web-site')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect((await tableRows()).length).toBe(before)
   })
 })

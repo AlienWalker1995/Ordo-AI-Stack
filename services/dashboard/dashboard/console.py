@@ -10,22 +10,15 @@ in-use model file cannot be deleted) be tested without a running stack.
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Mapping
 from pathlib import PurePosixPath
+from urllib.parse import urlsplit
 
 # Services the control plane refuses to cycle because they serve the request itself. Mirrors
 # ordo.control.broker.DockerBackend.SELF_REFERENTIAL (a repo test keeps the two equal); the dashboard
 # only uses it to hide buttons that would always be refused.
 NOT_CONTROLLABLE = frozenset({"agent", "ops-controller"})
-
-# How a registry entry's service reads on a GPU card.
-_TENANT_LABELS = {
-    # The GPU chat service, whichever engine serves it (llama.cpp or NInfer).
-    "inference-engine-gpu": "GPU chat",
-    "inference-engine-embed": "Embeddings",
-    "comfyui": "ComfyUI",
-    "stt": "Whisper",
-    "tts": "Kokoro",
-}
 
 # Audit actions that only read state. They are most of the log (Hermes polls) and none of them
 # is something a person would want in an activity feed.
@@ -68,10 +61,14 @@ _MEDIA_BY_SUFFIX = {
 _DISK_WARN_PCT = 80
 _DISK_CRITICAL_PCT = 90
 _RAM_WARN_PCT = 90
+# A rejected GPU job is an event, not a standing condition: it asks for attention for this long
+# after the rejection, then lives on only in the Activity timeline. "Up to": the control plane's
+# /jobs/history serves its newest 100 jobs, so on a busy day a rejection can scroll out sooner.
+REJECTION_ALERT_WINDOW_S = 24 * 3600
 
-# A median of fewer than this many samples is provisional: the page shows the count and marks
-# it, never a bare number (one slow turn must not read as the model's speed).
-PROVISIONAL_SAMPLE_THRESHOLD = 10
+
+# The model-gateway alias every consumer calls for chat (the core chat engine serves it).
+CHAT_MODEL = "local-chat"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -83,12 +80,17 @@ def short_gpu_name(name: str) -> str:
     return re.sub(r"^(NVIDIA\s+)?(GeForce\s+)?", "", name or "").strip() or (name or "")
 
 
-def lease_label(job_id: str) -> str:
-    """A gate's lease is named after the service it guards: 'gate-comfyui' -> 'ComfyUI'."""
-    if job_id.startswith("gate-"):
-        service = job_id[len("gate-"):]
-        return _TENANT_LABELS.get(service, service)
-    return job_id
+def lease_label(job_id: str, names: Mapping[str, str] | None = None) -> str:
+    """A gate's lease is named after the service it guards ('gate-comfyui' -> 'comfyui'), shown
+    by that service's card name when `names` (service -> card name, `service_names`) has one."""
+    service = job_id[len("gate-"):] if job_id.startswith("gate-") else job_id
+    return (names or {}).get(service, service)
+
+
+def service_names(cards: list[dict]) -> dict[str, str]:
+    """service -> the name its dashboard card shows, from the catalog cards plugins declare."""
+    return {str(c.get("ops_service") or c.get("id")): str(c["name"])
+            for c in cards or [] if c.get("name") and (c.get("ops_service") or c.get("id"))}
 
 
 def _exit_code(status: str) -> int | None:
@@ -139,32 +141,29 @@ def _verdict(row: dict | None) -> str:
 
 
 # ---------------------------------------------------------------------------------------------
-# GPUs and the chat engine
+# GPUs and the model engines
 # ---------------------------------------------------------------------------------------------
 
-def _resident_gpu(registry: dict) -> str | None:
-    for entry in (registry or {}).values():
-        if entry.get("service") == "inference-engine-gpu":
-            return entry.get("gpu_uuid")
-    return None
+def _resident_services(status_gpu: dict | None) -> set[str]:
+    """The GPU residents the scheduler knows: loaded (idle_cached) or stopped for a lease (evicted)."""
+    status_gpu = status_gpu or {}
+    return set(status_gpu.get("idle_cached") or {}) | set(status_gpu.get("evicted_residents") or {})
 
 
-def gpu_cards(hardware_gpus: list[dict], registry: dict, status_gpu: dict | None) -> list[dict]:
-    """One card per GPU, biggest first: who lives on it, and who has borrowed it right now.
+def gpu_cards(hardware_gpus: list[dict], registry: dict, status_gpu: dict | None,
+              names: Mapping[str, str] | None = None) -> list[dict]:
+    """One card per GPU, biggest first: the models that live on it, and who has borrowed it now.
 
-    Only the card the resident chat model lives on is scheduled, so only that card can be
-    borrowed; leases in /status `running` are the borrowers.
+    A card can be borrowed when a scheduled resident lives on it; leases in /status `running` are
+    the borrowers. Tenants are the registry's model ids, so any engine a plugin adds is listed.
     """
-    resident_uuid = _resident_gpu(registry)
-    borrowers = [lease_label(j.get("id", "")) for j in (status_gpu or {}).get("running", [])]
+    residents = _resident_services(status_gpu)
+    borrowable = {e.get("gpu_uuid") for e in (registry or {}).values() if e.get("service") in residents}
+    borrowers = [lease_label(j.get("id", ""), names) for j in (status_gpu or {}).get("running", [])]
     cards = []
     for gpu in hardware_gpus or []:
         uuid = gpu.get("uuid")
-        tenants = [
-            _TENANT_LABELS.get(e.get("service", ""), e.get("service", ""))
-            for e in (registry or {}).values()
-            if e.get("gpu_uuid") == uuid
-        ]
+        tenants = sorted(model_id for model_id, e in (registry or {}).items() if e.get("gpu_uuid") == uuid)
         cards.append({
             "uuid": uuid,
             "name": short_gpu_name(gpu.get("name", "")),
@@ -173,56 +172,82 @@ def gpu_cards(hardware_gpus: list[dict], registry: dict, status_gpu: dict | None
             "util_pct": gpu.get("utilization_pct"),
             "temp_c": gpu.get("temp_c"),
             "tenants": tenants,
-            "borrowed_by": borrowers if uuid and uuid == resident_uuid else [],
+            "borrowed_by": borrowers if uuid and uuid in borrowable else [],
         })
     cards.sort(key=lambda c: -(c.get("vram_total_gb") or 0))
     return cards
 
 
-def chat_engine(status_gpu: dict | None, containers_by_id: dict) -> dict:
-    """Which engine is answering chat right now: gpu, cpu (the fallback), none or unknown.
+# What a model engine is doing, from its container and the scheduler.
+#   serving   running and answering
+#   starting  running, its health check not passed yet
+#   lent      stopped on purpose: a GPU lease borrowed its card
+#   stopped   not running, and nothing says it should be
+#   down      crashed, restarting or unhealthy
+_ENGINE_STATE = {"up": "serving", "starting": "starting", "unhealthy": "down", "failed": "down",
+                 "done": "stopped", "stopped": "stopped"}
 
-    A render borrowing the GPU evicts the resident model, and the gateway then serves chat from
-    the CPU fallback: that is the system working, and the page must say so plainly rather than
-    show the GPU server as down.
+# The order engines are listed in: what people talk to first.
+_KIND_ORDER = {"chat": 0, "embedding": 1, "image": 2, "stt": 3, "tts": 4}
+
+
+def model_engines(registry: dict, containers_by_id: dict, status_gpu: dict | None,
+                  rates: dict[str, dict] | None, names: Mapping[str, str] | None = None) -> list[dict]:
+    """Every engine the registry lists, with its state and, where it is measured, its speed.
+
+    `rates` is engine (service) -> the ordo_engine_* figures the dashboard reads from Prometheus
+    (routes_console._engine_rates); None when they could not be read. An engine that stands in for
+    another (`fallback_for`) is marked `standing_in` while the one it covers is not serving.
     """
+    evicted = set((status_gpu or {}).get("evicted_residents") or {})
+    borrowers = [lease_label(j.get("id", ""), names) for j in (status_gpu or {}).get("running", [])]
+    engines = []
+    for model_id, entry in (registry or {}).items():
+        service = entry.get("service", "")
+        if service in evicted:
+            state = "lent"
+            reason = f"GPU lent to {', '.join(borrowers)}" if borrowers else "GPU lent for a lease"
+        else:
+            state = _ENGINE_STATE.get(_verdict(containers_by_id.get(service)), "stopped")
+            reason = ""
+        measured = ((entry.get("metrics") or {}).get("format") or "none") != "none"
+        engines.append({
+            "model": model_id,
+            "engine": service,
+            "kind": entry.get("kind"),
+            "device": entry.get("device"),
+            "file": (entry.get("source") or {}).get("file"),
+            "ctx": (entry.get("config") or {}).get("ctx"),
+            "fallback_for": entry.get("fallback_for"),
+            "state": state,
+            "reason": reason,
+            "measured": measured,
+            "speeds": (rates or {}).get(service) if measured and rates is not None else None,
+        })
+    serving = {e["model"] for e in engines if e["state"] == "serving"}
+    for e in engines:
+        e["standing_in"] = bool(e["fallback_for"]) and e["state"] == "serving" and e["fallback_for"] not in serving
+    engines.sort(key=lambda e: (_KIND_ORDER.get(e["kind"], 9), bool(e["fallback_for"]), e["model"]))
+    return engines
+
+
+def chat_summary(engines: list[dict], status_gpu: dict | None) -> dict:
+    """Who answers `local-chat`, the model every consumer calls, right now: its own engine, an
+    engine standing in for it, its own engine still starting (after a restart or a model switch:
+    nobody answers yet, but nothing is wrong), or nobody. `model` is the engine record answering,
+    or the one starting, or None."""
     if status_gpu is None:
-        return {"engine": "unknown", "reason": "The control plane did not answer"}
-    evicted = "inference-engine-gpu" in (status_gpu.get("evicted_residents") or {})
-    gpu_up = _verdict(containers_by_id.get("inference-engine-gpu")) in ("up", "starting") and not evicted
-    if gpu_up:
-        return {"engine": "gpu", "reason": ""}
-    borrowers = [lease_label(j.get("id", "")) for j in status_gpu.get("running", [])]
-    if borrowers:
-        reason = f"The GPU is lent to {', '.join(borrowers)}"
-    else:
-        reason = "The GPU chat model is not running"
-    if _verdict(containers_by_id.get("inference-engine-cpu")) in ("up", "starting"):
-        return {"engine": "cpu", "reason": reason}
-    return {"engine": "none", "reason": reason}
-
-
-def chat_medians(throughput: dict, served: dict, registry: dict) -> dict:
-    """The Overview's GPU and CPU median speeds, from the ROLE series: a model swap changes the
-    file name, not the role, so the median survives it instead of restarting from zero samples.
-    Each carries its sample count and span, and the file the server loads now (the sparkline's
-    label), and says whether it is provisional (fewer than PROVISIONAL_SAMPLE_THRESHOLD samples),
-    so the page never decides that for itself."""
-    roles = (throughput or {}).get("roles") or {}
-    resident = resident_gpu_file(registry)
-    out = {}
-    for key, role in (("gpu", "gpu-chat"), ("cpu", "cpu-fallback")):
-        r = roles.get(role) or {}
-        n = r.get("n") or 0
-        out[key] = {
-            "p50": r.get("p50"),
-            "n": n,
-            "provisional": 0 < n < PROVISIONAL_SAMPLE_THRESHOLD,
-            "first_ts": r.get("first_ts"),
-            "last_ts": r.get("last_ts"),
-            "model": served.get(key) or (resident if key == "gpu" else None),
-        }
-    return out
+        return {"state": "unknown", "model": None, "reason": "The control plane did not answer"}
+    primary = next((e for e in engines if e["model"] == CHAT_MODEL), None)
+    if primary and primary["state"] == "serving":
+        return {"state": "primary", "model": primary, "reason": ""}
+    reason = (primary or {}).get("reason") or f"{CHAT_MODEL} is not serving"
+    stand_in = next((e for e in engines if e["standing_in"] and e["fallback_for"] == CHAT_MODEL), None)
+    if stand_in:
+        return {"state": "fallback", "model": stand_in, "reason": reason}
+    if primary and primary["state"] == "starting":
+        return {"state": "starting", "model": primary, "reason": (primary.get("reason") or "")}
+    return {"state": "none", "model": None, "reason": reason}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -230,26 +255,32 @@ def chat_medians(throughput: dict, served: dict, registry: dict) -> dict:
 # ---------------------------------------------------------------------------------------------
 
 def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
-                    status_gpu: dict | None, host_rows: list[dict] | None = None) -> list[dict]:
+                    status_gpu: dict | None, host_rows: list[dict] | None = None,
+                    leases: list[dict] | None = None, now: float | None = None) -> list[dict]:
     """What needs a person, most severe first. Finished jobs and stopped services are not
     problems; a failing health probe, an unhealthy or crashed container, a nearly full disk and
     a rejected GPU job are. A chat model evicted so a render can borrow its GPU is stopped on
     purpose, so its failing probe is not a problem either. `host_rows` are the Services table's
     rows outside the ordo project: a crashed one is critical and an unhealthy one a warning,
-    each naming its project; stopping or finishing one is a choice, not a problem."""
+    each naming its project; stopping or finishing one is a choice, not a problem.
+
+    Every item carries a stable `id` naming the condition, so a person can dismiss it until the
+    condition clears (split_dismissed). `leases` is the control plane's lease history: a job it
+    rejected is listed for REJECTION_ALERT_WINDOW_S after the rejection."""
     items: list[dict] = []
     evicted = set((status_gpu or {}).get("evicted_residents") or {})
     for card in cards or []:
         if card.get("ok") is False and (card.get("ops_service") or card.get("id")) not in evicted:
-            items.append({"severity": "critical", "title": f"{card.get('name')} is not responding",
+            items.append({"id": f"probe-down:{card.get('id')}", "severity": "critical",
+                          "title": f"{card.get('name')} is not responding",
                           "detail": card.get("error") or "", "service": card.get("id")})
     for sid, row in sorted((containers_by_id or {}).items()):
         verdict = _verdict(row)
         if verdict == "unhealthy":
-            items.append({"severity": "critical", "title": f"{sid} is unhealthy",
+            items.append({"id": f"unhealthy:{sid}", "severity": "critical", "title": f"{sid} is unhealthy",
                           "detail": row.get("status", ""), "service": sid})
         elif verdict == "failed":
-            items.append({"severity": "critical", "title": f"{sid} exited with an error",
+            items.append({"id": f"failed:{sid}", "severity": "critical", "title": f"{sid} exited with an error",
                           "detail": row.get("status", ""), "service": sid})
     for row in sorted(host_rows or [], key=lambda r: str(r.get("name") or "").lower()):
         verdict = row.get("verdict")
@@ -257,27 +288,71 @@ def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
             continue
         detail = f"{row.get('project') or 'no project'}: {row.get('status') or ''}"
         if verdict == "failed":
-            items.append({"severity": "critical", "title": f"{row.get('name')} exited with an error",
+            items.append({"id": f"host-failed:{row.get('name')}", "severity": "critical",
+                          "title": f"{row.get('name')} exited with an error",
                           "detail": detail, "service": row.get("name")})
         else:
-            items.append({"severity": "warning", "title": f"{row.get('name')} is unhealthy",
+            items.append({"id": f"host-unhealthy:{row.get('name')}", "severity": "warning",
+                          "title": f"{row.get('name')} is unhealthy",
                           "detail": detail, "service": row.get("name")})
     disk = (hardware or {}).get("disk_pct")
     if isinstance(disk, int | float) and disk >= _DISK_WARN_PCT:
         detail = ""
         if hardware.get("disk_used_gb") is not None and hardware.get("disk_total_gb") is not None:
             detail = f"{hardware['disk_used_gb']:,.1f} of {hardware['disk_total_gb']:,.1f} GB"
-        items.append({"severity": "critical" if disk >= _DISK_CRITICAL_PCT else "warning",
+        severity = "critical" if disk >= _DISK_CRITICAL_PCT else "warning"
+        # The severity is part of the id: dismissing the warning must not hide the escalation.
+        items.append({"id": f"disk:{severity}", "severity": severity,
                       "title": f"Disk {round(disk)}% full", "detail": detail, "service": None})
     ram = (hardware or {}).get("ram_pct")
     if isinstance(ram, int | float) and ram >= _RAM_WARN_PCT:
-        items.append({"severity": "warning", "title": f"Memory {round(ram)}% used", "detail": "",
+        items.append({"id": "memory", "severity": "warning", "title": f"Memory {round(ram)}% used", "detail": "",
                       "service": None})
-    for job in (status_gpu or {}).get("rejected", []) or []:
-        items.append({"severity": "warning", "title": f"GPU job {job.get('id')} was rejected",
-                      "detail": job.get("reason", ""), "service": None})
+    # A job is rejected only when it asks for more VRAM than the card has
+    # (ordo/control/scheduler.py). The history stamps the rejection, so an old one ages out
+    # instead of standing in the list for the life of the scheduler's snapshot.
+    now = time.time() if now is None else now
+    for lease in leases or []:
+        ended = lease.get("ended")
+        if lease.get("outcome") != "rejected" or not isinstance(ended, int | float):
+            continue
+        if now - ended > REJECTION_ALERT_WINDOW_S:
+            continue
+        job_id = lease.get("id", "")
+        items.append({"id": f"gpu-rejected:{job_id}:{int(ended)}", "severity": "warning",
+                      "title": f"GPU job {job_id} was rejected",
+                      "detail": "it needs more VRAM than the GPU has", "service": None})
     items.sort(key=lambda i: 0 if i["severity"] == "critical" else 1)
     return items
+
+
+def split_dismissed(items: list[dict], dismissed: dict) -> tuple[list[dict], list[dict]]:
+    """(still shown, dismissed) for the attention items: a dismissed item stays out of the list
+    and the status line until its condition clears (prune_dismissals forgets it then)."""
+    shown = [i for i in items if i["id"] not in dismissed]
+    hidden = [i for i in items if i["id"] in dismissed]
+    return shown, hidden
+
+
+# The source each attention id's condition is read from, by the id's prefix. A dismissal is
+# forgotten only when its own source was read and no longer reports the condition.
+ATTENTION_SOURCES = {
+    "probe-down": "cards", "failed": "services", "unhealthy": "services",
+    "host-failed": "host", "host-unhealthy": "host",
+    "disk": "disk", "memory": "memory", "gpu-rejected": "history",
+}
+
+
+def prune_dismissals(dismissed: dict, items: list[dict], read: set[str]) -> dict:
+    """Keep only the dismissals whose condition still holds. Forgetting the rest is what makes a
+    dismissal last "until it clears": if the same container fails again later, it is listed again.
+
+    `read` names the sources (ATTENTION_SOURCES values) this poll actually read. A condition whose
+    source failed is not seen this poll, which is not the same as cleared, so its dismissal is
+    kept; so is one whose id has no known source."""
+    current = {i["id"] for i in items}
+    return {k: v for k, v in dismissed.items()
+            if k in current or ATTENTION_SOURCES.get(k.split(":", 1)[0]) not in read}
 
 
 def drift(doctor: dict | None) -> dict:
@@ -326,19 +401,15 @@ def summarise_renders(history: dict, limit: int) -> list[dict]:
     return renders[:limit]
 
 
-# The GPU chat service, by its compose id (#415 renamed it from `llamacpp`): the resident a lease
-# evicts when its VRAM demand cannot share the card.
-_CHAT_SERVICE = "inference-engine-gpu"
-
-
-def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], limit: int) -> list[dict]:
+def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], limit: int,
+                   names: Mapping[str, str] | None = None) -> list[dict]:
     """Renders, GPU leases and operator actions in one newest-first feed.
 
     Every item carries the same keys; the lease fields (holder, started, ended, duration_s,
-    evicted_chat) are null/false on non-lease items. Gate leases are kept: the render they
-    admitted stands beside them as its own item, and the lease says who held the GPU, for how
-    long, and whether the chat model was out of the GPU while it ran (the broker records the
-    evicted residents on the lease as it starts; an older record without them reads false).
+    evicted) are null/empty on non-lease items. Gate leases are kept: the render they admitted
+    stands beside them as its own item, and the lease says who held the GPU, for how long, and
+    which residents were stopped while it ran (the broker records the evicted residents on the
+    lease as it starts; an older record without them reads as none), by their card names.
     Read-only audit entries are dropped.
     """
     items: list[dict] = []
@@ -349,13 +420,13 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
         items.append({"ts": r["ts"], "kind": "render", "title": title,
                       "severity": "ok" if r.get("ok") else "critical",
                       "holder": None, "started": None, "ended": None, "duration_s": None,
-                      "evicted_chat": False})
+                      "evicted": []})
     for lease in leases or []:
         job_id = lease.get("id", "")
         ts = lease.get("ended") or lease.get("started")
         if ts is None:
             continue
-        holder = lease_label(job_id)
+        holder = lease_label(job_id, names)
         started, ended = lease.get("started"), lease.get("ended")
         duration = round(ended - started) if isinstance(started, int | float) \
             and isinstance(ended, int | float) and ended >= started else None
@@ -367,7 +438,7 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
         items.append({"ts": float(ts), "kind": "gpu", "title": title,
                       "severity": "ok" if outcome == "completed" else "warning",
                       "holder": holder, "started": started, "ended": ended, "duration_s": duration,
-                      "evicted_chat": _CHAT_SERVICE in (lease.get("evicted") or [])})
+                      "evicted": [lease_label(s, names) for s in lease.get("evicted") or []]})
     for entry in audit or []:
         action = entry.get("action", "")
         if action in _READ_ONLY_ACTIONS or action in _LEASE_ACTIONS or entry.get("ts") is None:
@@ -382,7 +453,7 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
         items.append({"ts": float(entry["ts"]), "kind": "action", "title": title,
                       "severity": "info" if ok else "warning",
                       "holder": None, "started": None, "ended": None, "duration_s": None,
-                      "evicted_chat": False})
+                      "evicted": []})
     items.sort(key=lambda i: i["ts"], reverse=True)
     return items[:limit]
 
@@ -405,14 +476,6 @@ def served_file(v1_models: dict | None) -> str | None:
     return PurePosixPath(str(data[0]["id"])).name
 
 
-def resident_gpu_file(registry: dict) -> str | None:
-    """The file the GPU chat server is declared to serve, whether or not it is loaded now."""
-    for entry in (registry or {}).values():
-        if entry.get("service") == "inference-engine-gpu":
-            return (entry.get("source") or {}).get("file")
-    return None
-
-
 def in_use_files(served: dict, model_config: dict) -> set[str]:
     """Every model file a server depends on: what each server has loaded now, plus every file the
     current render loads (ops-controller /model-config `model_files`: the chat model and its
@@ -428,26 +491,15 @@ def in_use_files(served: dict, model_config: dict) -> set[str]:
     return used
 
 
-def model_slots(model_config: dict, served: dict, disk_files: list[dict], throughput: dict) -> dict:
-    stats = (throughput or {}).get("models") or {}
-
-    def slot_speed(file: str | None) -> dict:
-        """A slot's median speed with its evidence: the count and span the page needs to mark a
-        thin median provisional."""
-        s = stats.get(file) or {} if file else {}
-        n = s.get("sample_count") or 0
-        return {"p50": s.get("p50"), "n": n, "provisional": 0 < n < PROVISIONAL_SAMPLE_THRESHOLD,
-                "first_ts": s.get("first_ts"), "last_ts": s.get("last_ts")}
-
+def model_files(model_config: dict, served: dict, disk_files: list[dict]) -> dict:
+    """The Models page's catalog and files. What each engine runs is the registry's engines list
+    (model_engines), the same one the Overview shows; this adds what only this page needs: which
+    catalog model is active, which catalog models are downloaded, and which files any engine uses."""
     on_disk = {f.get("name") for f in disk_files or []}
     used = in_use_files(served, model_config)
     active_id = (model_config or {}).get("active_model")
-    gpu_file = served.get("gpu") or (model_config or {}).get("active_file")
     return {
-        "gpu": {"catalog_id": active_id, "file": gpu_file, "loaded": served.get("gpu") is not None,
-                "ctx": (model_config or {}).get("ctx_size"), **slot_speed(gpu_file)},
-        "cpu": {"file": served.get("cpu"), **slot_speed(served.get("cpu"))},
-        "embed": {"file": served.get("embed")},
+        "active_model": active_id,
         "catalog": [
             {"id": m.get("id"), "tier": m.get("tier"), "vram_gb": m.get("vram_gb"),
              "file": m.get("file"), "installed": m.get("file") in on_disk,
@@ -475,12 +527,16 @@ def _table_row(*, row_id: str, name: str, project: str | None, container: str | 
                lent: bool, actions: list[str], control: str, reason: str | None = None) -> dict:
     """One Services row. `control` says which routes act on it: "ordo" (the lifecycle routes),
     "managed" (a managed project's logs and restart), "host" (only the host can cycle it), "link"
-    (a probe-only card) or "none" (read-only, `reason` says why)."""
+    (a probe-only card), "group" (a row standing for several containers, with no controls of its
+    own) or "none" (read-only, `reason` says why).
+
+    `parent` is the id of the row a container is listed under (_nest_groups), and `group_verdict`
+    the worst state across a row and the rows listed under it; both None for a row not in a group."""
     return {
         "id": row_id, "name": name, "project": project, "container": container, "compose": compose,
         "card_id": card_id, "verdict": verdict, "uptime": uptime_from_status(status), "status": status,
         "open_url": open_url, "error": error, "lent": lent, "actions": actions, "control": control,
-        "reason": reason,
+        "reason": reason, "parent": None, "group_verdict": None,
     }
 
 
@@ -554,6 +610,54 @@ def _card_container(card: dict, containers_by_id: dict) -> str | None:
     return None
 
 
+# Worst first: the state a group shows is the worst of its containers'. A finished one-shot job is
+# no problem, and a resident lent to a render is away on purpose, so neither darkens its group.
+_GROUP_VERDICT_RANK = ("failed", "unhealthy", "starting", "stopped", "unknown", "up", "done")
+
+
+def _group_verdict(rows: list[dict]) -> str:
+    verdicts = ["up" if row["lent"] else row["verdict"] for row in rows]
+    return min(verdicts, key=lambda v: _GROUP_VERDICT_RANK.index(v) if v in _GROUP_VERDICT_RANK else 4)
+
+
+def _nest_groups(rows: list[dict], groups: list[dict], cards: list[dict]) -> list[dict]:
+    """List each group's containers under one row: the group's dashboard card when exactly one card
+    stands for it (a card whose `plugin`, or for a core card its id, is the group's id), else a row
+    of its own named after the group. The listed rows stay in the table with `parent` set, so
+    everything that reads one container (counts, action confirmation) still finds it; the main
+    row's `group_verdict` carries the worst state, so a failed part is never hidden."""
+    owner_of_card = {card.get("id"): card.get("plugin") or card.get("id") for card in cards or []}
+    by_compose = {row["compose"]: row for row in rows if row["compose"]}
+    out = list(rows)
+    for group in groups or []:
+        gid = group.get("id")
+        members = [by_compose[s] for s in group.get("services") or [] if s in by_compose]
+        card_rows = [row for row in rows if row["card_id"] and owner_of_card.get(row["card_id"]) == gid]
+        if len(card_rows) == 1:
+            main = card_rows[0]
+        else:
+            main = _table_row(
+                row_id=f"group:{gid}", name=group.get("name") or gid, project=ORDO_PROJECT, container=None,
+                compose=None, card_id=None, verdict="unknown", status=None, open_url=None, error=None,
+                lent=False, actions=[], control="group",
+            )
+        children = []
+        for row in [*card_rows, *members]:
+            if row is not main and row not in children:
+                children.append(row)
+        if not children:
+            continue
+        if main["id"].startswith("group:"):
+            out.append(main)
+        for row in children:
+            row["parent"] = main["id"]
+        main["group_verdict"] = _group_verdict(
+            children if main["control"] == "group" else [main, *children])
+        if main["control"] == "group":
+            main["verdict"] = main["group_verdict"]
+    return out
+
+
 def _sort_key(row: dict) -> tuple:
     """Ordo first, then the other projects alphabetically, then containers compose did not start."""
     project = row["project"]
@@ -563,11 +667,13 @@ def _sort_key(row: dict) -> tuple:
 
 def build_service_table(cards: list[dict], containers_by_id: dict,
                         status_gpu: dict | None = None, control_plane_up: bool = True,
-                        host_containers: list[dict] | None = None, managed: dict | None = None) -> list[dict]:
+                        host_containers: list[dict] | None = None, managed: dict | None = None,
+                        groups: list[dict] | None = None) -> list[dict]:
     """Every container on the host as one flat, sorted list. Ordo's rows come from its catalog cards
     (friendly names, Open links, probe-only cards) and ops-controller's /services; every other
     container from the host-wide /containers, enriched by the managed projects' /projects. With the
-    control plane down, a row bound to a container is `unknown` and offers no actions."""
+    control plane down, a row bound to a container is `unknown` and offers no actions. `groups`
+    (the manifest's service_groups) nests the containers of one service under one row."""
     evicted = set((status_gpu or {}).get("evicted_residents") or {})
     containers_by_id = containers_by_id or {}
     rows: list[dict] = []
@@ -584,6 +690,7 @@ def build_service_table(cards: list[dict], containers_by_id: dict,
     for sid, container in sorted(containers_by_id.items()):
         if sid not in claimed:
             rows.append(_ordo_row(sid, sid, container, lent=sid in evicted))
+    rows = _nest_groups(rows, groups or [], cards or [])
 
     ordo_names = {c.get("name") for c in containers_by_id.values() if c.get("name")}
     managed_projects = None if managed is None else {p.get("project") for p in managed.get("projects") or []}
@@ -601,6 +708,62 @@ def build_service_table(cards: list[dict], containers_by_id: dict,
         rows.append(_foreign_row(seen["project"], name, seen["host"], seen["managed"], managed_projects))
     rows.sort(key=_sort_key)
     return rows
+
+
+# ---------------------------------------------------------------------------------------------
+# apps (the Overview's launcher)
+# ---------------------------------------------------------------------------------------------
+
+# The group Ordo's own service UIs list under; a labelled container names its own.
+ORDO_APPS_GROUP = "Ordo"
+
+
+def _app_status(row: dict) -> str:
+    """up, down or unknown for a labelled container, from the same verdict the Services table uses."""
+    verdict = classify_container(row.get("status"), row.get("health"), row.get("status_text"))
+    if verdict == "up":
+        return "up"
+    if verdict in ("failed", "unhealthy", "stopped"):
+        return "down"
+    return "unknown"
+
+
+def _openable(url: str | None) -> bool:
+    """Only an http(s) URL becomes a link: a label is free text, and `javascript:` in an href
+    would run in the dashboard's origin when clicked."""
+    return urlsplit(url or "").scheme.lower() in ("http", "https")
+
+
+def launcher_apps(cards: list[dict], host_containers: list[dict] | None) -> list[dict]:
+    """Every web UI a person can open, for the Overview's launcher and the command palette.
+
+    Two sources, no list kept in code: each catalog card with an Open link (its plugin's
+    catalog.json), and each host container labelled the Homepage way (`homepage.href`, plus
+    optional name, description and group; ops-controller passes them through as `link`). Ordo's
+    own group comes first, then the others by name; within a group, apps sort by name. Group
+    names compare without case, and every app in a group carries its first spelling, so `Media`
+    and `media` are one group. A URL that is not http(s) is left out."""
+    apps = []
+    for card in cards or []:
+        if not _openable(card.get("open_url")) or card.get("background"):
+            continue
+        ok = card.get("ok")
+        apps.append({"name": card.get("name") or card.get("id"), "url": card["open_url"],
+                     "description": card.get("description") or "", "group": ORDO_APPS_GROUP,
+                     "status": "up" if ok else "down" if ok is False else "unknown"})
+    for row in host_containers or []:
+        link = row.get("link")
+        if not link or not _openable(link.get("href")):
+            continue
+        apps.append({"name": link.get("name") or row.get("name"), "url": link["href"],
+                     "description": link.get("description") or "",
+                     "group": link.get("group") or row.get("project") or "Other",
+                     "status": _app_status(row)})
+    spelling: dict[str, str] = {}
+    for app in apps:
+        app["group"] = spelling.setdefault(app["group"].lower(), app["group"])
+    apps.sort(key=lambda a: (a["group"] != ORDO_APPS_GROUP, a["group"].lower(), a["name"].lower()))
+    return apps
 
 
 def service_counts(rows: list[dict]) -> dict:

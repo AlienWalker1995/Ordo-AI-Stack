@@ -169,7 +169,7 @@ A vision projector is pinned in the model's `mmproj:` mapping (`file`, `source`,
 
 A model switch (the dashboard's Models page, or `POST /model-config` on `ops-controller`) never recreates `inference-engine-gpu` onto a file the volume lacks: it answers 409 naming the missing files and the `ordo fetch <catalog-id>` to run on the host, and changes nothing.
 
-**ComfyUI:** add a model with the `download_comfyui_model` MCP tool (`url` plus `category`, e.g. `checkpoints`, `loras`, `vae`). It calls `ops-controller` `POST /models/download`, which writes into the `comfyui-models` **named volume** (the same volume ComfyUI reads RO), so the file lands where ComfyUI looks with no copy step. One download runs at a time; poll `get_comfyui_model_download_status`. Music3 weight URLs are listed under `weights:` in `services/song-gen/plugin.yaml`.
+**ComfyUI:** add a model with the `download_comfyui_model` MCP tool (`url` plus `category`, e.g. `checkpoints`, `loras`, `vae`). It calls `ops-controller` `POST /models/download`, which writes into the `comfyui-models` **named volume** (the same volume ComfyUI reads RO), so the file lands where ComfyUI looks with no copy step. One download runs at a time; poll `get_comfyui_model_download_status`. The pinned weight URLs are listed under `weights:` in each media plugin: Music3 in `services/song-gen/plugin.yaml`, MiniMax-H3-Image (with sha256s) in `services/image-gen/plugin.yaml`.
 
 ### ComfyUI outputs
 
@@ -274,7 +274,7 @@ rendered stack in `out/` (`--stack DIR` for another), so render first.
 | `pg_dump` | `litellm-db-data`, `langfuse-db-data` | `pg_dump -Fc` in the running server, online | loads the dump into a temporary database beside the live one, then (clients stopped) renames it over the live one in one transaction and drops the old copy |
 | `stopped` | `hermes-home`, `qdrant-data`, `couchdb-data`, `open-webui-data`, `grafana-data`, the Langfuse ClickHouse, Redis and MinIO volumes | stops the services writing the volume, snapshots its files, starts them again | stops the writers, unpacks into a staging directory in the volume, swaps it in by renames, starts them |
 | `live` | `caddy_data`, `caddy_config`, the Tailscale `ts-state-*` volumes, `comfyui-app` | snapshot with the services running (no database in them) | as `stopped` |
-| `skip` | `models-gguf`, `comfyui-models`, `comfyui-output` (transient renders, purged after 21 days), `ltx-models`, `hf-hub-cache`, `prometheus-data`, `alertmanager-data`, `langfuse-clickhouse-logs` | not saved: re-derivable (`ordo fetch`, `download_comfyui_model`), a cache, or metrics and logs | nothing |
+| `skip` | `models-gguf`, `comfyui-models`, `comfyui-output` (transient renders, purged after 21 days), `ltx-models`, `hf-hub-cache`, `prometheus-data`, `alertmanager-data`, `loki-data`, `alloy-data`, `langfuse-clickhouse-logs` | not saved: re-derivable (`ordo fetch`, `download_comfyui_model`), a cache, or metrics and logs | nothing |
 
 A raw copy of a running database's files is not a backup, so every database is either dumped with
 its own tool or copied with its server stopped. Services are stopped and started with

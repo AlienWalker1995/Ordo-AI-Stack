@@ -119,7 +119,7 @@ Every UI is published only through the front door, behind Google sign-in; APIs a
 - **Unified dashboard**: five pages (Overview, Services, Models, Performance, Logs) covering stack health, per-container actions and logs, one safe GPU model switch, and an embedded Grafana performance view; plus a Ctrl/Cmd K command palette.
 - **Ops controller** — the render/scheduler control plane (internal, token-auth).
 - **Agent tracing**: optional self-hosted [Langfuse](services/langfuse/README.md): every agent turn, LLM call and tool call as a searchable trace, plus datasets and evals, with unattended first-boot setup. Opt-in; the agent fails open when it is off or down.
-- **Optional, hardware-gated plugins** — voice (STT + TTS), RAG (Qdrant retrieval), and monitoring (Grafana + Prometheus + GPU exporter, with Alertmanager alerting to Discord) enable when your hardware supports them.
+- **Optional, hardware-gated plugins** — voice (STT + TTS), RAG (Qdrant retrieval), and monitoring (Grafana + Prometheus + GPU exporter, Alertmanager alerting to Discord, and every container's logs in Loki through Alloy, kept 7 days) enable when your hardware supports them.
 
 ## Security
 

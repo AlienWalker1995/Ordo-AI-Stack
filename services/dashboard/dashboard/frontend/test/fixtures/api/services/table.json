@@ -18,7 +18,9 @@
         "stop"
       ],
       "control": "ordo",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "link:codebase-memory",
@@ -35,7 +37,9 @@
       "lent": false,
       "actions": [],
       "control": "link",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:comfyui",
@@ -55,7 +59,9 @@
         "stop"
       ],
       "control": "ordo",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:evals",
@@ -74,7 +80,9 @@
         "start"
       ],
       "control": "ordo",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:agent",
@@ -91,11 +99,13 @@
       "lent": false,
       "actions": [],
       "control": "host",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:inference-engine-cpu",
-      "name": "llama.cpp (CPU fallback)",
+      "name": "llama.cpp (CPU)",
       "project": "ordo",
       "container": "ordo-inference-engine-cpu-1",
       "compose": "inference-engine-cpu",
@@ -111,7 +121,9 @@
         "stop"
       ],
       "control": "ordo",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:inference-engine-gpu",
@@ -131,7 +143,9 @@
         "stop"
       ],
       "control": "ordo",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:mcp-searxng",
@@ -151,7 +165,9 @@
         "stop"
       ],
       "control": "ordo",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:model-gateway",
@@ -171,7 +187,9 @@
         "stop"
       ],
       "control": "ordo",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:n8n",
@@ -191,7 +209,9 @@
         "stop"
       ],
       "control": "ordo",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:open-webui",
@@ -211,7 +231,9 @@
         "stop"
       ],
       "control": "ordo",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:ops-controller",
@@ -228,7 +250,9 @@
       "lent": false,
       "actions": [],
       "control": "host",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "ordo:qdrant",
@@ -248,7 +272,9 @@
         "stop"
       ],
       "control": "ordo",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "host:media-indexer",
@@ -265,7 +291,9 @@
       "lent": false,
       "actions": [],
       "control": "managed",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "host:media-server",
@@ -284,7 +312,9 @@
         "restart"
       ],
       "control": "managed",
-      "reason": null
+      "reason": null,
+      "parent": null,
+      "group_verdict": null
     },
     {
       "id": "host:web-site-web-1",
@@ -301,7 +331,9 @@
       "lent": false,
       "actions": [],
       "control": "none",
-      "reason": "add web-site to managed_projects in ordo.yaml"
+      "reason": "add web-site to managed_projects in ordo.yaml",
+      "parent": null,
+      "group_verdict": null
     }
   ],
   "control_plane": "up",

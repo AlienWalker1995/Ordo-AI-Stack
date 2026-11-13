@@ -15,6 +15,7 @@ free to differ; the fixtures carry a realistic stack, not these inputs.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -33,9 +34,10 @@ BIG, SMALL = "GPU-big", "GPU-small"
 
 # What the control plane answers, in the live shapes (ordo/control/api.py).
 OPS = {
-    # Idle, so the model switch below is allowed.
+    # Idle, so the model switch below is allowed. Rejected jobs are bare ids: the scheduler appends
+    # head.id to _rejected (ordo/control/scheduler.py), and ops /status passes it through as-is.
     "/status": {"gpu": {"state": "idle", "running": [], "queued": [], "evicted_residents": {},
-                        "rejected": [{"id": "train-lora", "reason": "needs 30 GB, 4 GB free"}]}},
+                        "rejected": ["train-lora"]}},
     "/services": {"services": [
         {"id": "inference-engine-gpu", "name": "ordo-inference-engine-gpu-1", "state": "exited", "health": None,
          "status": "Exited (137) 1 minute ago"},
@@ -60,7 +62,10 @@ OPS = {
                                    "outcome": "completed"},
                                   {"id": "gate-comfyui", "kind": "media", "submitted": 300.0,
                                    "started": 400.0, "ended": 580.0, "outcome": "completed",
-                                   "evicted": ["inference-engine-gpu"]}]},
+                                   "evicted": ["inference-engine-gpu"]},
+                                  # Rejected a minute ago, so it is still an attention item.
+                                  {"id": "train-lora-xl", "kind": "train", "started": None,
+                                   "ended": time.time() - 60, "outcome": "rejected"}]},
     "/audit?limit=100": {"entries": [{"ts": 300.0, "caller": "dashboard", "action": "restart",
                                       "target": "n8n", "result": "ok"}]},
     "/projects": {"projects": [{"project": "media-stack", "containers": [
@@ -75,9 +80,11 @@ OPS = {
 # GET /containers: every container on the host, a bare list (DockerBackend.container_row).
 HOST_CONTAINERS = [
     {"name": "media-server", "status": "running", "image": "media", "project": "media-stack", "service": "server",
-     "health": "healthy", "status_text": "Up 4 days (healthy)"},
+     "health": "healthy", "status_text": "Up 4 days (healthy)",
+     "link": {"href": "http://media.example/", "name": "Media server", "description": "Movies and shows",
+              "group": "Media"}},
     {"name": "web-site-web-1", "status": "running", "image": "nginx", "project": "web-site", "service": "web",
-     "health": None, "status_text": "Up 6 days"},
+     "health": None, "status_text": "Up 6 days", "link": None},
 ]
 HARDWARE = {"cpu_pct": 18, "ram_used_gb": 46.8, "ram_total_gb": 109.7, "ram_pct": 43,
             "disk_used_gb": 1607.1, "disk_total_gb": 1999.8, "disk_pct": 80.4,
@@ -101,12 +108,14 @@ COMFY_HISTORY = {"r1": {"status": {"status_str": "success", "messages": [["execu
                         "outputs": {"9": {"images": [{"filename": "ordo_00001_.png", "subfolder": "",
                                                       "type": "output"}]}}}}
 PROMETHEUS_RANGE = {"status": "success", "data": {"resultType": "matrix", "result": [
-    {"metric": {"job": "inference-engine-gpu"}, "values": [[1700000000, "21.5"], [1700000300, "22.9"]]},
-    {"metric": {"job": "inference-engine-cpu"}, "values": [[1700000000, "2.6"], [1700000300, "2.8"]]},
+    # ops-controller's ordo_engine_* family, labelled by `engine` (the engine's service).
+    {"metric": {"engine": "inference-engine-gpu"}, "values": [[1700000000, "21.5"], [1700000300, "22.9"]]},
+    {"metric": {"engine": "inference-engine-cpu"}, "values": [[1700000000, "2.6"], [1700000300, "2.8"]]},
 ]}}
 STATS_SERVICES = {"gpu": {"total_gb": 34.2, "used_gb": 29.6, "utilization_pct": 97},
                   "services": {"open-webui": {"cpu_pct": 1.5, "mem_gb": 0.6, "mem_pct": 0.5, "vram_gb": 0.0,
                                               "vram_pct": 0.0, "running": True}},
+                  "containers": {"media-server": {"cpu_pct": 4.2, "mem_gb": 1.1, "mem_pct": 1.0}},
                   "vram_aggregate_unavailable": False}
 # ControlPlane.apply_render's answer, which the switch passes on.
 APPLIED = {"dry_run": False, "recreated": ["inference-engine-gpu", "inference-engine-cpu", "model-gateway"], "stopped": [],
@@ -140,12 +149,32 @@ def _ops_controller_client(payloads: dict[str, dict]):
 
 
 @pytest.fixture
-def client(dashboard_operator_headers, monkeypatch):
+def client(dashboard_operator_headers, monkeypatch, tmp_path):
     """The dashboard app with only its I/O replaced."""
     import dashboard.app as dashboard_app
 
+    # One item dismissed, so /api/overview returns an `attention_dismissed` element to compare.
+    dismissals = tmp_path / "attention_dismissed.json"
+    dismissals.write_text(json.dumps({"disk:warning": 1.0}), encoding="utf-8")
+    monkeypatch.setattr(routes_console, "_dismissals_path", lambda: dismissals)
+
     # service-pressure reaches ops-controller through _ops_request, which needs the token.
     monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "fixture-ops-token")
+
+    # GET /api/work: one request running on the CPU fallback (so its prefill is read) and one
+    # finished, so every list in the answer has an element to compare.
+    from dashboard import live_work
+    store = live_work.WorkStore()
+    now = time.time()
+    store.started({"call_id": "running", "caller": "hermes", "model_group": "local-chat", "model": CPU_FILE,
+                   "deployment": "inference-engine-cpu", "prompt_tokens": 4000, "fallback": True,
+                   "started_at": now - 30}, now)
+    store.ended({"call_id": "done", "caller": "hermes", "model_group": "local-chat", "model": GPU_FILE,
+                 "deployment": "inference-engine-gpu", "prompt_tokens": 1200, "completion_tokens": 80,
+                 "outcome": "ok", "started_at": now - 20, "ended_at": now - 5}, now)
+    monkeypatch.setattr(dashboard_app, "_work_store", store)
+    monkeypatch.setattr(dashboard_app, "_cpu_prefill", AsyncMock(return_value={
+        "available": True, "processing": True, "prompt_tokens": 4000, "processed": 1000, "cached": 500}))
 
     async def ops_json(path, timeout=None):
         return OPS.get(path)
@@ -159,7 +188,6 @@ def client(dashboard_operator_headers, monkeypatch):
          patch.object(routes_console, "_hardware", new=AsyncMock(return_value=HARDWARE)), \
          patch.object(routes_console, "_service_cards", new=AsyncMock(return_value=CARDS)), \
          patch.object(routes_console, "_rag", new=AsyncMock(return_value={"ok": True, "points_count": 2483})), \
-         patch.object(routes_console, "_throughput", new=AsyncMock(return_value=THROUGHPUT)), \
          patch.object(routes_console, "_served", new=AsyncMock(return_value=SERVED)), \
          patch.object(routes_console, "_disk_files", new=AsyncMock(return_value=DISK)), \
          patch.object(routes_console, "_comfy_json", new=AsyncMock(side_effect=_comfy_json)), \
@@ -233,6 +261,7 @@ REAL_REQUESTS = {
     "api/perf/grafana.json": ("GET", "/api/perf/grafana", None),
     "api/auth/session.json": ("GET", "/api/auth/session", None),
     "api/diagnostics.json": ("GET", "/api/diagnostics", None),
+    "api/work.json": ("GET", "/api/work", None),
 }
 
 

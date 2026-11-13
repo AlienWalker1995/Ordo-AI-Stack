@@ -3,6 +3,7 @@
     {
       "id": "comfyui",
       "name": "ComfyUI",
+      "description": "Image, video and audio generation",
       "order": 50,
       "port": 8188,
       "url": "http://localhost:8188",
