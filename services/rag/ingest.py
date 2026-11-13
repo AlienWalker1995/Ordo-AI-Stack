@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from datetime import date, datetime
 from pathlib import Path
 
 import httpx
@@ -46,6 +47,14 @@ WATCH_DIR = Path(os.environ.get("WATCH_DIR", "/watch")).resolve()
 CHUNK_SIZE = max(1, int(os.environ.get("CHUNK_SIZE", "400")))
 CHUNK_OVERLAP = max(0, int(os.environ.get("CHUNK_OVERLAP", "50")))
 SCAN_INTERVAL_SEC = max(5, int(os.environ.get("SCAN_INTERVAL_SEC", "120")))
+# How often the index is reconciled with the disk (indexed sources whose file is gone, or that the
+# rules no longer ingest, are deleted). Docker Desktop bind mounts may emit no delete events, so
+# this pass is what removes orphans there. The first one runs right after the first full pass.
+RECONCILE_INTERVAL_SEC = max(60, int(os.environ.get("RECONCILE_INTERVAL_SEC", "600")))
+# A pass that would delete more than this fraction of the indexed sources is refused: it looks like
+# a mount that lost files, not an operator deleting half the notes.
+RECONCILE_MAX_DELETE_FRACTION = float(os.environ.get("RECONCILE_MAX_DELETE_FRACTION", "0.5"))
+RECONCILE_ALLOW_MASS_DELETE = os.environ.get("RECONCILE_ALLOW_MASS_DELETE", "").strip().lower() in {"1", "true", "yes"}
 # Chunks per embedding request. The engine computes about 3.4 chunks a second and keeps computing a
 # request after its client gives up, so one request must stay far inside EMBED_TIMEOUT_SECONDS.
 EMBED_BATCH_SIZE = max(1, int(os.environ.get("EMBED_BATCH_SIZE", "16")))
@@ -76,9 +85,14 @@ CANONICAL_PREFIXES = ("stack-docs/canonical/",)
 EXCLUDED_PREFIXES = ("memory-vault/agents/",)
 EPHEMERAL_PREFIXES = ("memory-vault/inbox/",)
 # Bumped when the metadata rules change: points stored under an older version get their payload
-# rewritten in place at the next scan (no re-embedding).
-META_VERSION = 1
+# rewritten in place at the next scan (no re-embedding). 2: status is normalised and last_verified
+# validated, so a stored "archived # old" or a future date is corrected.
+META_VERSION = 2
 FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
+INLINE_COMMENT_RE = re.compile(r"(^|\s)#.*$")
+# Every status a document can have in the index. Synonyms map onto these; anything else is current.
+STATUS_SYNONYMS = {"deprecated": "archived", "obsolete": "archived"}
+KNOWN_STATUSES = {"current", "superseded", "archived"}
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -306,9 +320,19 @@ def _delete_source(source: str) -> None:
         _delete_points(client, {"must": [_source_condition(source)]})
 
 
+def _scalar(value: str) -> str:
+    """A frontmatter value without its quotes or its trailing YAML comment (` # ...`)."""
+    value = value.strip()
+    if value[:1] in ("'", '"'):
+        closing = value.find(value[0], 1)
+        if closing > 0:
+            return value[1:closing]
+    return INLINE_COMMENT_RE.sub("", value).strip().strip("'\"")
+
+
 def _frontmatter(text: str) -> dict[str, str]:
-    """The flat `key: value` lines of a leading YAML frontmatter block, lowercased keys, quotes
-    stripped. Nested values and lists are ignored: only scalar fields are read from it."""
+    """The flat `key: value` lines of a leading YAML frontmatter block, lowercased keys, quotes and
+    inline comments stripped. Nested values and lists are ignored: only scalar fields are read."""
     match = FRONTMATTER_RE.match(text)
     if not match:
         return {}
@@ -317,10 +341,28 @@ def _frontmatter(text: str) -> dict[str, str]:
         if not line or line[0].isspace() or ":" not in line:
             continue
         key, _, value = line.partition(":")
-        value = value.strip().strip("'\"")
+        value = _scalar(value)
         if value:
             fields[key.strip().lower()] = value
     return fields
+
+
+def _normalise_status(raw: str | None) -> str:
+    """current, superseded or archived: the only values the search filter understands."""
+    status = (raw or "").strip().lower()
+    status = STATUS_SYNONYMS.get(status, status)
+    return status if status in KNOWN_STATUSES else "current"
+
+
+def _valid_past_date(raw: str | None) -> str | None:
+    """`raw` when it is a YYYY-MM-DD date that is not in the future, otherwise None."""
+    if not raw or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        return None
+    try:
+        parsed = datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return raw if parsed <= date.today() else None
 
 
 def _document_meta(source: str, text: str) -> dict:
@@ -332,10 +374,11 @@ def _document_meta(source: str, text: str) -> dict:
     else:
         authority = "derived"
     fields = _frontmatter(text) if Path(source).suffix.lower() in {".md", ".markdown"} else {}
+    last_verified = _valid_past_date(fields.get("last_verified")) or _valid_past_date(fields.get("modified"))
     return {
         "authority": authority,
-        "status": fields.get("status", "current").lower(),
-        "last_verified": fields.get("last_verified") or fields.get("modified") or None,
+        "status": _normalise_status(fields.get("status")),
+        "last_verified": last_verified,
         "meta_version": META_VERSION,
     }
 
@@ -417,14 +460,17 @@ def _iter_supported_files() -> list[Path]:
     return sorted(found)
 
 
+def _is_ingestable_name(path: Path) -> bool:
+    """True when the rules allow `path` into the index, judged by its name alone."""
+    return path.suffix.lower() in SUPPORTED_EXTENSIONS and not _is_hidden(path) and not _is_excluded(_file_key(path))
+
+
 def ingest_path(path: Path, state: dict[str, str], stale_meta: dict[str, str] | None = None) -> bool:
     """Index `path` if its content changed. A file whose content is already indexed but whose stored
     metadata is out of date (listed in `stale_meta`) gets its metadata rewritten, not re-embedded."""
-    if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS or _is_hidden(path):
+    if not path.is_file() or not _is_ingestable_name(path):  # watch events still arrive for excluded folders
         return False
     source = _file_key(path)
-    if _is_excluded(source):          # watch events still arrive for excluded folders
-        return False
     digest = _sha256(path)
     if state.get(source) == digest:
         return False
@@ -509,6 +555,76 @@ def ingest_pending(paths: list[Path], state: dict[str, str], seen: dict[str, tup
             seen[source] = signature
 
 
+def _source_root(source: str) -> str:
+    """The top folder of a source (a mount under the watch tree), or "." for a top-level file."""
+    return source.split("/", 1)[0] if "/" in source else "."
+
+
+def _drop_unverifiable_roots(orphans: list[str], wanted: set[str]) -> list[str]:
+    """The orphans under a root that still has files on disk. A root with none is a mount that is
+    not ready or was evicted: nothing in it can be called deleted."""
+    present_roots = {_source_root(source) for source in wanted}
+    kept = [source for source in orphans if _source_root(source) in present_roots]
+    for root in sorted({_source_root(source) for source in orphans} - present_roots):
+        logger.warning("Reconcile skipped root %s: no files on disk (mount not ready?), its indexed "
+                       "sources are kept", root)
+    return kept
+
+
+def _forget(source: str, state: dict[str, str], stale_meta: dict[str, str],
+            seen: dict[str, tuple[int, int]]) -> None:
+    state.pop(source, None)
+    stale_meta.pop(source, None)
+    seen.pop(source, None)
+
+
+def reconcile_index(state: dict[str, str], stale_meta: dict[str, str],
+                    seen: dict[str, tuple[int, int]]) -> int:
+    """Deletes every indexed source whose file is gone or that the rules no longer ingest (excluded
+    prefix, hidden folder, unsupported type). Returns how many sources were deleted. A root with no
+    files on disk is skipped, and a pass that would delete too large a share of the index is refused."""
+    wanted = {_file_key(path) for path in _iter_supported_files()}
+    indexed = state.keys() | stale_meta.keys()
+    orphans = _drop_unverifiable_roots(sorted(indexed - wanted), wanted)
+    if not orphans:
+        return 0
+    if len(orphans) > RECONCILE_MAX_DELETE_FRACTION * len(indexed) and not RECONCILE_ALLOW_MASS_DELETE:
+        logger.error("Reconcile REFUSED: it would delete %d of %d indexed sources (over %.0f%%). Set "
+                     "RECONCILE_ALLOW_MASS_DELETE=1 if the files really are gone.",
+                     len(orphans), len(indexed), RECONCILE_MAX_DELETE_FRACTION * 100)
+        return 0
+    deleted = 0
+    for source in orphans:
+        try:
+            _delete_source(source)
+        except Exception as exc:
+            logger.error("Reconcile could not delete %s: %s (retried next pass)", source, exc)
+            continue
+        _forget(source, state, stale_meta, seen)
+        deleted += 1
+    logger.info("Reconcile deleted %d of %d indexed sources", deleted, len(indexed))
+    return deleted
+
+
+def remove_gone_files(paths: list[Path], state: dict[str, str], stale_meta: dict[str, str],
+                      seen: dict[str, tuple[int, int]]) -> None:
+    """Handles watch events for files that were deleted or moved away. A path that is a file again
+    (an editor's save-by-replace) is left alone."""
+    for path in paths:
+        if path.is_file() and _is_ingestable_name(path):
+            continue
+        source = _file_key(path)
+        if source not in state and source not in stale_meta:
+            continue
+        try:
+            _delete_source(source)
+        except Exception as exc:
+            logger.error("Could not delete %s after its file went away: %s (reconcile retries)", source, exc)
+            continue
+        _forget(source, state, stale_meta, seen)
+        logger.info("Deleted %s: its file is gone", source)
+
+
 def _heartbeat(stop_event: threading.Event) -> None:
     while not stop_event.is_set():
         HEARTBEAT_PATH.write_text(str(int(time.time())), encoding="utf-8")
@@ -516,9 +632,10 @@ def _heartbeat(stop_event: threading.Event) -> None:
 
 
 class _EventHandler(FileSystemEventHandler):
-    def __init__(self, queue: set[Path], lock: threading.Lock) -> None:
+    def __init__(self, queue: set[Path], lock: threading.Lock, removed: set[Path] | None = None) -> None:
         self._queue = queue
         self._lock = lock
+        self._removed = removed if removed is not None else set()
 
     def on_created(self, event):  # type: ignore[override]
         if getattr(event, "is_directory", False):
@@ -531,6 +648,19 @@ class _EventHandler(FileSystemEventHandler):
             return
         with self._lock:
             self._queue.add(Path(event.src_path))
+
+    def on_deleted(self, event):  # type: ignore[override]
+        if getattr(event, "is_directory", False):
+            return  # a deleted folder's files are removed by the next reconcile
+        with self._lock:
+            self._removed.add(Path(event.src_path))
+
+    def on_moved(self, event):  # type: ignore[override]
+        if getattr(event, "is_directory", False):
+            return  # a moved folder is picked up by the next rescan and reconcile
+        with self._lock:
+            self._removed.add(Path(event.src_path))
+            self._queue.add(Path(event.dest_path))
 
 
 def main() -> None:
@@ -546,11 +676,13 @@ def main() -> None:
     heartbeat.start()
 
     queue: set[Path] = set(_iter_supported_files())
+    removed: set[Path] = set()
     queue_lock = threading.Lock()
+    last_reconcile: float | None = None
     observer = None
     if Observer is not None:
         observer = Observer()
-        observer.schedule(_EventHandler(queue, queue_lock), str(WATCH_DIR), recursive=True)
+        observer.schedule(_EventHandler(queue, queue_lock, removed), str(WATCH_DIR), recursive=True)
         observer.start()
 
     logger.info("Watching %s for RAG ingestion into collection %s", WATCH_DIR, QDRANT_COLLECTION)
@@ -561,7 +693,16 @@ def main() -> None:
                     queue.update(_iter_supported_files())
                 pending = list(queue)
                 queue.clear()
+                gone = list(removed)
+                removed.clear()
+            remove_gone_files(gone, state, stale_meta, seen)
             ingest_pending(pending, state, seen, backoff, stale_meta)
+            if last_reconcile is None or time.monotonic() - last_reconcile >= RECONCILE_INTERVAL_SEC:
+                last_reconcile = time.monotonic()
+                try:
+                    reconcile_index(state, stale_meta, seen)
+                except Exception:
+                    logger.exception("Reconcile failed; it runs again next interval")
             time.sleep(SCAN_INTERVAL_SEC)
     finally:
         stop_event.set()

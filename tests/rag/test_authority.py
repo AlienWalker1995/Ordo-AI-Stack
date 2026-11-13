@@ -54,6 +54,38 @@ def test_frontmatter_reads_only_flat_scalars():
     assert ingest._frontmatter("no frontmatter here") == {}
 
 
+@pytest.mark.parametrize("raw, expected", [
+    ("archived # old", "archived"),
+    ("Archived", "archived"),
+    ("SUPERSEDED", "superseded"),
+    ("deprecated", "archived"),
+    ("Obsolete  # replaced", "archived"),
+    ("current", "current"),
+    ("canonical", "current"),            # not a status: a note cannot claim its way into anything
+    ("archived-ish", "current"),
+    ("", "current"),
+])
+def test_status_is_one_of_current_superseded_archived(raw, expected):
+    meta = ingest._document_meta("memory-vault/notes/N.md", f"---\nstatus: {raw}\n---\nbody")
+    assert meta["status"] == expected
+
+
+def test_an_inline_comment_is_not_part_of_a_value():
+    text = "---\nstatus: archived # old\nname: 'a # b'\nlast_verified: 2026-11-12 # checked\n---\n"
+    assert ingest._frontmatter(text) == {"status": "archived", "name": "a # b", "last_verified": "2026-11-12"}
+
+
+@pytest.mark.parametrize("raw", ["2999-01-01", "not a date", "2026-13-40", "2026-11-12T10:00:00", "20261112"])
+def test_a_last_verified_that_is_not_a_past_date_is_dropped(raw):
+    meta = ingest._document_meta("memory-vault/notes/N.md", f"---\nlast_verified: {raw}\n---\nbody")
+    assert meta["last_verified"] is None
+
+
+def test_a_future_last_verified_falls_back_to_a_valid_modified_date():
+    text = "---\nlast_verified: 2999-01-01\nmodified: 2026-01-02\n---\nbody"
+    assert ingest._document_meta("memory-vault/notes/N.md", text)["last_verified"] == "2026-01-02"
+
+
 # --- rag-ingestion: metadata on write, and re-tagging without re-embedding ---
 
 class _Recorder:
@@ -125,7 +157,8 @@ def test_the_watch_mounts_match_the_authority_prefixes():
     plugin = (ROOT / "services" / "rag" / "plugin.yaml").read_text(encoding="utf-8")
     assert "/docs:/watch/stack-docs:ro" in plugin
     assert ":/watch/memory-vault:ro" in plugin
-    assert (ROOT / "docs" / "canonical").is_dir() or "stack-docs/canonical/" in ingest.CANONICAL_PREFIXES
+    assert (ROOT / "docs" / "canonical").is_dir()
+    assert "stack-docs/canonical/" in ingest.CANONICAL_PREFIXES
 
 
 # --- qdrant-rag MCP server: filter and ranking ---
@@ -178,7 +211,32 @@ def _hit(score, authority, source):
 def test_canonical_wins_a_close_match_but_not_a_clearly_better_note():
     hits = [_hit(0.80, "derived", "note-close"), _hit(0.78, "canonical", "prd"), _hit(0.95, "derived", "note-best")]
     ranked = [r["source"] for r in server.rank(hits, limit=3)]
-    assert ranked == ["note-best", "prd", "note-close"]
+    assert ranked == ["note-best", "note-close", "prd"]      # the PRD is 0.17 behind the best: no boost
+    close = [_hit(0.80, "derived", "note-close"), _hit(0.78, "canonical", "prd"), _hit(0.81, "derived", "note-best")]
+    assert [r["source"] for r in server.rank(close, limit=3)] == ["prd", "note-best", "note-close"]
+
+
+def test_a_weak_canonical_hit_does_not_jump_a_strong_note():
+    hits = [_hit(0.90, "derived", "note-strong"), _hit(0.60, "canonical", "prd-weak")]
+    assert [r["source"] for r in server.rank(hits, limit=2)] == ["note-strong", "prd-weak"]
+
+
+def test_a_canonical_near_tie_goes_to_the_canonical_doc():
+    margin = server.CANONICAL_NEAR_TIE_MARGIN
+    hits = [_hit(0.90, "derived", "note"), _hit(0.90 - margin, "canonical", "prd")]
+    assert [r["source"] for r in server.rank(hits, limit=2)] == ["prd", "note"]
+
+
+def test_a_canonical_hit_just_outside_the_margin_gets_no_boost():
+    outside = 0.90 - server.CANONICAL_NEAR_TIE_MARGIN - 0.01
+    hits = [_hit(0.90, "derived", "note"), _hit(outside, "canonical", "prd")]
+    assert [r["source"] for r in server.rank(hits, limit=2)] == ["note", "prd"]
+
+
+def test_only_canonical_results_expose_last_verified():
+    canonical, derived = server.rank([_hit(0.9, "canonical", "prd"), _hit(0.8, "derived", "note")], limit=5)
+    assert canonical["last_verified"] == "2026-11-12" and "claimed_last_verified" not in canonical
+    assert derived["claimed_last_verified"] == "2026-11-12" and "last_verified" not in derived
 
 
 def test_results_carry_their_provenance_and_the_raw_score():
