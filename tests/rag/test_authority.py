@@ -11,6 +11,7 @@ import types
 from pathlib import Path
 
 import ingest
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -191,3 +192,18 @@ def test_results_carry_their_provenance_and_the_raw_score():
 def test_chunks_indexed_before_metadata_report_unknown():
     result = server.rank([{"score": 0.4, "payload": {"source": "legacy.md", "content": "x"}}], limit=5)[0]
     assert result["authority"] == "unknown" and result["status"] == "unknown"
+
+
+# --- agent-home copies in the vault are never indexed ---
+
+def test_the_vaults_agent_copies_are_never_indexed(tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest, "WATCH_DIR", tmp_path)
+    skill = tmp_path / "memory-vault" / "agents" / "hermes" / "skills" / "x" / "SKILL.md"
+    note = tmp_path / "memory-vault" / "notes" / "Personal" / "Wine" / "Wine Collection.md"
+    for path in (skill, note):
+        path.parent.mkdir(parents=True)
+        path.write_text("text", encoding="utf-8")
+    found = [ingest._file_key(p) for p in ingest._iter_supported_files()]
+    assert found == ["memory-vault/notes/Personal/Wine/Wine Collection.md"]
+    monkeypatch.setattr(ingest, "_embed", lambda chunks: pytest.fail("an agent copy must not be embedded"))
+    assert ingest.ingest_path(skill, {}) is False

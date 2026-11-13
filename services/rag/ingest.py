@@ -70,6 +70,10 @@ HEARTBEAT_PATH = Path("/tmp/rag-ingestion.heartbeat")
 #   ephemeral  the memory vault's inbox/ (unreviewed captures)
 #   derived    everything else (notes, memories, runbooks, other docs)
 CANONICAL_PREFIXES = ("stack-docs/canonical/",)
+# Never indexed: the vault's copies of agent homes (agents/hermes/: thousands of skill files,
+# scripts and configs, refreshed daily by the operator's vault backup). The agent reads its own
+# skills directly; indexing the copy would bury notes under machinery and spend hours embedding it.
+EXCLUDED_PREFIXES = ("memory-vault/agents/",)
 EPHEMERAL_PREFIXES = ("memory-vault/inbox/",)
 # Bumped when the metadata rules change: points stored under an older version get their payload
 # rewritten in place at the next scan (no re-embedding).
@@ -395,12 +399,17 @@ def _upsert_points(source: str, digest: str, chunks: list[str], vectors: list[li
         })
 
 
+def _is_excluded(source: str) -> bool:
+    return source.startswith(EXCLUDED_PREFIXES)
+
+
 def _iter_supported_files() -> list[Path]:
     """Every file to index. Hidden directories are not entered at all, and names alone decide the
     rest: each extra stat here is a round trip over the 9p mount, repeated on every scan."""
     found: list[Path] = []
     for root, dirnames, filenames in os.walk(WATCH_DIR):
-        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+        dirnames[:] = [name for name in dirnames if not name.startswith(".")
+                       and not _is_excluded(_file_key(Path(root) / name) + "/")]
         for name in filenames:
             path = Path(root) / name
             if not name.startswith(".") and path.suffix.lower() in SUPPORTED_EXTENSIONS:
@@ -414,6 +423,8 @@ def ingest_path(path: Path, state: dict[str, str], stale_meta: dict[str, str] | 
     if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS or _is_hidden(path):
         return False
     source = _file_key(path)
+    if _is_excluded(source):          # watch events still arrive for excluded folders
+        return False
     digest = _sha256(path)
     if state.get(source) == digest:
         return False
