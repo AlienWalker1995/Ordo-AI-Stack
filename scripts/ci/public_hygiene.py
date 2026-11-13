@@ -3,7 +3,7 @@
 
 "Published" is more than tracked files. A pull request's title and body, a commit message and a
 commit's author address are public the moment they are pushed, so the same checks run over all of
-them. The policy is docs/canonical/adr-0002-nothing-published-identifies-the-operator.md.
+them. The policy is the "What not to commit" section of CONTRIBUTING.md.
 
 Two layers:
 
@@ -245,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     if leaks:
         print(f"public repo hygiene: {len(leaks)} leak(s) [{layers}]", file=sys.stderr)
         print("\n".join(leaks), file=sys.stderr)
-        print("Policy and fixes: docs/canonical/adr-0002-nothing-published-identifies-the-operator.md", file=sys.stderr)
+        print("Policy and fixes: CONTRIBUTING.md (What not to commit)", file=sys.stderr)
         return 1
     print(f"public repo hygiene: clean [{layers}]")
     return 0

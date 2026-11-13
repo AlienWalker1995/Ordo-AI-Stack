@@ -1,8 +1,7 @@
 #!/bin/sh
 # Refuse a push that would publish something identifying the operator: for every ref being pushed,
 # its tip's tree, and the messages and author addresses of the commits it adds
-# (scripts/ci/public_hygiene.py; policy in
-# docs/canonical/adr-0002-nothing-published-identifies-the-operator.md). A push is the moment a
+# (scripts/ci/public_hygiene.py; policy in CONTRIBUTING.md). A push is the moment a
 # leak becomes public, and CI can only report it afterwards, so this is the check that prevents one.
 #
 # Git feeds the hook the refs it is about to push, one line per ref on stdin:

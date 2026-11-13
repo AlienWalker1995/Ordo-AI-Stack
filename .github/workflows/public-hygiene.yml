@@ -2,7 +2,7 @@ name: Public hygiene
 
 # This repo is public. A pull request publishes its files, its commits (messages and author
 # addresses) and its own title and body; this checks all of them for anything that identifies the
-# operator or their deployment (docs/canonical/adr-0002-nothing-published-identifies-the-operator.md).
+# operator or their deployment (CONTRIBUTING.md).
 # Every pull request whose target branch already carries this workflow fires it, whatever that
 # target is: a stacked PR publishes its commits and text too, and once the branch that introduces
 # this workflow merges, every target below it in the stack is covered. The branch that introduces

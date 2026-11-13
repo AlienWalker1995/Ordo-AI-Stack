@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Block containers on the stack network (ordo-net by default) from reaching private
 # ranges, the tailnet/CGNAT range and cloud metadata. Reduces SSRF risk from egress-capable
-# MCP servers. See the "SSRF Defenses (MCP)" section of
-# docs/canonical/security-and-trust-model.md.
+# MCP servers. See the MCP SSRF row of SECURITY.md.
 #
 # WARNING: the default target is the whole ordo-net subnet, so the rules apply to EVERY
 # stack container on it, not only MCP servers (for example the agent's LAN and tailnet

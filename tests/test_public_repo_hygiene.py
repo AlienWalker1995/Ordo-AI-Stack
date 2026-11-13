@@ -2,7 +2,7 @@
 
 The guard is a standard-library script so the pre-push hook and CI can run it without installing
 anything; this file runs the same checks in the required Pytest job and proves each shape is
-caught. The policy is docs/canonical/adr-0002-nothing-published-identifies-the-operator.md.
+caught. The policy is the "What not to commit" section of CONTRIBUTING.md.
 """
 from __future__ import annotations
 

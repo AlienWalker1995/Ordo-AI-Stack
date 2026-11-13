@@ -4,8 +4,7 @@
 # from Windows, and iptables run in a separate user WSL distro land in that distro's
 # network namespace, not the engine's. Egress-capable MCP servers are unfiltered here.
 #
-# See the "SSRF Defenses (MCP)" section of
-# docs/canonical/security-and-trust-model.md.
+# See the MCP SSRF row of SECURITY.md.
 
 $doc = @"
 SSRF egress blocking (Windows / Docker Desktop)
@@ -26,7 +25,6 @@ What you can do today:
 2. Keep the tailnet ACLs and LAN firewall tight: they are the only filter.
 
 The platform-independent fix (per-server internal networks, an egress proxy
-for searxng) is tracked in the "SSRF Defenses (MCP)" section of
-docs/canonical/security-and-trust-model.md
+for searxng) is not built yet (see the MCP SSRF row of SECURITY.md)
 "@
 Write-Host $doc
