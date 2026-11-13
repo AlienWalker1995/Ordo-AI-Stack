@@ -7,23 +7,23 @@ describe('countContainers', () => {
   it('sums every project, ordo and non-ordo alike', () => {
     const byProject = {
       ordo: { total: 46, up: 46, failed: 0, unhealthy: 0 },
-      'min-max': { total: 6, up: 5, failed: 1, unhealthy: 0 },
+      'homepage': { total: 6, up: 5, failed: 1, unhealthy: 0 },
       adguard: { total: 1, up: 1, failed: 0, unhealthy: 0 },
     }
     expect(countContainers(byProject)).toEqual({
       up: 52, total: 53, failed: 1, unhealthy: 0,
-      failedProjects: ['min-max'], unhealthyProjects: [],
+      failedProjects: ['homepage'], unhealthyProjects: [],
     })
   })
 
   it('names every project with a failed or an unhealthy container', () => {
     const byProject = {
       ordo: { total: 3, up: 2, failed: 0, unhealthy: 1 },
-      'min-max': { total: 2, up: 0, failed: 2, unhealthy: 0 },
+      'homepage': { total: 2, up: 0, failed: 2, unhealthy: 0 },
     }
     const counts = countContainers(byProject)
     expect([counts.failed, counts.unhealthy]).toEqual([2, 1])
-    expect(counts.failedProjects).toEqual(['min-max'])
+    expect(counts.failedProjects).toEqual(['homepage'])
     expect(counts.unhealthyProjects).toEqual(['ordo'])
   })
 
@@ -133,7 +133,7 @@ const ENGINES = [GPU_ENGINE, CPU_ENGINE]
 const FULL_OVERVIEW = {
   services: { up: 4, total: 5, by_project: {
     ordo: { total: 3, up: 3, failed: 0, unhealthy: 0 },
-    'min-max': { total: 2, up: 1, failed: 1, unhealthy: 0 },
+    'homepage': { total: 2, up: 1, failed: 1, unhealthy: 0 },
   } },
   engines: ENGINES,
   chat: { state: 'primary', model: GPU_ENGINE, reason: '' },
@@ -148,7 +148,7 @@ describe('kpiTiles', () => {
     expect(tiles.map((t) => t.key)).toEqual(['containers', 'chat', 'speed', 'tokens', 'vram', 'disk'])
     const [containers, chat, speed, tokens, vram, disk] = tiles
     expect(containers.value).toBe('4 / 5')
-    expect(containers.sub).toBe('1 failed in min-max')
+    expect(containers.sub).toBe('1 failed in homepage')
     expect(containers.tone).toBe('danger')
     expect(chat.value).toBe('GPU')
     expect(chat.sub).toBe('local-chat')

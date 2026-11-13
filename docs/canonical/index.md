@@ -38,3 +38,10 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 - [Rollback Procedures](appendix-rollback.md) – Per-component rollback playbook.
 - [Open WebUI](https://docs.openwebui.com/) – Day-to-day chat interface (`:8443` through the edge); not owned by this repo but wired into the stack via compose.
 
+## Architecture Decision Records
+
+One decision per record: status, context, decision, consequences, and the backlog cards that implement it. A decision that is replaced gets a new record, and the old one is marked `superseded`.
+
+- [ADR-0001: The agent holds no Docker socket](adr-0001-agent-holds-no-docker-socket.md) – The agent's Docker work moves to ops-controller; what replaces each use of the socket, and the four cards that get there.
+- [ADR-0002: Nothing published from this repo identifies the operator](adr-0002-nothing-published-identifies-the-operator.md) – What may never appear in files, commits or PR text, and the checker that enforces it.
+

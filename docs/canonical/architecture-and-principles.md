@@ -162,6 +162,7 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 | `WEBUI_AUTH` defaults to `False` | G4 | Open WebUI ships open; target default is `True` | Medium |
 | Per-tool restrictions unused | G2 | Per-consumer MCP scoping is enforced by LiteLLM virtual-key grants (`require_key_mcp_access_defined: true`); the manifest's `allowed_tools` (per-tool narrowing) is supported by the schema but set by no manifest yet | Low |
 | Container hardening not rendered | G5 | No service renders `cap_drop: [ALL]`, `read_only` or `tmpfs`; core services (model-gateway, dashboard, ops-controller, agent, rag-ingestion) carry no `no-new-privileges` or resource limits | Medium |
+| The agent holds a Docker socket | G5 | The `agent` service mounts `/var/run/docker.sock`, and its read-write code mirror can reach the render output. Removal is decided and sequenced in [ADR-0001: The agent holds no Docker socket](adr-0001-agent-holds-no-docker-socket.md) | High |
 | MCP server network isolation | G5 | Closed: the `mcp-*` services sit on `ordo-mcp-net` (`internal: true`), joined only by `model-gateway`, and publish no host port. External clients reach `/mcp` through Caddy `:443` with a LiteLLM key | Low |
 
 ## Network Assignment
@@ -216,7 +217,7 @@ dashboard iframe expects that prefix).
 
 | Service | Host port | Notes |
 |---------|-----------|-------|
-| caddy | `${CADDY_BIND}:443`, `:8443`–`:8450` | The only host-published ports in the stack (seven total: the `:443` front door plus one per UI service; the `:8443`–`:8450` range skips `:8445` and `:8448`). Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
+| caddy | `${CADDY_BIND}:443`, `:8443`–`:8450` | The only host-published ports in the stack (seven total: the `:443` front door plus one per UI service; the `:8443`–`:8450` range skips `:8445` and `:8448`). Bound to the operator's `CADDY_BIND`: a tailnet address, or `0.0.0.0` for LAN reachability on a network with no forwarded ports (see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
 | oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`site: SSO_ALLOWED_EMAILS`); one domain-scoped session covers every Caddy port except Hermes's `:8447` |
 | open-webui | — | Reached at `https://<tailnet>:8443/` (its own port, served at its compiled root); needs inference-engine-gpu, model-gateway, qdrant |
 | dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs ops-controller |
@@ -277,7 +278,7 @@ ordo-ai-stack/
 │   ├── ops-controller/  # audit.log
 │   ├── qdrant/          # Vector DB storage
 │   └── rag-input/       # Drop documents here
-├── secrets/             # README plus a tracked SOPS-encrypted .env.sops; the operator's store is a private repo or Infisical
+├── secrets/             # README only; the operator's store is a private repo or Infisical
 ├── ordo.example.yaml    # Tracked template; copy to ordo.yaml and edit
 ├── ordo.yaml            # Operator-real source (gitignored)
 ├── out/                 # `ordo render` output: docker-compose.yml, .env, secrets.env (never hand-edited)

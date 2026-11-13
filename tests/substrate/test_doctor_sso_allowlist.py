@@ -17,7 +17,7 @@ def rendered(emails: str | None):
 
 
 def test_real_addresses_pass():
-    ok, line = doctor.sso_allowlist_check(rendered("cam@min-max.tech,someone@gmail.com"))
+    ok, line = doctor.sso_allowlist_check(rendered("someone@x.io,other@y.io"))
     assert ok, line
     assert "2 address" in line
 
@@ -25,7 +25,7 @@ def test_real_addresses_pass():
 def test_placeholder_domains_fail():
     for placeholder in ("me@example.com", "you@example.org", "a@example.net", "x@host.example", "y@foo.invalid",
                         "z@bar.test", "w@localhost"):
-        ok, line = doctor.sso_allowlist_check(rendered(f"cam@min-max.tech,{placeholder}"))
+        ok, line = doctor.sso_allowlist_check(rendered(f"someone@x.io,{placeholder}"))
         assert not ok, placeholder
         assert "placeholder" in line
 

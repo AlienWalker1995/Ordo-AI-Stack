@@ -4,7 +4,8 @@
 shipped implementation mounts the raw `/var/run/docker.sock` directly into `services/hermes/agent.yaml`
 with prompt-based guardrails in SOUL.md (the operator's "prompting, not tech" call), not the
 lease-enforcing proxy proposed here. Retained as the design record of the rejected alternative; do not
-read it as current architecture.
+read it as current architecture. The current decision is
+[ADR-0001: The agent holds no Docker socket](../canonical/adr-0001-agent-holds-no-docker-socket.md).
 **Mandate:** operator, 2026-08-09 — "Hermes should have entire control over Docker, its
 device; I want it to execute similar tasks without intervention" AND (prior message) "crashes
 can never happen, this must be a resilient box."
@@ -83,7 +84,7 @@ the socket path, not in Hermes' good intentions.
 - Deploy target for Hermes-built apps = **local throwaway port** (operator choice 2026-08-09),
   not tracked edge services. Reboot-durability is explicitly not required for these.
 - The proxy is a project-buildable image, pinned by build sha (not `:latest`) per repo policy.
-- This does not touch the min-max / public stacks.
+- This does not touch the operator's other compose projects.
 
 ## Validation
 

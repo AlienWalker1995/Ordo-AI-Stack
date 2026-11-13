@@ -1,7 +1,7 @@
 """Hermes maintains the other compose projects on this host through ops-controller (SEC-1, Q3).
 
 The owner's decision: Hermes may see the status of, tail the logs of, and restart containers of
-an explicit list of OTHER compose projects (nas-stack, azerothcore, adguard on the reference
+an explicit list of OTHER compose projects (media-stack, game-server, adguard on the reference
 host), declared as `managed_projects:` in ordo.yaml. Nothing else: no stop, start, exec, create
 or compose verbs. Every restart is confirm-gated (JSON `true`), rate-limited (3 per container per
 hour, then 429), audited under the caller's principal, and refused for a container that could
@@ -47,7 +47,7 @@ def _raw(env=(), device_requests=None, runtime="runc"):
 ALL_GPUS = [{"Driver": "nvidia", "Count": -1, "DeviceIDs": None, "Capabilities": [["gpu"]]}]
 
 FOREIGN = {
-    "nas-stack": {
+    "media-stack": {
         "janitorr": ({"name": "janitorr", "service": "janitorr", "state": "running", "health": "unhealthy",
                       "status": "Up 3 hours (unhealthy)", "image": "ghcr.io/schaka/janitorr:jvm-v2.1.1"},
                      _raw(env=["JELLYFIN_API_KEY=sekrit-jf"])),
@@ -65,8 +65,8 @@ FOREIGN = {
                                    "health": None, "status": "Up 5 days", "image": "adguard/adguardhome"},
                                   _raw()),
     },
-    "min-max": {
-        "min-max-web-dev-1": ({"name": "min-max-web-dev-1", "service": "web-dev", "state": "running",
+    "homepage": {
+        "homepage-web-dev-1": ({"name": "homepage-web-dev-1", "service": "web-dev", "state": "running",
                                "health": None, "status": "Up", "image": "node"}, _raw()),
     },
 }
@@ -85,13 +85,13 @@ def test_managed_projects_default_to_none():
 
 
 def test_managed_projects_are_read_from_ordo_yaml():
-    assert _source(managed_projects=["nas-stack", "azerothcore", "adguard"]).managed_projects == [
-        "nas-stack", "azerothcore", "adguard"]
+    assert _source(managed_projects=["media-stack", "game-server", "adguard"]).managed_projects == [
+        "media-stack", "game-server", "adguard"]
 
 
 @pytest.mark.parametrize("value, why", [
-    ("nas-stack", "list"),
-    (["nas-stack", "nas-stack"], "twice"),
+    ("media-stack", "list"),
+    (["media-stack", "media-stack"], "twice"),
     (["Nas_Stack"], "compose project name"),
     (["../etc"], "compose project name"),
     ([""], "compose project name"),
@@ -121,7 +121,7 @@ ALL_GPU = _raw(device_requests=ALL_GPUS)
 @pytest.mark.parametrize("raw", [
     _raw(),                                                                          # no GPU at all
     JELLYFIN,                                                                        # live jellyfin
-    CREW_LLM,                                                                        # live azerothcore-crew-llm-1
+    CREW_LLM,                                                                        # a container that requests a GPU
     _raw(env=["CUDA_DEVICE_ORDER=PCI_BUS_ID", "CUDA_VISIBLE_DEVICES=0"],             # CUDA index, PCI order
          device_requests=ALL_GPUS),
     _raw(device_requests=[{"Driver": "nvidia", "Count": 0, "DeviceIDs": [OTHER.lower()]}]),
@@ -216,7 +216,7 @@ def test_a_reservation_is_atomic_across_threads():
 
     def worker():
         barrier.wait()
-        granted.append(budget.reserve("nas-stack/janitorr") is None)
+        granted.append(budget.reserve("media-stack/janitorr") is None)
 
     threads = [threading.Thread(target=worker) for _ in range(12)]
     for t in threads:
@@ -238,12 +238,12 @@ def test_three_restarts_per_container_per_hour_then_refused():
     clock = [1000.0]
     budget = managed.RestartBudget(limit=3, window_seconds=3600, clock=lambda: clock[0])
     for _ in range(3):
-        assert budget.reserve("nas-stack/janitorr") is None
-    wait = budget.reserve("nas-stack/janitorr")
+        assert budget.reserve("media-stack/janitorr") is None
+    wait = budget.reserve("media-stack/janitorr")
     assert wait is not None and 0 < wait <= 3600
-    assert budget.reserve("nas-stack/jellyfin") is None         # per container
+    assert budget.reserve("media-stack/jellyfin") is None         # per container
     clock[0] += 3601
-    assert budget.reserve("nas-stack/janitorr") is None         # a sliding hour
+    assert budget.reserve("media-stack/janitorr") is None         # a sliding hour
 
 
 # --------------------------------------------------------------------------- #
@@ -258,7 +258,7 @@ def plane(tmp_path, monkeypatch):
     monkeypatch.setattr(ControlPlane, "_gpu_indexes", staticmethod(lambda: INVENTORY))
     src = tmp_path / "ordo.yaml"
     src.write_text(yaml.safe_dump({"hardware": HARDWARE, "model": "auto", "plugins": "auto",
-                                   "managed_projects": ["nas-stack", "adguard"]}))
+                                   "managed_projects": ["media-stack", "adguard"]}))
     scheduler = Scheduler(32)
     backend = MockBackend()
     backend.foreign = FOREIGN
@@ -288,21 +288,21 @@ def test_the_overview_lists_only_managed_projects(client):
     r = client.get("/projects", headers=HERMES)
     assert r.status_code == 200
     projects = {p["project"]: p for p in r.json()["projects"]}
-    assert set(projects) == {"nas-stack", "adguard"}
-    names = {c["name"] for c in projects["nas-stack"]["containers"]}
+    assert set(projects) == {"media-stack", "adguard"}
+    names = {c["name"] for c in projects["media-stack"]["containers"]}
     assert names == {"janitorr", "jellyfin", "transcoder"}
 
 
 def test_a_project_row_carries_no_environment(client):
-    r = client.get("/projects/nas-stack/containers", headers=HERMES)
+    r = client.get("/projects/media-stack/containers", headers=HERMES)
     assert r.status_code == 200
     assert "sekrit" not in r.text
     row = next(c for c in r.json()["containers"] if c["name"] == "janitorr")
     assert set(row) == {"name", "service", "state", "health", "status", "image"}
 
 
-@pytest.mark.parametrize("path", ["/projects/min-max/containers", "/projects/ordo/containers",
-                                  "/projects/min-max/containers/min-max-web-dev-1/logs"])
+@pytest.mark.parametrize("path", ["/projects/homepage/containers", "/projects/ordo/containers",
+                                  "/projects/homepage/containers/homepage-web-dev-1/logs"])
 def test_an_unlisted_project_is_404(client, path):
     assert client.get(path, headers=HERMES).status_code == 404
 
@@ -310,48 +310,48 @@ def test_an_unlisted_project_is_404(client, path):
 def test_logs_take_the_same_tail_and_since_as_service_logs(plane, client):
     """ordo/control/logs.py: one rule for every logs route, refused (400) before docker is asked."""
     cp, _ = plane
-    r = client.get("/projects/nas-stack/containers/janitorr/logs?tail=50&since=10m", headers=HERMES)
+    r = client.get("/projects/media-stack/containers/janitorr/logs?tail=50&since=10m", headers=HERMES)
     assert r.status_code == 200
     assert r.json()["tail"] == 50 and r.json()["since"] == "10m" and r.json()["truncated"] is False
-    assert client.get("/projects/nas-stack/containers/janitorr/logs", headers=HERMES).json()["tail"] == 200
+    assert client.get("/projects/media-stack/containers/janitorr/logs", headers=HERMES).json()["tail"] == 200
     for bad in ("tail=999999", "tail=0", "tail=abc", "since=1700000000"):
-        assert client.get(f"/projects/nas-stack/containers/janitorr/logs?{bad}", headers=HERMES).status_code == 400
-    assert cp.broker.backend.foreign_log_requests == [("nas-stack", "janitorr", 50, "10m"),
-                                                      ("nas-stack", "janitorr", 200, None)]
+        assert client.get(f"/projects/media-stack/containers/janitorr/logs?{bad}", headers=HERMES).status_code == 400
+    assert cp.broker.backend.foreign_log_requests == [("media-stack", "janitorr", 50, "10m"),
+                                                      ("media-stack", "janitorr", 200, None)]
 
 
 def test_a_container_of_another_project_is_404_even_under_a_listed_one(plane, client):
     """The container must carry the listed project's label: a name is never trusted alone."""
     cp, _ = plane
-    assert _restart(client, "nas-stack", "ordo-inference-engine-gpu-1").status_code == 404
-    assert _restart(client, "nas-stack", "min-max-web-dev-1").status_code == 404
+    assert _restart(client, "media-stack", "ordo-inference-engine-gpu-1").status_code == 404
+    assert _restart(client, "media-stack", "homepage-web-dev-1").status_code == 404
     assert cp.broker.backend.foreign_restarts == []
 
 
 @pytest.mark.parametrize("confirm", [False, "true", 1, None])
 def test_a_restart_needs_json_true(plane, client, confirm):
     cp, _ = plane
-    assert _restart(client, "nas-stack", "janitorr", confirm=confirm).status_code == 400
+    assert _restart(client, "media-stack", "janitorr", confirm=confirm).status_code == 400
     assert cp.broker.backend.foreign_restarts == []
 
 
 def test_a_confirmed_restart_restarts_the_container(plane, client):
     cp, _ = plane
-    r = _restart(client, "nas-stack", "janitorr")
+    r = _restart(client, "media-stack", "janitorr")
     assert r.status_code == 200
-    assert r.json() == {"ok": True, "project": "nas-stack", "container": "janitorr", "action": "restarted"}
-    assert cp.broker.backend.foreign_restarts == [("nas-stack", "janitorr")]
+    assert r.json() == {"ok": True, "project": "media-stack", "container": "janitorr", "action": "restarted"}
+    assert cp.broker.backend.foreign_restarts == [("media-stack", "janitorr")]
 
 
 def test_a_gpu_container_off_the_leased_card_restarts(plane, client):
     cp, _ = plane
-    assert _restart(client, "nas-stack", "jellyfin").status_code == 200
-    assert cp.broker.backend.foreign_restarts == [("nas-stack", "jellyfin")]
+    assert _restart(client, "media-stack", "jellyfin").status_code == 200
+    assert cp.broker.backend.foreign_restarts == [("media-stack", "jellyfin")]
 
 
 def test_a_container_on_the_leased_card_is_refused_with_409(plane, client):
     cp, _ = plane
-    r = _restart(client, "nas-stack", "transcoder")
+    r = _restart(client, "media-stack", "transcoder")
     assert r.status_code == 409
     assert "leased" in r.json()["error"]
     assert cp.broker.backend.foreign_restarts == []
@@ -360,8 +360,8 @@ def test_a_container_on_the_leased_card_is_refused_with_409(plane, client):
 def test_the_fourth_restart_in_an_hour_is_429(plane, client):
     cp, _ = plane
     for _ in range(3):
-        assert _restart(client, "nas-stack", "janitorr").status_code == 200
-    r = _restart(client, "nas-stack", "janitorr")
+        assert _restart(client, "media-stack", "janitorr").status_code == 200
+    r = _restart(client, "media-stack", "janitorr")
     assert r.status_code == 429
     assert r.json()["retry_after_seconds"] > 0
     assert len(cp.broker.backend.foreign_restarts) == 3
@@ -386,7 +386,7 @@ def test_parallel_restarts_cannot_beat_the_budget(plane):
 
     def worker():
         barrier.wait()
-        statuses.append(cp.route("POST", "/projects/nas-stack/containers/janitorr/restart", {"confirm": True}, {})[0])
+        statuses.append(cp.route("POST", "/projects/media-stack/containers/janitorr/restart", {"confirm": True}, {})[0])
 
     threads = [threading.Thread(target=worker) for _ in range(6)]
     for t in threads:
@@ -418,8 +418,8 @@ def test_a_restart_that_raises_after_docker_acted_still_spends_its_slot(plane, c
 
     backend.foreign_restart = restarts_then_raises
     for _ in range(3):
-        assert _restart(client, "nas-stack", "janitorr").status_code == 500
-    assert _restart(client, "nas-stack", "janitorr").status_code == 429
+        assert _restart(client, "media-stack", "janitorr").status_code == 500
+    assert _restart(client, "media-stack", "janitorr").status_code == 429
     assert len(backend.foreign_restarts) == 3
 
 
@@ -433,62 +433,62 @@ def test_a_guard_refusal_gives_the_slot_back(plane, client):
 
     cp.broker.backend.foreign_restart = refused
     for _ in range(3):
-        assert _restart(client, "nas-stack", "janitorr").status_code == 404
+        assert _restart(client, "media-stack", "janitorr").status_code == 404
     cp.broker.backend.foreign_restart = original
-    assert _restart(client, "nas-stack", "janitorr").status_code == 200
+    assert _restart(client, "media-stack", "janitorr").status_code == 200
 
 
 def test_a_refused_restart_does_not_spend_the_budget(plane, client):
     for _ in range(3):
-        assert _restart(client, "nas-stack", "janitorr", confirm=False).status_code == 400
-    assert _restart(client, "nas-stack", "janitorr").status_code == 200
+        assert _restart(client, "media-stack", "janitorr", confirm=False).status_code == 400
+    assert _restart(client, "media-stack", "janitorr").status_code == 200
 
 
 def test_every_restart_is_audited_under_the_principal(plane, client):
     _, audit_path = plane
-    _restart(client, "nas-stack", "janitorr")
-    _restart(client, "nas-stack", "transcoder")
+    _restart(client, "media-stack", "janitorr")
+    _restart(client, "media-stack", "transcoder")
     ok, refused = _records(audit_path)
     assert (ok["principal"], ok["caller"], ok["action"], ok["target"], ok["status"]) == (
-        "hermes", "hermes:discord", "project.restart", "nas-stack/janitorr", 200)
-    assert (refused["action"], refused["target"], refused["status"]) == ("project.restart", "nas-stack/transcoder", 409)
+        "hermes", "hermes:discord", "project.restart", "media-stack/janitorr", 200)
+    assert (refused["action"], refused["target"], refused["status"]) == ("project.restart", "media-stack/transcoder", 409)
 
 
 def test_a_foreign_log_read_is_audited_under_the_principal(plane, client):
     """F6 (review of #302): reading another project's logs is recorded, like a write."""
     _, audit_path = plane
-    client.get("/projects/nas-stack/containers/janitorr/logs?tail=10", headers=HERMES)
+    client.get("/projects/media-stack/containers/janitorr/logs?tail=10", headers=HERMES)
     [rec] = _records(audit_path)
     assert (rec["principal"], rec["caller"], rec["method"], rec["action"], rec["target"], rec["status"]) == (
-        "hermes", "hermes:discord", "GET", "project.logs", "nas-stack/janitorr", 200)
-    assert rec["path"] == "/projects/nas-stack/containers/janitorr/logs"
+        "hermes", "hermes:discord", "GET", "project.logs", "media-stack/janitorr", 200)
+    assert rec["path"] == "/projects/media-stack/containers/janitorr/logs"
 
 
 def test_other_managed_reads_are_not_audited(plane, client):
     _, audit_path = plane
     client.get("/projects", headers=HERMES)
-    client.get("/projects/nas-stack/containers", headers=HERMES)
+    client.get("/projects/media-stack/containers", headers=HERMES)
     assert _records(audit_path) == []
 
 
 def test_hermes_has_status_logs_and_restart_only():
     hermes = principals.hermes(lambda: HERMES_TOKEN)
     assert hermes.allows("GET", "/projects")
-    assert hermes.allows("GET", "/projects/nas-stack/containers")
-    assert hermes.allows("GET", "/projects/nas-stack/containers/janitorr/logs")
-    assert hermes.allows("POST", "/projects/nas-stack/containers/janitorr/restart")
-    for method, path in [("POST", "/projects/nas-stack/containers/janitorr/stop"),
-                         ("POST", "/projects/nas-stack/containers/janitorr/start"),
-                         ("GET", "/projects/nas-stack/containers/janitorr"),
-                         ("POST", "/projects/nas-stack/containers/a/b/restart")]:
+    assert hermes.allows("GET", "/projects/media-stack/containers")
+    assert hermes.allows("GET", "/projects/media-stack/containers/janitorr/logs")
+    assert hermes.allows("POST", "/projects/media-stack/containers/janitorr/restart")
+    for method, path in [("POST", "/projects/media-stack/containers/janitorr/stop"),
+                         ("POST", "/projects/media-stack/containers/janitorr/start"),
+                         ("GET", "/projects/media-stack/containers/janitorr"),
+                         ("POST", "/projects/media-stack/containers/a/b/restart")]:
         assert not hermes.allows(method, path)
 
 
 def test_no_verb_but_status_logs_and_restart_exists(plane):
     cp, _ = plane
-    for method, path in [("POST", "/projects/nas-stack/containers/janitorr/stop"),
-                         ("POST", "/projects/nas-stack/containers/janitorr/start"),
-                         ("DELETE", "/projects/nas-stack/containers/janitorr")]:
+    for method, path in [("POST", "/projects/media-stack/containers/janitorr/stop"),
+                         ("POST", "/projects/media-stack/containers/janitorr/start"),
+                         ("DELETE", "/projects/media-stack/containers/janitorr")]:
         assert cp.route(method, path, {"confirm": True}, {})[0] == 404
 
 
@@ -501,7 +501,7 @@ DECOY_ID = "b" * 64
 
 
 class FakeDocker:
-    """`docker` as the DockerBackend sees it: nas-stack holds one container whose NAME is the
+    """`docker` as the DockerBackend sees it: media-stack holds one container whose NAME is the
     victim's full ID. Docker resolves a name-or-ID argument by ID first, so acting on the name
     would act on the victim (another project's container)."""
 
@@ -534,7 +534,7 @@ def docker_backend(monkeypatch):
 @pytest.mark.parametrize("verb", ["foreign_restart", "foreign_logs", "foreign_inspect"])
 def test_the_backend_acts_on_the_labelled_containers_id_not_its_name(docker_backend, verb):
     backend, fake = docker_backend
-    args = ("nas-stack", VICTIM_ID, 10) if verb == "foreign_logs" else ("nas-stack", VICTIM_ID)
+    args = ("media-stack", VICTIM_ID, 10) if verb == "foreign_logs" else ("media-stack", VICTIM_ID)
     getattr(backend, verb)(*args)
     acted = [argv for argv in fake.calls if argv[:2] != ["docker", "ps"]]
     # a restart is stop+start+inspect at the seam; logs/inspect are single calls
@@ -546,7 +546,7 @@ def test_the_backend_acts_on_the_labelled_containers_id_not_its_name(docker_back
 
 def test_the_ps_query_is_label_filtered_and_untruncated(docker_backend):
     backend, fake = docker_backend
-    backend.foreign_restart("nas-stack", VICTIM_ID)
+    backend.foreign_restart("media-stack", VICTIM_ID)
     ps = next(argv for argv in fake.calls if argv[:2] == ["docker", "ps"])
-    assert "label=com.docker.compose.project=nas-stack" in ps
+    assert "label=com.docker.compose.project=media-stack" in ps
     assert "--no-trunc" in ps
