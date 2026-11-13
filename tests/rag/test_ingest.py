@@ -187,7 +187,7 @@ def test_reconcile_never_deletes_from_a_root_with_no_files_on_disk(tmp_path, del
     assert "skipped root memory-vault" in caplog.text
 
 
-def test_reconcile_in_an_empty_watch_tree_sheds_loose_files_but_keeps_mounted_subfolders(tmp_path, deletes, caplog):
+def test_reconcile_in_an_empty_watch_tree_sheds_loose_files_but_keeps_mounted_subfolders(deletes, caplog):
     """With nothing on disk every subfolder is a mount that is not ready and is kept — but the
     watch root itself always exists, so a loose file right under it is genuinely gone."""
     state = {"notes/a.md": "1", "b.md": "2"}
