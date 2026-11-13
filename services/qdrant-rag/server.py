@@ -47,15 +47,21 @@ CANDIDATES_PER_RESULT = 3
 mcp = FastMCP("qdrant-rag", host="0.0.0.0", port=9000, stateless_http=True)
 
 
-def search_filter(include_history: bool) -> dict | None:
+def search_filter(include_history: bool, folders: list[str] | None = None) -> dict | None:
     """The Qdrant filter of a search. Chunks indexed before metadata existed carry no `status` or
-    `authority` and are kept: a must_not on a missing field excludes nothing."""
-    if include_history:
-        return None
-    return {"must_not": [
-        {"key": "status", "match": {"any": HISTORY_STATUSES}},
-        {"key": "authority", "match": {"value": "ephemeral"}},
-    ]}
+    `authority` and are kept: a must_not on a missing field excludes nothing. `folders` keeps only
+    documents under one of those folders (as stored by rag-ingestion, for example
+    `memory-vault/notes/work`); a chunk with no stored folders is then left out."""
+    conditions: dict = {}
+    if not include_history:
+        conditions["must_not"] = [
+            {"key": "status", "match": {"any": HISTORY_STATUSES}},
+            {"key": "authority", "match": {"value": "ephemeral"}},
+        ]
+    wanted = [folder.strip().strip("/") for folder in folders or [] if folder and folder.strip().strip("/")]
+    if wanted:
+        conditions["must"] = [{"key": "folders", "match": {"any": wanted}}]
+    return conditions or None
 
 
 def rank(hits: list[dict], limit: int) -> list[dict]:
@@ -100,7 +106,8 @@ def _embed(text: str) -> list[float]:
 
 
 @mcp.tool()
-def qdrant_search(query: str, limit: int = 5, include_history: bool = False) -> dict[str, Any]:
+def qdrant_search(query: str, limit: int = 5, include_history: bool = False,
+                  folders: list[str] | None = None) -> dict[str, Any]:
     """Semantic search over indexed documents in Qdrant.
 
     Use this to retrieve relevant indexed knowledge (docs, code, notes) instead
@@ -117,6 +124,9 @@ def qdrant_search(query: str, limit: int = 5, include_history: bool = False) -> 
         query: Natural-language search query.
         limit: Max number of chunks to return (default 5).
         include_history: Also return archived, superseded and inbox documents (default false).
+        folders: Search only under these folders, for example ["memory-vault/notes/work"] (a result's
+            `source` shows the folder it came from). Leave empty to search everything: use a scope when
+            the question belongs to one area and other areas would crowd the answer out.
     """
     q = (query or "").strip()
     if not q:
@@ -131,7 +141,7 @@ def qdrant_search(query: str, limit: int = 5, include_history: bool = False) -> 
             r = client.post(
                 f"{QDRANT_URL}/collections/{COLLECTION}/points/search",
                 json={"vector": vector, "limit": limit * CANDIDATES_PER_RESULT, "with_payload": True,
-                      "filter": search_filter(include_history)},
+                      "filter": search_filter(include_history, folders)},
             )
             if r.status_code == 404:
                 return {"error": f"collection '{COLLECTION}' does not exist yet — nothing has been ingested",

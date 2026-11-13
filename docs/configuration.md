@@ -52,6 +52,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 | `RAG_EMBED_THREADS` | `8` | CPU threads, and compose `cpus` limit, of `inference-engine-embed` |
 | `RAG_SCAN_INTERVAL_SEC` | `120` | Seconds between periodic rescan passes in `rag-ingestion` |
 | `RAG_CANONICAL_PREFIXES` | `memory-vault/notes/canonical/` | Folders under the watch tree whose documents search treats as the source of truth (`authority: canonical`), comma-separated. A document is canonical because of where it lives, never because of its own frontmatter |
+| `RAG_HISTORY_PREFIXES` | `memory-vault/archive/` | Folders under the watch tree whose documents are history (`status: archived`): left out of default search, returned with `include_history`. Comma-separated |
 | `RAG_RECONCILE_INTERVAL_SEC` | `600` | Seconds between passes that delete indexed sources whose file is gone or no longer ingested (minimum 60) |
 | `RAG_RECONCILE_MAX_DELETE_FRACTION` | `0.5` | A reconcile pass that would delete more than this share of the indexed sources is refused |
 | `RAG_RECONCILE_ALLOW_MASS_DELETE` | `0` | Set to `1` for one run to let a reconcile pass exceed that share, when the files really are gone |

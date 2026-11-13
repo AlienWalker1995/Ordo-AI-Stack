@@ -95,10 +95,17 @@ CANONICAL_PREFIXES = _folder_prefixes(os.environ.get("CANONICAL_PREFIXES", DEFAU
 # skills directly; indexing the copy would bury notes under machinery and spend hours embedding it.
 EXCLUDED_PREFIXES = ("memory-vault/agents/",)
 EPHEMERAL_PREFIXES = ("memory-vault/inbox/",)
+# History by location: every document under these folders is stored as `archived`, whatever its
+# frontmatter says, so old plans, logs and archives stay searchable on request (include_history)
+# without one line of frontmatter per file. Comma-separated, like CANONICAL_PREFIXES.
+HISTORY_PREFIXES = _folder_prefixes(os.environ.get("HISTORY_PREFIXES", "memory-vault/archive/"))
+# How many ancestor folders of a document are stored for folder-scoped search.
+FOLDER_DEPTH = 4
 # Bumped when the metadata rules change: points stored under an older version get their payload
 # rewritten in place at the next scan (no re-embedding). 2: status is normalised and last_verified
-# validated, so a stored "archived # old" or a future date is corrected.
-META_VERSION = 2
+# validated, so a stored "archived # old" or a future date is corrected. 3: history folders, and
+# each chunk's ancestor folders for folder-scoped search.
+META_VERSION = 3
 FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
 INLINE_COMMENT_RE = re.compile(r"(^|\s)#.*$")
 # Every status a document can have in the index. Synonyms map onto these; anything else is current.
@@ -377,8 +384,16 @@ def _valid_past_date(raw: str | None) -> str | None:
     return raw if parsed <= date.today() + timedelta(days=1) else None
 
 
+def _ancestor_folders(source: str) -> list[str]:
+    """The folders `source` sits in, outermost first, at most FOLDER_DEPTH of them:
+    `vault/notes/work/a.md` gives `vault`, `vault/notes`, `vault/notes/work`. A search scoped to
+    any of them finds the document."""
+    parts = source.split("/")[:-1][:FOLDER_DEPTH]
+    return ["/".join(parts[:depth]) for depth in range(1, len(parts) + 1)]
+
+
 def _document_meta(source: str, text: str) -> dict:
-    """The authority, status and last-verified date stored with every chunk of `source`."""
+    """The authority, status, last-verified date and folders stored with every chunk of `source`."""
     if source.startswith(CANONICAL_PREFIXES):
         authority = "canonical"
     elif source.startswith(EPHEMERAL_PREFIXES):
@@ -387,10 +402,14 @@ def _document_meta(source: str, text: str) -> dict:
         authority = "derived"
     fields = _frontmatter(text) if Path(source).suffix.lower() in {".md", ".markdown"} else {}
     last_verified = _valid_past_date(fields.get("last_verified")) or _valid_past_date(fields.get("modified"))
+    status = _normalise_status(fields.get("status"))
+    if status == "current" and source.startswith(HISTORY_PREFIXES):
+        status = "archived"   # a history folder: where the file lives decides, not what it claims
     return {
         "authority": authority,
-        "status": _normalise_status(fields.get("status")),
+        "status": status,
         "last_verified": last_verified,
+        "folders": _ancestor_folders(source),
         "meta_version": META_VERSION,
     }
 

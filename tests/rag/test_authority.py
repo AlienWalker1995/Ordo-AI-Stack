@@ -229,6 +229,32 @@ def test_a_default_search_leaves_out_history_and_the_inbox():
     assert server.search_filter(include_history=True) is None
 
 
+def test_a_search_can_be_scoped_to_folders():
+    scoped = server.search_filter(include_history=False, folders=["memory-vault/notes/work/", " ", ""])
+    assert scoped["must"] == [{"key": "folders", "match": {"any": ["memory-vault/notes/work"]}}]
+    assert scoped["must_not"]                                   # history is still left out
+    assert server.search_filter(include_history=True, folders=["a"]) == {
+        "must": [{"key": "folders", "match": {"any": ["a"]}}]}
+    assert server.search_filter(include_history=True, folders=[]) is None
+
+
+def test_each_chunk_stores_its_ancestor_folders():
+    meta = ingest._document_meta("memory-vault/notes/work/2026/q3/plan.md", "# plan")
+    assert meta["folders"] == ["memory-vault", "memory-vault/notes", "memory-vault/notes/work",
+                               "memory-vault/notes/work/2026"]       # capped at FOLDER_DEPTH
+    assert ingest._document_meta("top.md", "# x")["folders"] == []
+
+
+def test_a_document_in_a_history_folder_is_archived_whatever_it_claims(monkeypatch):
+    monkeypatch.setattr(ingest, "HISTORY_PREFIXES", ingest._folder_prefixes("memory-vault/archive"))
+    claims_current = "---\nstatus: current\n---\n# old plan"
+    assert ingest._document_meta("memory-vault/archive/plans/a.md", claims_current)["status"] == "archived"
+    assert ingest._document_meta("memory-vault/archive/a.md", "# no frontmatter")["status"] == "archived"
+    superseded = "---\nstatus: superseded\n---\n# x"
+    assert ingest._document_meta("memory-vault/archive/a.md", superseded)["status"] == "superseded"
+    assert ingest._document_meta("memory-vault/archive-notes/a.md", claims_current)["status"] == "current"
+
+
 def _hit(score, authority, source):
     return {"score": score, "payload": {"authority": authority, "source": source, "status": "current",
                                         "last_verified": "2026-11-12", "content": source}}
