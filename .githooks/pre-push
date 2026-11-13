@@ -1,8 +1,22 @@
 #!/bin/sh
-# Refuse a push that would publish something identifying the operator: tracked files, commit
-# messages and author addresses (scripts/ci/public_hygiene.py; policy in
-# docs/canonical/adr-0002-nothing-published-identifies-the-operator.md). A push is the moment a leak becomes public, and CI can
-# only report it afterwards, so this is the check that prevents one.
+# Refuse a push that would publish something identifying the operator: for every ref being pushed,
+# its tip's tree, and the messages and author addresses of the commits it adds
+# (scripts/ci/public_hygiene.py; policy in
+# docs/canonical/adr-0002-nothing-published-identifies-the-operator.md). A push is the moment a
+# leak becomes public, and CI can only report it afterwards, so this is the check that prevents one.
+#
+# Git feeds the hook the refs it is about to push, one line per ref on stdin:
+#     <local ref> SP <local sha> SP <remote ref> SP <remote sha> LF
+# Each of those refs is checked as published, not the checkout the hook happens to sit in: on a
+# clean branch, pushing another branch or a tag used to sail through unscanned. A deletion
+# (all-zero sha) publishes nothing and is skipped. Any NUL bytes are normalized to newlines first,
+# so the loop works whatever separator git sends.
+#
+# Commits are checked against the closest known baseline: refs/remotes/origin/main, falling back
+# to the other remote-tracking refs when that one does not exist yet (a fresh clone mid-setup).
+# With no remote-tracking refs at all there is no baseline, so every commit reachable from the
+# pushed ref is walked instead: over-reporting is the safe direction, a leaking message is never
+# missed, only extra clean commits are walked.
 #
 # Enable once per clone:   git config core.hooksPath .githooks
 # The operator's names:    git config ordo.hygieneDenylistFile /path/outside/this/repo/denylist.txt
@@ -34,8 +48,27 @@ if [ -z "$python" ]; then
     exit 1
 fi
 
-# Commits not yet on the remote's main. Without that ref (a fresh clone mid-setup) only the tree is checked.
-if base=$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null); then
-    exec "$python" "$root/scripts/ci/public_hygiene.py" --base "$base"
-fi
-exec "$python" "$root/scripts/ci/public_hygiene.py"
+ZERO=0000000000000000000000000000000000000000
+
+while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+    [ -n "${local_sha:-}" ] || continue      # padding line from an empty feed
+    if [ "$local_sha" = "$ZERO" ]; then
+        continue                             # deleting a ref publishes nothing
+    fi
+    printf 'pre-push: checking %s (%s)\n' "$local_ref" "$local_sha" >&2
+    # The closest known baseline for the commit range, preferring origin/main.
+    if base=$(git merge-base "$local_sha" refs/remotes/origin/main 2>/dev/null); then
+        :
+    elif [ -n "$(git for-each-ref --format='%(refname)' refs/remotes/ 2>/dev/null)" ]; then
+        base=$(git merge-base "$local_sha" $(git for-each-ref --format='%(objectname)' refs/remotes/) 2>/dev/null) || base=""
+    else
+        base=""                              # no baseline: the checker walks every reachable commit
+    fi
+    if [ -n "${base:-}" ]; then
+        "$python" "$root/scripts/ci/public_hygiene.py" --base "$base" --at "$local_sha"
+    else
+        "$python" "$root/scripts/ci/public_hygiene.py" --at "$local_sha"
+    fi
+done <<EOF
+$(tr '\0' '\n')
+EOF

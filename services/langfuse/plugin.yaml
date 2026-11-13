@@ -231,7 +231,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     resources: {cpus: "4", memory: "4g"}
     # PROBE THE BOUND ADDRESS, NOT localhost. Both Langfuse app services listen ONLY on the
-    # container's eth0 address (verified live: `172.25.0.39:3000 LISTEN`, and
+    # container's eth0 address (verified live: LISTEN on the eth0 address while
     # `wget http://localhost:3000` -> connection refused inside the container) - Next.js binds
     # the HOSTNAME docker sets to the container id, and the worker does the same. A localhost
     # probe can therefore never pass, and the service would sit permanently unhealthy while
@@ -314,7 +314,7 @@ services:
     # server listens. A shorter grace marks it unhealthy mid-migration and restarts it into the
     # same work.
     # PROBE THE BOUND ADDRESS, NOT localhost. Both Langfuse app services listen ONLY on the
-    # container's eth0 address (verified live: `172.25.0.39:3000 LISTEN`, and
+    # container's eth0 address (verified live: LISTEN on the eth0 address while
     # `wget http://localhost:3000` -> connection refused inside the container) - Next.js binds
     # the HOSTNAME docker sets to the container id, and the worker does the same. A localhost
     # probe can therefore never pass, and the service would sit permanently unhealthy while

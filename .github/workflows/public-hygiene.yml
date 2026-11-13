@@ -2,11 +2,20 @@ name: Public hygiene
 
 # This repo is public. A pull request publishes its files, its commits (messages and author
 # addresses) and its own title and body; this checks all of them for anything that identifies the
-# operator or their deployment (docs/canonical/adr-0002-nothing-published-identifies-the-operator.md). `edited` is in the trigger
-# list so a changed title or body is checked again.
+# operator or their deployment (docs/canonical/adr-0002-nothing-published-identifies-the-operator.md).
+# Every pull request whose target branch already carries this workflow fires it, whatever that
+# target is: a stacked PR publishes its commits and text too, and once the branch that introduces
+# this workflow merges, every target below it in the stack is covered. The branch that introduces
+# it is protected in the meantime by the Pytest job's tracked-files layer and the pre-push hook.
+# `edited` is in the trigger list so a changed title or body is checked again.
+#
+# The event type is pull_request_target, so this workflow definition itself runs from the TARGET
+# branch: same-repo pull requests receive the denylist secret, and a branch that could edit this
+# very file could otherwise print the secret in a transformed form (GitHub masks only the literal
+# value). Only the head commit's data is checked out below - pinned SHA, SHA-pinned action -
+# never its code.
 on:
-  pull_request:
-    branches: [main]
+  pull_request_target:
     types: [opened, synchronize, reopened, edited]
 
 permissions:
@@ -23,13 +32,58 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      # Standard library only, so no install step. Every value from the event is passed through
-      # the environment, never interpolated into the script. The denylist secret is not available
-      # to a pull request from a fork; the generic shapes are still checked there.
-      - name: Nothing published identifies the operator
+      # The base commit's objects, when the head's full history does not already contain them (a
+      # stale pull request: the target branch moved on). A plain fetch, no --depth: marking the
+      # base shallow would cut its ancestry out of the commit-range subtraction and make the
+      # check re-walk the shared history on every run.
+      - name: Ensure the base commit's objects
+        env:
+          ORDO_HYGIENE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ! git cat-file -e "${ORDO_HYGIENE_BASE}^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "${ORDO_HYGIENE_BASE}"
+          fi
+
+      # Where the checker comes from. Standard library only, so no install step. The denylist
+      # secret IS available here even to pull requests from a fork (pull_request_target runs in
+      # the target's context), which is why the two run steps below scope it to the base-checker
+      # step only: a branch that edits the script could otherwise turn it into a printer for its
+      # own environment (GitHub masks only the literal secret value, not a transform). The base
+      # script is materialized two directories down so its ROOT resolves to this checkout; the
+      # scan reads only tracked files, so the materialized copy is invisible to it.
+      - name: Select the checker source
+        env:
+          ORDO_HYGIENE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mkdir -p tools/hygiene-checker
+          if git cat-file -e "${ORDO_HYGIENE_BASE}:scripts/ci/public_hygiene.py" 2>/dev/null; then
+              git show "${ORDO_HYGIENE_BASE}:scripts/ci/public_hygiene.py" > tools/hygiene-checker/public_hygiene.py
+          fi
+          if [ -f tools/hygiene-checker/public_hygiene.py ]; then
+              echo "HYGIENE_CHECKER_SOURCE=base" >> "$GITHUB_ENV"
+          else
+              echo "HYGIENE_CHECKER_SOURCE=head" >> "$GITHUB_ENV"
+          fi
+
+      - name: Nothing published identifies the operator (base checker, with the denylist)
+        if: env.HYGIENE_CHECKER_SOURCE == 'base'
         env:
           ORDO_HYGIENE_DENYLIST: ${{ secrets.ORDO_HYGIENE_DENYLIST }}
           ORDO_HYGIENE_PR_TITLE: ${{ github.event.pull_request.title }}
           ORDO_HYGIENE_PR_BODY: ${{ github.event.pull_request.body }}
           ORDO_HYGIENE_BASE: ${{ github.event.pull_request.base.sha }}
-        run: python3 scripts/ci/public_hygiene.py --base "$ORDO_HYGIENE_BASE"
+        # ORDO_HYGIENE_BASE is the only event value the script sees in its command line; it is a
+        # 40-hex sha from GitHub's own payload and is always double-quoted. The title and body
+        # stay in the environment and are read by the script, never by the shell.
+        run: python3 tools/hygiene-checker/public_hygiene.py --base "${ORDO_HYGIENE_BASE}"
+
+      # The base predates the script (the PR that introduces it): the head's TRACKED copy stands
+      # in, but that is the PR's own code, so this step deliberately omits the denylist from its
+      # environment - not even the runner shell holding it - and checks the generic shapes only.
+      - name: Nothing published identifies the operator (head checker, generic shapes only)
+        if: env.HYGIENE_CHECKER_SOURCE == 'head'
+        env:
+          ORDO_HYGIENE_PR_TITLE: ${{ github.event.pull_request.title }}
+          ORDO_HYGIENE_PR_BODY: ${{ github.event.pull_request.body }}
+          ORDO_HYGIENE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/ci/public_hygiene.py --base "${ORDO_HYGIENE_BASE}"

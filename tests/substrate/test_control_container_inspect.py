@@ -60,7 +60,7 @@ RAW = {
          "Destination": "/home/node/.n8n", "RW": True},
     ],
     "NetworkSettings": {
-        "Networks": {"ordo-net": {"IPAddress": "172.19.0.9"}, "ordo-comfyui-net": {}},
+        "Networks": {"ordo-net": {"IPAddress": "100.64.0.9"}, "ordo-comfyui-net": {}},
         "Ports": {"5678/tcp": None, "9000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "9000"}]},
     },
 }
