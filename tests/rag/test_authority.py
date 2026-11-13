@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
+from datetime import date, timedelta
 from pathlib import Path
 
 import ingest
@@ -84,6 +85,19 @@ def test_a_last_verified_that_is_not_a_past_date_is_dropped(raw):
 def test_a_future_last_verified_falls_back_to_a_valid_modified_date():
     text = "---\nlast_verified: 2999-01-01\nmodified: 2026-01-02\n---\nbody"
     assert ingest._document_meta("memory-vault/notes/N.md", text)["last_verified"] == "2026-01-02"
+
+
+def test_a_last_verified_one_day_ahead_of_the_container_clock_passes():
+    """A note written 'today' east of the container's zone carries tomorrow's UTC date during the
+    early-UTC hours, so one day ahead still counts as current."""
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    meta = ingest._document_meta("memory-vault/notes/N.md", f"---\nlast_verified: {tomorrow}\n---\nbody")
+    assert meta["last_verified"] == tomorrow
+
+
+def test_a_last_verified_two_days_ahead_is_still_dropped():
+    far = (date.today() + timedelta(days=2)).isoformat()
+    assert ingest._document_meta("memory-vault/notes/N.md", f"---\nlast_verified: {far}\n---\nbody")["last_verified"] is None
 
 
 # --- rag-ingestion: metadata on write, and re-tagging without re-embedding ---
