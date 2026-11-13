@@ -93,7 +93,7 @@ def test_the_denylist_is_read_from_the_environment(monkeypatch, tmp_path):
 
 
 def test_an_invalid_denylist_line_fails_by_line_number_without_printing_the_name(monkeypatch):
-    monkeypatch.setenv("ORDO_HYGIENE_DENYLIST", "fine\nsecretname++\n")
+    monkeypatch.setenv("ORDO_HYGIENE_DENYLIST", "fine\nsecretname(\n")
     with pytest.raises(SystemExit) as failure:
         hygiene.operator_denylist()
     message = str(failure.value)
