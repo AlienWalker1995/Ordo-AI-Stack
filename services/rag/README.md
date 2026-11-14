@@ -24,19 +24,23 @@ its own area of the watched tree left alone (e.g. the `evals` plugin's scratch f
 `services/evals/ordo_evals/checks.py`'s `VAULT_EVAL_ROOT`) gets it for free by naming that folder
 with a leading dot, not by adding ingester config.
 
-## Known limitation: deletions are not removed from Qdrant
+## Deleted, moved and no-longer-ingested files
 
-`ingest.py` has no code path that removes a Qdrant point when its source file disappears from the
-watch tree: the watchdog handler (`_EventHandler`) only implements `on_created`/`on_modified`, not
-`on_deleted`, and the periodic rescan (`_iter_supported_files`) only ever adds currently-existing
-files to the work queue; it never diffs against the per-source digests read from Qdrant at startup
-(`_indexed_digests`) to notice one has gone missing. Points are only deleted for a file that still
-exists: on a RE-ingest of the same source path (`_upsert_points`), or when it grows past
-`MAX_CHUNKS_PER_FILE` (`_delete_source`), never on absence. A file removed
-from the watched tree (including the whole Obsidian vault, or the `stack-docs` mount) leaves its
-embedded chunks in Qdrant indefinitely, stale.
+The index follows the disk:
+- a reconcile pass (`reconcile_index`) deletes every indexed source whose file is gone or that the
+  rules no longer ingest (excluded prefix, hidden folder, unsupported type). It runs right after the
+  first full pass at startup, then every `RECONCILE_INTERVAL_SEC` (default 600), because Docker Desktop
+  bind mounts may emit no delete events;
+- a delete or move event for an indexed file makes that pass run now (a move also ingests the new
+  path). The event deletes nothing itself, so there is one deletion path and the guards below cover it.
 
-There is no ingester-side fix here yet; the eval harness (`services/evals`) works around the
-consequence for its own scratch writes with an out-of-band safety check
-(`ordo_evals.runner._check_rag_leak`) that fails a run if any Qdrant point's `source` is still
-rooted under the eval scratch folder after cleanup, rather than relying on deletion to have worked.
+Two guards stop a lost mount from wiping the index:
+- a top-level folder with no files on disk (mount not ready or evicted) is skipped with a warning;
+  loose files directly under the watch root never count as such a missing mount, because that
+  directory always exists (it is created at startup);
+- a pass that would delete more than `RECONCILE_MAX_DELETE_FRACTION` (default 0.5) of the indexed
+  sources is refused and logged as an error, unless `RECONCILE_ALLOW_MASS_DELETE=1`; the guard does
+  not fire below three indexed sources, where a refusal could never shed the last files.
+
+The eval harness still keeps its own check (`ordo_evals.runner._check_rag_leak`) that no point is
+rooted under the eval scratch folder after cleanup.

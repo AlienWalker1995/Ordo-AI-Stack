@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
+from datetime import date, timedelta
 from pathlib import Path
 
 import ingest
@@ -19,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # --- rag-ingestion: classification ---
 
 def test_docs_under_canonical_are_canonical():
-    meta = ingest._document_meta("stack-docs/canonical/index.md", "---\nstatus: current\n---\n# PRD")
+    meta = ingest._document_meta(ingest.CANONICAL_PREFIXES[0] + "index.md","---\nstatus: current\n---\n# PRD")
     assert meta["authority"] == "canonical"
     assert meta["status"] == "current"
 
@@ -52,6 +53,51 @@ def test_frontmatter_reads_only_flat_scalars():
     text = "---\nname: \"Quoted\"\ntags:\n  - a\nnested:\n  status: archived\n---\n"
     assert ingest._frontmatter(text) == {"name": "Quoted"}
     assert ingest._frontmatter("no frontmatter here") == {}
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("archived # old", "archived"),
+    ("Archived", "archived"),
+    ("SUPERSEDED", "superseded"),
+    ("deprecated", "archived"),
+    ("Obsolete  # replaced", "archived"),
+    ("current", "current"),
+    ("canonical", "current"),            # not a status: a note cannot claim its way into anything
+    ("archived-ish", "current"),
+    ("", "current"),
+])
+def test_status_is_one_of_current_superseded_archived(raw, expected):
+    meta = ingest._document_meta("memory-vault/notes/N.md", f"---\nstatus: {raw}\n---\nbody")
+    assert meta["status"] == expected
+
+
+def test_an_inline_comment_is_not_part_of_a_value():
+    text = "---\nstatus: archived # old\nname: 'a # b'\nlast_verified: 2026-11-12 # checked\n---\n"
+    assert ingest._frontmatter(text) == {"status": "archived", "name": "a # b", "last_verified": "2026-11-12"}
+
+
+@pytest.mark.parametrize("raw", ["2999-01-01", "not a date", "2026-13-40", "2026-11-12T10:00:00", "20261112"])
+def test_a_last_verified_that_is_not_a_past_date_is_dropped(raw):
+    meta = ingest._document_meta("memory-vault/notes/N.md", f"---\nlast_verified: {raw}\n---\nbody")
+    assert meta["last_verified"] is None
+
+
+def test_a_future_last_verified_falls_back_to_a_valid_modified_date():
+    text = "---\nlast_verified: 2999-01-01\nmodified: 2026-01-02\n---\nbody"
+    assert ingest._document_meta("memory-vault/notes/N.md", text)["last_verified"] == "2026-01-02"
+
+
+def test_a_last_verified_one_day_ahead_of_the_container_clock_passes():
+    """A note written 'today' east of the container's zone carries tomorrow's UTC date during the
+    early-UTC hours, so one day ahead still counts as current."""
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    meta = ingest._document_meta("memory-vault/notes/N.md", f"---\nlast_verified: {tomorrow}\n---\nbody")
+    assert meta["last_verified"] == tomorrow
+
+
+def test_a_last_verified_two_days_ahead_is_still_dropped():
+    far = (date.today() + timedelta(days=2)).isoformat()
+    assert ingest._document_meta("memory-vault/notes/N.md", f"---\nlast_verified: {far}\n---\nbody")["last_verified"] is None
 
 
 # --- rag-ingestion: metadata on write, and re-tagging without re-embedding ---
@@ -89,7 +135,7 @@ def test_new_chunks_carry_the_metadata(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest, "WATCH_DIR", tmp_path)
     fake = _Recorder()
     monkeypatch.setattr(ingest.httpx, "Client", fake)
-    doc = tmp_path / "stack-docs" / "canonical" / "index.md"
+    doc = tmp_path / ingest.CANONICAL_PREFIXES[0] / "index.md"
     doc.parent.mkdir(parents=True)
     doc.write_text("---\nstatus: current\nlast_verified: 2026-11-12\n---\n# Ordo", encoding="utf-8")
 
@@ -121,11 +167,32 @@ def test_an_indexed_file_with_old_metadata_is_retagged_not_reembedded(tmp_path, 
 
 
 def test_the_watch_mounts_match_the_authority_prefixes():
-    """The prefixes only work if the vault and the repo docs are mounted where they say."""
+    """The prefixes only work if the vault is mounted where the default says, read-only."""
     plugin = (ROOT / "services" / "rag" / "plugin.yaml").read_text(encoding="utf-8")
     assert "/docs:/watch/stack-docs:ro" in plugin
     assert ":/watch/memory-vault:ro" in plugin
-    assert (ROOT / "docs" / "canonical").is_dir() or "stack-docs/canonical/" in ingest.CANONICAL_PREFIXES
+    assert ingest.DEFAULT_CANONICAL_PREFIXES.startswith("memory-vault/")
+    assert f"CANONICAL_PREFIXES: ${{RAG_CANONICAL_PREFIXES:-{ingest.DEFAULT_CANONICAL_PREFIXES}}}" in plugin
+
+
+def test_the_shipped_canonical_default_is_the_vaults_real_folder():
+    """Pinned against the live vault layout: matching is a case-sensitive startswith, so a default
+    that drifts from the real folder (notes/Ordo/Canonical/) matches nothing and the whole
+    canonical tier dies quietly."""
+    assert ingest.DEFAULT_CANONICAL_PREFIXES == "memory-vault/notes/Ordo/Canonical/"
+    assert ingest._folder_prefixes(ingest.DEFAULT_CANONICAL_PREFIXES) == ("memory-vault/notes/Ordo/Canonical/",)
+
+
+def test_the_canonical_folders_come_from_configuration():
+    assert ingest._folder_prefixes("memory-vault/notes/Canon, stack-docs/specs/ ,,") == (
+        "memory-vault/notes/Canon/", "stack-docs/specs/")
+    assert ingest._folder_prefixes("") == ()
+
+
+def test_a_folder_that_only_starts_like_the_canonical_one_is_not_canonical(monkeypatch):
+    monkeypatch.setattr(ingest, "CANONICAL_PREFIXES", ingest._folder_prefixes("memory-vault/notes/canonical"))
+    assert ingest._document_meta("memory-vault/notes/canonical/prd.md", "# x")["authority"] == "canonical"
+    assert ingest._document_meta("memory-vault/notes/canonical-drafts/prd.md", "# x")["authority"] == "derived"
 
 
 # --- qdrant-rag MCP server: filter and ranking ---
@@ -170,6 +237,32 @@ def test_a_default_search_leaves_out_history_and_the_inbox():
     assert server.search_filter(include_history=True) is None
 
 
+def test_a_search_can_be_scoped_to_folders():
+    scoped = server.search_filter(include_history=False, folders=["memory-vault/notes/work/", " ", ""])
+    assert scoped["must"] == [{"key": "folders", "match": {"any": ["memory-vault/notes/work"]}}]
+    assert scoped["must_not"]                                   # history is still left out
+    assert server.search_filter(include_history=True, folders=["a"]) == {
+        "must": [{"key": "folders", "match": {"any": ["a"]}}]}
+    assert server.search_filter(include_history=True, folders=[]) is None
+
+
+def test_each_chunk_stores_its_ancestor_folders():
+    meta = ingest._document_meta("memory-vault/notes/work/2026/q3/plan.md", "# plan")
+    assert meta["folders"] == ["memory-vault", "memory-vault/notes", "memory-vault/notes/work",
+                               "memory-vault/notes/work/2026"]       # capped at FOLDER_DEPTH
+    assert ingest._document_meta("top.md", "# x")["folders"] == []
+
+
+def test_a_document_in_a_history_folder_is_archived_whatever_it_claims(monkeypatch):
+    monkeypatch.setattr(ingest, "HISTORY_PREFIXES", ingest._folder_prefixes("memory-vault/archive"))
+    claims_current = "---\nstatus: current\n---\n# old plan"
+    assert ingest._document_meta("memory-vault/archive/plans/a.md", claims_current)["status"] == "archived"
+    assert ingest._document_meta("memory-vault/archive/a.md", "# no frontmatter")["status"] == "archived"
+    superseded = "---\nstatus: superseded\n---\n# x"
+    assert ingest._document_meta("memory-vault/archive/a.md", superseded)["status"] == "superseded"
+    assert ingest._document_meta("memory-vault/archive-notes/a.md", claims_current)["status"] == "current"
+
+
 def _hit(score, authority, source):
     return {"score": score, "payload": {"authority": authority, "source": source, "status": "current",
                                         "last_verified": "2026-11-12", "content": source}}
@@ -178,7 +271,32 @@ def _hit(score, authority, source):
 def test_canonical_wins_a_close_match_but_not_a_clearly_better_note():
     hits = [_hit(0.80, "derived", "note-close"), _hit(0.78, "canonical", "prd"), _hit(0.95, "derived", "note-best")]
     ranked = [r["source"] for r in server.rank(hits, limit=3)]
-    assert ranked == ["note-best", "prd", "note-close"]
+    assert ranked == ["note-best", "note-close", "prd"]      # the PRD is 0.17 behind the best: no boost
+    close = [_hit(0.80, "derived", "note-close"), _hit(0.78, "canonical", "prd"), _hit(0.81, "derived", "note-best")]
+    assert [r["source"] for r in server.rank(close, limit=3)] == ["prd", "note-best", "note-close"]
+
+
+def test_a_weak_canonical_hit_does_not_jump_a_strong_note():
+    hits = [_hit(0.90, "derived", "note-strong"), _hit(0.60, "canonical", "prd-weak")]
+    assert [r["source"] for r in server.rank(hits, limit=2)] == ["note-strong", "prd-weak"]
+
+
+def test_a_canonical_near_tie_goes_to_the_canonical_doc():
+    margin = server.CANONICAL_NEAR_TIE_MARGIN
+    hits = [_hit(0.90, "derived", "note"), _hit(0.90 - margin, "canonical", "prd")]
+    assert [r["source"] for r in server.rank(hits, limit=2)] == ["prd", "note"]
+
+
+def test_a_canonical_hit_just_outside_the_margin_gets_no_boost():
+    outside = 0.90 - server.CANONICAL_NEAR_TIE_MARGIN - 0.01
+    hits = [_hit(0.90, "derived", "note"), _hit(outside, "canonical", "prd")]
+    assert [r["source"] for r in server.rank(hits, limit=2)] == ["note", "prd"]
+
+
+def test_only_canonical_results_expose_last_verified():
+    canonical, derived = server.rank([_hit(0.9, "canonical", "prd"), _hit(0.8, "derived", "note")], limit=5)
+    assert canonical["last_verified"] == "2026-11-12" and "claimed_last_verified" not in canonical
+    assert derived["claimed_last_verified"] == "2026-11-12" and "last_verified" not in derived
 
 
 def test_results_carry_their_provenance_and_the_raw_score():

@@ -25,15 +25,20 @@ rag-ingestion stores three fields with every chunk: `authority`, `status` and `l
 
 | Authority | Where the file lives |
 |---|---|
-| `canonical` | `docs/canonical/` (the PRDs) |
+| `canonical` | The operator's source-of-truth folder, `RAG_CANONICAL_PREFIXES` (default: the vault's `notes/Ordo/Canonical/`) |
 | `ephemeral` | the vault's `inbox/` |
 | `derived` | everywhere else |
 
 `qdrant_search`:
 - leaves out chunks whose `status` is `archived` or `superseded`, and `ephemeral` chunks, unless
   `include_history` is true;
-- adds `CANONICAL_BOOST` (0.05) to a canonical chunk's similarity before ranking;
-- returns each result's `authority`, `status` and `last_verified` beside the raw score.
+- searches only under the folders given in `folders` (a document's first four ancestor folders are stored, so a scope can be `memory-vault`, `memory-vault/notes` or deeper); with no `folders` it searches everything;
+- adds `CANONICAL_BOOST` (0.05) to a canonical chunk's similarity before ranking, only when that
+  chunk scores within `CANONICAL_NEAR_TIE_MARGIN` (0.03) of the best candidate, so it breaks
+  near-ties and never promotes a weak match;
+- returns each result's `authority` and `status` beside the raw score. Only canonical results carry
+  `last_verified`; for every other result the date is the note's own unverified claim and is
+  returned as `claimed_last_verified`.
 
 Chunks indexed before these fields existed report `unknown` until rag-ingestion re-tags them: at
 startup it lists every file stored under an older `META_VERSION` and rewrites its payload in place,
