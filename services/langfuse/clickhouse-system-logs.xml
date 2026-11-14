@@ -4,7 +4,7 @@
   The stock clickhouse-server image logs at "trace" and keeps every system.*_log table forever.
   On 2026-09-28 system.trace_log (sampling profiler, 108 GB) and system.text_log (a copy of the
   trace-level server log, 13 GB) filled Docker Desktop's 1 TB disk while Langfuse's actual data
-  was about 1 GB. Every container on the box then failed writes (Jellyfin playback died).
+  was about 1 GB. Every container on the box then failed writes.
 
   - trace_log / text_log: removed. Nothing in this stack reads them.
   - Every other system log that exists on this server: 7-day TTL. Only tables that already

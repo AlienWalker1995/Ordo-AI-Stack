@@ -48,8 +48,7 @@ tailnet; there is no public DNS record and no port open to the internet.
 
 - **Zero public exposure.** Traffic between tailnet devices is WireGuard-encrypted end to end; Caddy
   binds to the tailnet interface (`CADDY_BIND` = the host's `tailscale ip -4`, or a deliberate
-  `0.0.0.0` that stays internet-dark because nothing is port-forwarded — operator-approved
-  2026-07-17).
+  `0.0.0.0` that stays internet-dark because nothing is port-forwarded).
 - **The SSO-gated port layer** — Caddy publishes `:443` (front door: landing page, the one Google
   OAuth callback, `/llm/*` and `/mcp` API routes, legacy-subpath
   302s) plus one dedicated SSO-gated port per UI: `:8443` Open WebUI, `:8444` Dashboard (+`/grafana/`),

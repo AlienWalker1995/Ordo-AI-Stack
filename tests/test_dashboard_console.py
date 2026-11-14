@@ -938,7 +938,7 @@ def test_grouping_leaves_the_container_counts_alone():
 # --- the launcher's apps ---
 
 def _labelled(name, href, *, group="", description="", label_name="", status="running", status_text="Up 1 day",
-              health=None, project="nas-stack"):
+              health=None, project="media-stack"):
     return {"name": name, "status": status, "image": name, "project": project, "service": name,
             "health": health, "status_text": status_text,
             "link": {"href": href, "name": label_name, "description": description, "group": group}}

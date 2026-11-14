@@ -20,8 +20,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 OPS_TOKEN = "test-ops-controller-token"
-CADDY_IP = "10.9.0.7"
-OTHER_CONTAINER_IP = "10.9.0.42"
+CADDY_IP = "100.64.0.7"
+OTHER_CONTAINER_IP = "100.64.0.42"
 
 DASHBOARD_DOCKERFILE = (
     Path(__file__).resolve().parents[1] / "services" / "dashboard" / "dashboard" / "Dockerfile"

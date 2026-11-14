@@ -43,8 +43,6 @@ context/
 cp_test_output.log
 test_output.log
 
-# Untracked sibling projects that happen to live in this tree
-/isolated_portfolio/
 
 # Hermes Agent (host-mode install + local state; see docs/hermes-agent.md)
 vendor/hermes-agent/
@@ -63,7 +61,7 @@ secrets/*
 docs/superpowers/
 
 # Build/export artifacts and ad-hoc HTML drops accumulated at the repo root
-# (min-max blog tarball, page exports). Audit 2026-05-11.
+# (tarballs, page exports).
 *.tar.gz
 /final.html
 /index.html

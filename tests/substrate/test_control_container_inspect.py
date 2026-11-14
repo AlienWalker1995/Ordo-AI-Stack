@@ -60,7 +60,7 @@ RAW = {
          "Destination": "/home/node/.n8n", "RW": True},
     ],
     "NetworkSettings": {
-        "Networks": {"ordo-net": {"IPAddress": "172.19.0.9"}, "ordo-comfyui-net": {}},
+        "Networks": {"ordo-net": {"IPAddress": "100.64.0.9"}, "ordo-comfyui-net": {}},
         "Ports": {"5678/tcp": None, "9000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "9000"}]},
     },
 }
@@ -118,11 +118,11 @@ NO_LINK = "\t\t\t\t"   # the four Homepage link labels, all unset
 
 
 def test_a_ps_line_becomes_a_container_row():
-    line = ("nas-stack-janitorr\trunning\tghcr.io/schaka/janitorr:jvm-v2.1.1\tnas-stack\tjanitorr"
+    line = ("media-stack-janitorr\trunning\tghcr.io/schaka/janitorr:jvm-v2.1.1\tmedia-stack\tjanitorr"
             "\tUp 3 hours (unhealthy)" + NO_LINK)
     assert broker_module.DockerBackend.container_row(line) == {
-        "name": "nas-stack-janitorr", "status": "running", "image": "ghcr.io/schaka/janitorr:jvm-v2.1.1",
-        "project": "nas-stack", "service": "janitorr", "health": "unhealthy",
+        "name": "media-stack-janitorr", "status": "running", "image": "ghcr.io/schaka/janitorr:jvm-v2.1.1",
+        "project": "media-stack", "service": "janitorr", "health": "unhealthy",
         "status_text": "Up 3 hours (unhealthy)", "link": None,
     }
 
@@ -134,13 +134,13 @@ def test_a_container_outside_compose_has_empty_project_and_service():
 
 def test_homepage_labels_give_the_row_a_launcher_link():
     # The Homepage convention (gethomepage.dev): href is required, the rest optional.
-    line = "jellyfin\trunning\tjellyfin\tnas-stack\tjellyfin\tUp 4 days\tJellyfin\thttp://host:8096\tMedia server\tMedia"
+    line = "jellyfin\trunning\tjellyfin\tmedia-stack\tjellyfin\tUp 4 days\tJellyfin\thttp://host:8096\tMedia server\tMedia"
     assert broker_module.DockerBackend.container_row(line)["link"] == {
         "href": "http://host:8096", "name": "Jellyfin", "description": "Media server", "group": "Media"}
 
 
 def test_labels_without_an_href_give_no_link():
-    line = "radarr\trunning\tradarr\tnas-stack\tradarr\tUp 4 days\tRadarr\t\tMovies\tMedia"
+    line = "radarr\trunning\tradarr\tmedia-stack\tradarr\tUp 4 days\tRadarr\t\tMovies\tMedia"
     assert broker_module.DockerBackend.container_row(line)["link"] is None
 
 
@@ -190,7 +190,7 @@ def test_a_container_outside_the_project_is_404(cp):
     def refuse(name):
         raise ValueError(f"container {name!r} is not in project 'ordo'")
     cp.broker.backend.container_inspect = refuse
-    status, payload = cp.route("GET", "/containers/nas-stack-janitorr")
+    status, payload = cp.route("GET", "/containers/media-stack-janitorr")
     assert status == 404
     assert "not in project" in payload["error"]
 

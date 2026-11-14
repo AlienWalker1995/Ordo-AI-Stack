@@ -151,7 +151,7 @@ flowchart TB
     MG -- "resident model" --> GPU
 ```
 
-Local-first AI; operator-deployed front door. The dashboard does not mount `docker.sock`; the scheduler's process broker is hard-scoped to the stack's own containers. Details: [PRD index](docs/canonical/index.md).
+Local-first AI; operator-deployed front door. The dashboard does not mount `docker.sock`; the scheduler's process broker is hard-scoped to the stack's own containers.
 
 ## Development & testing
 
@@ -175,7 +175,7 @@ ones add exposure and hardening requirements. See [docs/deployment-models.md](do
 
 ## Docs
 
-[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Access & deployment models](docs/deployment-models.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Alerting](docs/runbooks/alerting.md) · [Notes sync (Obsidian)](docs/runbooks/notes-sync.md) · [Data](docs/data.md) · [Hermes agent](docs/hermes-agent.md) · [PRD index](docs/canonical/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
+[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Access & deployment models](docs/deployment-models.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Alerting](docs/runbooks/alerting.md) · [Notes sync (Obsidian)](docs/runbooks/notes-sync.md) · [Data](docs/data.md) · [Hermes agent](docs/hermes-agent.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
 ## License
 

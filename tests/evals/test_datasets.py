@@ -22,7 +22,6 @@ FILES = sorted(DATASETS.glob("*.jsonl"))
 FORBIDDEN = {
     "an email address": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     "a tailnet hostname": re.compile(r"(?i)\.ts\.net\b|\btail[0-9a-f]{6,}\b"),
-    "the operator's host name": re.compile(r"(?i)\bultracam\b"),
     "a Discord id": re.compile(r"(?<!\d)\d{17,20}(?!\d)"),
     "a LiteLLM or Langfuse key": re.compile(r"(?i)\b(sk-[a-z0-9]{16,}|pk-lf-|sk-lf-)"),
     "a secret-shaped hex string": re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32,}(?![0-9a-fA-F])"),
@@ -224,7 +223,7 @@ def test_no_harness_item_asks_hermes_to_change_anything():
 # ones it names are the stack's own generic service names, never a machine, account or address.
 _OPERATOR_SHAPED = {
     "an IP address": re.compile(r"(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\d)"),
-    "a user account or personal name": re.compile(r"(?i)\b(lynch|cameron|operator@|admin@)\b"),
+    "a user account": re.compile(r"(?i)\b(operator@|admin@)\b"),
     "a Windows drive path": re.compile(r"(?i)\b[a-z]:[\\/]"),
     "a tailscale or LAN hostname": re.compile(r"(?i)\b[\w-]+\.(?:ts\.net|local|lan|internal)\b"),
     "a Discord or Telegram channel reference": re.compile(r"(?i)\b(discord|telegram|slack)\b"),

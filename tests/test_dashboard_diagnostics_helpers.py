@@ -169,7 +169,7 @@ def test_a_healthy_edge_check_or_dns_lookup_does_not_reset_another_edge_check(ed
 
     broken = _edge_client(MagicMock(status_code=502))
     healthy = _edge_client(MagicMock(status_code=200))
-    infos = [(2, 1, 6, "", ("10.0.0.5", 0))]
+    infos = [(2, 1, 6, "", ("100.64.0.5", 0))]
     for _ in range(3):
         asyncio.run(_check_via_edge(_edge_card("hermes-dashboard"), broken))
         asyncio.run(_check_via_edge(_edge_card("langfuse"), healthy))
@@ -520,10 +520,10 @@ def test_edge_proxy_addresses_dns_error_records_dep_edge_unreachable(edge_env):
 def test_edge_proxy_addresses_success_marks_edge_ok(edge_env):
     from dashboard import auth
 
-    infos = [(2, 1, 6, "", ("10.0.0.5", 0))]
+    infos = [(2, 1, 6, "", ("100.64.0.5", 0))]
     with patch.object(auth.socket, "getaddrinfo", return_value=infos):
         addrs = auth.edge_proxy_addresses()
-    assert addrs == {"10.0.0.5"}
+    assert addrs == {"100.64.0.5"}
     assert diagnostics._failures == [] and _dep("EDGE", "dns:caddy")["status"] == "ok"
 
 

@@ -336,7 +336,7 @@ PROJECT_CONTAINERS_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "project": {"type": "string", "description": "Compose project name, e.g. 'nas-stack'. Optional."},
+            "project": {"type": "string", "description": "Compose project name, e.g. 'media-stack'. Optional."},
         },
         "required": [],
     },
@@ -351,7 +351,7 @@ PROJECT_LOGS_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "project": {"type": "string", "description": "Compose project name, e.g. 'nas-stack'."},
+            "project": {"type": "string", "description": "Compose project name, e.g. 'media-stack'."},
             "name": {"type": "string", "description": "Container name, e.g. 'janitorr'."},
             "tail": {"type": "integer", "description": "Trailing lines to return. Default 100, max 1000."},
         },
@@ -372,7 +372,7 @@ RESTART_PROJECT_CONTAINER_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "project": {"type": "string", "description": "Compose project name, e.g. 'nas-stack'."},
+            "project": {"type": "string", "description": "Compose project name, e.g. 'media-stack'."},
             "name": {"type": "string", "description": "Container name, e.g. 'janitorr'."},
             "confirm": {"type": "boolean", "description": "Required (true): ops-controller refuses the call without it."},
         },

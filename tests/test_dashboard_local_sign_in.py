@@ -23,11 +23,11 @@ from fastapi.testclient import TestClient
 
 OPS_TOKEN = "test-ops-controller-token"
 LOCAL_TOKEN = "test-local-login-token-0123456789abcdef"
-CADDY_IP = "10.9.0.7"
-OTHER_CONTAINER_IP = "10.9.0.42"
+CADDY_IP = "100.64.0.7"
+OTHER_CONTAINER_IP = "100.64.0.42"
 # What a request through the loopback-published port looks like from inside the container: the
 # peer is the Docker gateway / proxy, never something the dashboard can tell apart by address.
-PUBLISHED_PORT_PEER_IP = "10.9.0.1"
+PUBLISHED_PORT_PEER_IP = "100.64.0.1"
 PROTECTED = "/api/ops/services/searxng/restart"
 SIGN_IN = "/api/auth/local/sign-in"
 SESSION = "/api/auth/session"

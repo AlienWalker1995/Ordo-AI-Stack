@@ -129,8 +129,8 @@ def test_hostname_error_accepts_valid_and_rejects_junk():
     assert wizard.hostname_error("ordo.tail1234.ts.net") is None
     assert wizard.hostname_error("") is not None                 # empty
     assert wizard.hostname_error("ordo") is not None             # not fully-qualified
-    assert wizard.hostname_error("https://ordo.ts.net") is not None   # has a scheme
-    assert wizard.hostname_error("ordo.ts.net:443") is not None       # has a port
+    assert wizard.hostname_error("https://host.example.ts.net") is not None   # has a scheme
+    assert wizard.hostname_error("host.example.ts.net:443") is not None       # has a port
     assert wizard.hostname_error("ordo .ts.net") is not None          # has a space
 
 

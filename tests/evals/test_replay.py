@@ -32,7 +32,7 @@ def test_reading_this_runs_own_sessions_is_not_contamination():
 
 def test_reading_a_non_eval_session_is_not_replay():
     """Hermes's ordinary Discord/cron sessions are its own memory, not this harness replaying itself."""
-    fields = replay.item_fields([session_search_result("discord-1548337027508998227-2026-09-18")], RUN)
+    fields = replay.item_fields([session_search_result("discord-123456789012345678-2026-09-18")], RUN)
     assert fields["replay_aware"] is False and fields["replay_prior_run_ids"] == []
 
 
