@@ -1,10 +1,16 @@
 """Read-only folders inside the memory vault: the operator's canonical docs, which agents must not write.
 
-The vault is mounted read-write into the memory-vault MCP server (`/vault`) and, through the code-root
-mirror, into the agent. `site: MEMORY_VAULT_READONLY_DIRS` names folders of the vault (comma-separated,
+The vault is mounted read-write into the memory-vault MCP server (`/vault`) and, through its read-write
+binds, into the agent. `site: MEMORY_VAULT_READONLY_DIRS` names folders of the vault (comma-separated,
 relative to the vault root, for example `notes/Canonical`). The render mounts each one a second time,
-read-only, on top of the read-write bind, so the kernel refuses a write there whatever the agent or the
-MCP tools attempt. Unset or empty adds nothing.
+read-only, on top of the read-write bind. Unset or empty adds nothing.
+
+What that guarantees: the mount refuses a write made by the folder's own path. On a case-sensitive host
+filesystem that is every path. On a case-insensitive one (a Windows bind) a differently cased path
+(`notes/canonical`) reaches the same files through the read-write bind and skips the overlay, so there it
+stops accidental and rule-following writes, not a determined one; the render warns about that. Full
+enforcement needs the vault outside every read-write bind of the agent, or a case-sensitive filesystem.
+The agent's Docker socket also lets it start a container with its own read-write bind.
 
 Two services mount the vault, and each gets its own targets:
   - the MCP server mounts the folder at `/vault/<dir>`.
@@ -34,6 +40,7 @@ _UNSAFE_CHARACTERS = re.compile(r"[\\:$\x00-\x1f]")
 _DRIVE_PREFIX = re.compile(r"^([A-Za-z]):(?=/|$)")
 # A short-syntax bind `<source>:<target>[:<options>]`. The source may hold a drive colon (`C:/dev`), so it
 # is greedy and the target must start with `/`.
+_GIT_BASH_DRIVE = re.compile(r"^/[A-Za-z](?:/|$)")  # /c/dev, how Git Bash and Docker spell C:/dev
 _BIND = re.compile(r"^(?P<source>.+):(?P<target>/[^:]*)(?::(?P<options>[a-z,]+))?$")
 
 
@@ -104,7 +111,19 @@ def _normalized(host_path: str) -> PurePosixPath:
 
 
 def _relative_to(path: PurePosixPath, root: PurePosixPath) -> PurePosixPath | None:
-    try:
-        return path.relative_to(root)
-    except ValueError:
+    """`path` below `root`, compared without regard to case (a Windows host spells one folder several
+    ways); the result keeps the spelling of `path`."""
+    root_parts = [part.casefold() for part in root.parts]
+    if [part.casefold() for part in path.parts[:len(root_parts)]] != root_parts:
         return None
+    return PurePosixPath(*path.parts[len(root_parts):])
+
+
+def case_bypass_warning(vault_path: str) -> list[str]:
+    """One warning when the vault looks like a Windows path, where the overlay can be bypassed."""
+    spelling = vault_path.strip().replace("\\", "/")
+    if not (_DRIVE_PREFIX.match(spelling) or _GIT_BASH_DRIVE.match(spelling)):
+        return []
+    return [f"{READONLY_DIRS_KEY}: {VAULT_PATH_KEY} looks like a Windows path, whose file system ignores case: "
+            "a write by a differently cased path (notes/canonical for notes/Canonical) skips the read-only "
+            "mount, so here it stops accidental writes, not a determined one"]

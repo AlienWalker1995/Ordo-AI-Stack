@@ -142,6 +142,23 @@ def test_a_windows_spelling_of_the_code_root_matches_the_mirror_spelling():
     assert f"{VAULT_SOURCE}/notes:/c/dev/vault/notes:ro" in services["agent"]["volumes"]
 
 
+def test_containment_ignores_case_but_the_mount_keeps_the_vault_spelling():
+    site = {"MEMORY_VAULT_PATH": "C:/Dev/Vault", "CODE_ROOT": "c:/dev", "DATA_PATH": "/srv/data"}
+    agent_ro = [v for v in _compose({KEY: "notes"}, site=site)["agent"]["volumes"] if v.startswith(VAULT_SOURCE)]
+    assert agent_ro == [f"{VAULT_SOURCE}/notes:/c/dev/Vault/notes:ro"]
+
+
+def test_a_windows_vault_warns_that_a_differently_cased_path_bypasses_the_mount():
+    for vault in ("C:/dev/vault", r"C:\dev\vault", "/c/dev/vault"):
+        warnings = [w for w in _render({KEY: "notes", "MEMORY_VAULT_PATH": vault}).warnings if "differently cased" in w]
+        assert len(warnings) == 1 and KEY in warnings[0], vault
+
+
+def test_a_posix_vault_or_an_unset_key_does_not_warn_about_case():
+    assert not any("differently cased" in w for w in _render({KEY: "notes"}).warnings)
+    assert not any("differently cased" in w for w in _render({"MEMORY_VAULT_PATH": "C:/dev/vault"}).warnings)
+
+
 def test_a_vault_that_is_the_bind_source_mounts_at_the_bind_target():
     services = _compose({KEY: "notes", "MEMORY_VAULT_PATH": "/srv/dev"})
     assert f"{VAULT_SOURCE}/notes:/c/dev/notes:ro" in services["agent"]["volumes"]

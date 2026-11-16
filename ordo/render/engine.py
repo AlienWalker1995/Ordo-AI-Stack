@@ -1141,7 +1141,7 @@ def _mount_vault_readonly_dirs(env: dict[str, str], hermes: dict[str, Any],
             server["volumes"].extend(vault_readonly.mcp_mounts(folders))
     mounts, warnings = vault_readonly.agent_mounts(folders, vault_path, hermes["agent_volumes"], env)
     hermes["agent_volumes"].extend(mounts)
-    return warnings
+    return warnings + vault_readonly.case_bypass_warning(vault_path)
 
 
 def _is_project_image(image: str, project: str = "ordo") -> bool:
