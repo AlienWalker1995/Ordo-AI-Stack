@@ -6,7 +6,7 @@ Thanks for contributing to Ordo.
 
 ## Building and testing the stack
 
-- **Tests (no host Python needed)** — run in a throwaway container:
+- **Tests (no host Python needed)** - run in a throwaway container:
   ```bash
   docker run --rm -v "$PWD:/w" -w /w python:3.11-slim \
     sh -c "pip install -q -r requirements-dev.txt && PYTHONPATH=. python -m pytest -q tests/substrate"
@@ -15,9 +15,19 @@ Thanks for contributing to Ordo.
 - **Render + deploy:** edit the declarative source (`out/ordo.yaml`), then `python -m ordo render` and `ordo up --all` from the repo root (never a hand-assembled compose bring-up). Never hand-edit `out/*`: it's regenerated. See [`docs/operator-guide.md`](docs/operator-guide.md).
 - **Service images** (`ordo/<name>`) are built by `ordo build <svc>` (or `ordo build --all`), which tags each with the commit that last changed its build context; never by hand.
 
+## Pull request rules
+
+Three rules apply to every change:
+
+- **Target the default branch.** Base every pull request on `main`; a stacked pull request merges into its base branch and its content never ships.
+- **No AI-assistant attribution** in a commit message or in a pull request's title and body (no `Co-Authored-By` line naming an assistant, no "Generated with" footer).
+- **No em dash** in a commit message, a pull request's title and body, or a tracked Markdown file. Use a comma, a colon, parentheses or a plain hyphen.
+
+`scripts/ci/pr_rules.py` checks them in the `PR rules` workflow and in the `commit-msg` hook (enable hooks once per clone with `git config core.hooksPath .githooks`). To fix a failing commit message, amend or reword the commit (`git commit --amend`, or `git rebase -i` for an older one), then push. For a pull request's title or body, edit it on the pull request.
+
 ## Edge serving contract
 
-Every UI serves at its origin **root** behind a plain SSO reverse_proxy (`import sso_service <upstream>`); **no** edge- or sidecar-side path rewriting (`handle_path`/`strip_prefix`, `X-Forwarded-Prefix` injection, `sub_filter`) in a UI block — enforced by `tests/test_caddyfile_invariants.py`. Exceptions: Grafana's native same-origin `/grafana/` embed, and Hermes (`:8447`, `import self_authenticating_service`), whose dashboard runs its own Google sign-in because its desktop app cannot pass oauth2-proxy.
+Every UI serves at its origin **root** behind a plain SSO reverse_proxy (`import sso_service <upstream>`); **no** edge- or sidecar-side path rewriting (`handle_path`/`strip_prefix`, `X-Forwarded-Prefix` injection, `sub_filter`) in a UI block - enforced by `tests/test_caddyfile_invariants.py`. Exceptions: Grafana's native same-origin `/grafana/` embed, and Hermes (`:8447`, `import self_authenticating_service`), whose dashboard runs its own Google sign-in because its desktop app cannot pass oauth2-proxy.
 
 ## Security review checklist (every PR)
 
@@ -34,9 +44,9 @@ Every UI serves at its origin **root** behind a plain SSO reverse_proxy (`import
 This repo is public. **Never commit**:
 
 - **`out/secrets.env`**: operator secret values (materialized from the secret store by `ordo secrets materialize`). Gitignored.
-- **`ordo.yaml`** — operator-real source (host paths, tailnet hostname/IP). Only `ordo.example.yaml` is tracked. Gitignored.
-- **`data/`** — user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config). Gitignored.
-- **`models/`** — model files. Gitignored.
+- **`ordo.yaml`** - operator-real source (host paths, tailnet hostname/IP). Only `ordo.example.yaml` is tracked. Gitignored.
+- **`data/`** - user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config). Gitignored.
+- **`models/`** - model files. Gitignored.
 
 Shared code should use placeholders (e.g. `YOUR_GUILD_ID`) or read from environment variables. See [SECURITY.md](SECURITY.md) for details.
 

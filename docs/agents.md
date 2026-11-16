@@ -1,7 +1,7 @@
-# Agents — the pluggable orchestrator layer
+# Agents - the pluggable orchestrator layer
 
 The Ordo core (llama.cpp + litellm-db + model-gateway + model-gateway-keys + ops-controller + dashboard) is
-**agent-agnostic**. The *agent* is the orchestrator container that drives it, and it's swappable —
+**agent-agnostic**. The *agent* is the orchestrator container that drives it, and it's swappable -
 **Hermes is the default**, but any container honouring the contract can take its place.
 
 ## The contract
@@ -9,13 +9,13 @@ The Ordo core (llama.cpp + litellm-db + model-gateway + model-gateway-keys + ops
 An Ordo agent image MUST:
 
 1. **Chat** via the model-gateway's **OpenAI-compatible** endpoint (model id `local-chat`). It never
-   binds the GPU directly — reads the rendered `.env` for connection config.
+   binds the GPU directly - reads the rendered `.env` for connection config.
 2. **Use tools** through the model-gateway's **MCP endpoint** (`http://model-gateway:11435/mcp`, `Authorization: Bearer ${LITELLM_KEY_<ID>}`), not bespoke integrations.
 3. **Request GPU work** through the ops-controller: `POST /jobs` to reserve VRAM and `GET /status`
-   to see scheduler state — so the *scheduler* arbitrates the card, not the agent. (This is what
+   to see scheduler state - so the *scheduler* arbitrates the card, not the agent. (This is what
    ends the eviction deadlock: an agent can't evict llama.cpp by starting a render; it asks, and
    the scheduler co-runs or queues it.)
-4. **Treat the rendered `.env` as read-only truth** — never hand-edit derived config (drift cure).
+4. **Treat the rendered `.env` as read-only truth** - never hand-edit derived config (drift cure).
 
 ## Adding an agent
 

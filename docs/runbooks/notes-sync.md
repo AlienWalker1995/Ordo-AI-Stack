@@ -13,7 +13,7 @@ iOS / Mac / PC  --Self-hosted LiveSync plugin-->  CouchDB  <--livesync-bridge-->
 ```
 
 - **CouchDB** is the sync server the Obsidian LiveSync plugin talks to. Reached through the edge at
-  `https://<CADDY_TAILNET_HOSTNAME>/couchdb` (CouchDB's own auth — a non-browser sync client can't
+  `https://<CADDY_TAILNET_HOSTNAME>/couchdb` (CouchDB's own auth - a non-browser sync client can't
   pass Google SSO, so this route bypasses SSO like `/llm` and `/mcp`).
 - **`livesync-bridge`** mirrors the CouchDB database to plain `.md` files under
   `data/memory-vault/notes/`, so the AI sees your notes with no desktop app running.
@@ -39,32 +39,32 @@ within ~3s (polling; Docker Desktop bind mounts emit no inotify events).
 
 ## 2. Set up each Obsidian device (iOS / Mac / PC)
 
-The vault on each device is always a **local folder** — the server URL goes in the **plugin**, not
+The vault on each device is always a **local folder** - the server URL goes in the **plugin**, not
 Obsidian's open-vault screen.
 
 1. Obsidian -> open/create a local vault.
 2. **Settings -> Community plugins** -> turn off Restricted Mode -> **Browse** -> install
    **Self-hosted LiveSync** -> enable it.
 3. On your **first** device, run the LiveSync setup wizard:
-   - **URI**: `https://<CADDY_TAILNET_HOSTNAME>/couchdb`  (tailnet) — see step 4 for off-tailnet.
+   - **URI**: `https://<CADDY_TAILNET_HOSTNAME>/couchdb`  (tailnet) - see step 4 for off-tailnet.
    - **Username / Password**: `COUCHDB_USER` (default `ordoadmin`) / `COUCHDB_PASSWORD` from
      `out/secrets.env`.
    - **Database**: `obsidian-notes`.
    - **End-to-end encryption**: **On**, passphrase = `LIVESYNC_E2EE_PASSPHRASE` from
-     `out/secrets.env`. **Leave "Path Obfuscation" OFF** — the bridge writes readable filenames.
+     `out/secrets.env`. **Leave "Path Obfuscation" OFF** - the bridge writes readable filenames.
    - Let it replicate, then **Copy setup URI**.
 4. On every **other** device: install the plugin, choose "Setup from another device", and
-   **paste the setup URI** (or scan its QR). Done — all settings carry over.
+   **paste the setup URI** (or scan its QR). Done - all settings carry over.
 
 The E2EE passphrase must be **identical** on every client and matches the one the bridge uses
 (from `secrets.env`), or content won't decrypt.
 
-## 3. Off-tailnet access (Tailscale Funnel) — optional, opt-in
+## 3. Off-tailnet access (Tailscale Funnel) - optional, opt-in
 
 Makes the endpoint reachable from devices with **no Tailscale**. Note content is still
 end-to-end encrypted at rest in CouchDB, and `require_valid_user` gates all access.
 
-**One-time operator prerequisite** — grant the `notes` node the Funnel attribute in your tailnet
+**One-time operator prerequisite** - grant the `notes` node the Funnel attribute in your tailnet
 ACL (admin console -> Access controls):
 
 ```jsonc
@@ -88,17 +88,17 @@ database / passphrase). On-tailnet clients can keep using `.../couchdb`.
 
 ## Troubleshooting
 
-- **Bridge stuck "waiting for CouchDB"** — CouchDB isn't up/healthy yet, or `COUCHDB_PASSWORD`
+- **Bridge stuck "waiting for CouchDB"** - CouchDB isn't up/healthy yet, or `COUCHDB_PASSWORD`
   mismatch between `couchdb` and `livesync-bridge` (both read it from `secrets.env`). Check
   `docker logs ordo-couchdb-1`.
-- **AI/host-written notes not syncing to devices** — the bridge polls bind mounts every 3s
+- **AI/host-written notes not syncing to devices** - the bridge polls bind mounts every 3s
   (`CHOKIDAR_INTERVAL`); a note pre-existing at bridge start is caught by the offline scan on
   (re)start. Live host writes need `CHOKIDAR_USEPOLLING=1` (default on).
-- **Mobile can't connect** — CORS. The bridge sets the required origins
+- **Mobile can't connect** - CORS. The bridge sets the required origins
   (`app://obsidian.md`, `capacitor://localhost`) via the `_config` API at startup; confirm with
   `docker exec ordo-couchdb-1 curl -s -u <user>:<pw> localhost:5984/_node/_local/_config/cors`.
-- **Reset a device** — LiveSync's "rebuild" fetches the whole vault fresh from CouchDB.
-- **Never** expose CouchDB's Fauxton admin UI publicly — the edge blocks `/couchdb/_utils`; the
+- **Reset a device** - LiveSync's "rebuild" fetches the whole vault fresh from CouchDB.
+- **Never** expose CouchDB's Fauxton admin UI publicly - the edge blocks `/couchdb/_utils`; the
   Funnel path proxies CouchDB directly, so rely on `require_valid_user` there.
 
 ## Configuration policy: the database is the source of truth
@@ -107,16 +107,16 @@ All sync configuration lives in the database; devices conform to it. (The
 destructive-button warning below exists because the failure mode is real and
 unrecoverable without a server-side backup.)
 
-- **Sync behavior (tweak values — chunking, splitter, E2EE algorithm, …):** stored in
+- **Sync behavior (tweak values - chunking, splitter, E2EE algorithm, …):** stored in
   the remote milestone doc. On any "mismatched tweaks" dialog, always choose **"Use
   remote configuration"**. Never push a single device's divergent settings to the DB.
 - **Plugins / themes / snippets:** use **Customization sync v2** (stores customizations
   in the DB, device-aware). Enable on the primary device with automatic scan and mark
   it the base; every other device enables Customization sync with auto-apply.
-- **Onboarding a device:** configure nothing by hand — open the **Setup URI** copied
+- **Onboarding a device:** configure nothing by hand - open the **Setup URI** copied
   from the primary device; it carries the full connection + behavior config.
 - **LiveSync's own `data.json` is deliberately NOT synced** (excluded via
-  `syncInternalFilesIgnorePatterns`) — it holds per-device identity; syncing it loops.
+  `syncInternalFilesIgnorePatterns`) - it holds per-device identity; syncing it loops.
 - **Destructive buttons:** "Overwrite remote" / "Rebuild remote database" issues a
   literal `DELETE /obsidian-notes/` against CouchDB. The correct recovery action on a
   device is always **"Fetch from remote"**. Attribution for any future deletion:

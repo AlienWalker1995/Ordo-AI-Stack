@@ -1,18 +1,18 @@
-# Ordo — the config render substrate
+# Ordo - the config render substrate
 
 This repo **is** Ordo: the config render engine and the stack it produces, running in
 production. One declarative source (`ordo.yaml`) renders into `./out/`, and services run from that
-rendered output — edits to *derived* config never survive a re-render, so drift is structurally
+rendered output - edits to *derived* config never survive a re-render, so drift is structurally
 impossible.
 
 The stack runs entirely from its checkout (`main` is the production branch) as compose
 project **`ordo`** (the service count follows the enabled plugins: count the services in
-`out/docker-compose.yml` after `ordo render`) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
-render substrate lives at the repo root (there is no `v2/` directory — there is one Ordo).
+`out/docker-compose.yml` after `ordo render`) - containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
+render substrate lives at the repo root (there is no `v2/` directory - there is one Ordo).
 
 ## Install & first run
 
-**From a fresh machine — one command installs the CLI and launches the setup wizard, in the same
+**From a fresh machine - one command installs the CLI and launches the setup wizard, in the same
 terminal. Run the line for your platform:**
 
 ```bash
@@ -23,13 +23,13 @@ wget -qO- https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/i
 ```
 
 ```powershell
-# Windows — PowerShell (not cmd; `curl | sh` needs a POSIX shell, so native Windows uses this)
+# Windows - PowerShell (not cmd; `curl | sh` needs a POSIX shell, so native Windows uses this)
 irm https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.ps1 | iex
 ```
 
 Either path checks prerequisites (git, Docker + `docker compose` v2, Python 3.11+; warns if there's
-no NVIDIA GPU), clones the repo (`~/ordo`, or `%USERPROFILE%\ordo` on Windows — override with the
-`ORDO_DIR` env var), installs `ordo` into a virtualenv, and runs **`ordo init`** — the interactive
+no NVIDIA GPU), clones the repo (`~/ordo`, or `%USERPROFILE%\ordo` on Windows - override with the
+`ORDO_DIR` env var), installs `ordo` into a virtualenv, and runs **`ordo init`** - the interactive
 wizard that configures the whole stack.
 
 **The wizard (`ordo init`) is the setup path**: three questions, each with a default (press
@@ -52,7 +52,7 @@ downloads every model file the starting services load (the chat model, plus the 
 the embedder when those are enabled) that the `models-gguf` volume lacks, checksum-verified
 (`--no-fetch` skips that). There is no manual model copy step.
 
-**Manual / already-cloned path** — the wizard just automates this; you can drive the engine directly:
+**Manual / already-cloned path** - the wizard just automates this; you can drive the engine directly:
 
 ```bash
 ordo init                                     # re-run the wizard in an existing checkout
@@ -233,26 +233,26 @@ sync (256K in Hermes vs 128K in llama.cpp → a compaction deadlock; a stale mod
 
 > One human-editable declarative source (`ordo.yaml`). Everything derived (`.env`, Hermes
 > context, model-gateway ctx, compose vars) is **regenerated** from it. Edits to *derived*
-> outputs don't survive a re-render — so drift is structurally impossible. An explicit
+> outputs don't survive a re-render - so drift is structurally impossible. An explicit
 > `overrides:` block in the source is the escape hatch that *does* survive (today it reaches the
 > llama.cpp tuning keys only; any other key is a render error).
 
 This is the substrate everything else (scheduler, plugins, installer) renders through, and it's the
-direct fix for the #1 pain — now proven in production, not just in test.
+direct fix for the #1 pain - now proven in production, not just in test.
 
 ## What's here
 
 | File | Role |
 |---|---|
-| `ordo.example.yaml` | the declarative source — the single source of truth (hardware, tier, model, plugins, overrides) |
-| `catalog/models.yaml` | curated model catalog: each entry has resource requirements **and a sha256** (checksums are mandatory — corrupt weights burned us once) |
+| `ordo.example.yaml` | the declarative source - the single source of truth (hardware, tier, model, plugins, overrides) |
+| `catalog/models.yaml` | curated model catalog: each entry has resource requirements **and a sha256** (checksums are mandatory - corrupt weights burned us once) |
 | `ordo/render/hardware.py` | hardware detection (GPU/VRAM/RAM/CPU) + mockable profiles for CI |
 | `ordo/render/catalog.py` | load catalog + **best-fit** model selection with a VRAM headroom reserve (encodes the "don't fill the card" lesson) |
 | `ordo/render/config.py` | load/validate the declarative source |
 | `ordo/render/engine.py` | `(source + hardware + catalog + plugins) → RenderedConfig`; writes `out/.env`, `out/manifest.json` |
 | `ordo/render/plugins.py` + `services/*/plugin.yaml` | **registry-driven** plugins: each manifest declares hardware needs + a config fragment; the renderer enables what fits (media = NVIDIA-only) and resolves `depends_on` |
-| `ordo/control/scheduler.py` | GPU **scheduler decision engine** — FIFO admission + co-run-when-it-fits + LRU idle-evict (replaces the reactive guardian that caused the outage; the process broker drives it against the real `ordo-` containers — live in production) |
-| `ordo/cli.py` | `ordo detect | render | doctor | serve | preflight | …` — the one-script control surface |
+| `ordo/control/scheduler.py` | GPU **scheduler decision engine** - FIFO admission + co-run-when-it-fits + LRU idle-evict (replaces the reactive guardian that caused the outage; the process broker drives it against the real `ordo-` containers - live in production) |
+| `ordo/cli.py` | `ordo detect | render | doctor | serve | preflight | …` - the one-script control surface |
 | `tests/substrate/` | mocked-profile render (5090 + CPU-only), drift-revert, ctx consistency, plugin gating/deps, scheduler co-run/FIFO/evict, and per-defect-class regression guards from the parity audits (run below) |
 
 ## Operating this stack
@@ -260,7 +260,7 @@ The rendered services run under compose project `ordo` from the checkout, all re
 the edge: Caddy is the **only** service that publishes host ports, one port per UI surface on
 `${CADDY_TAILNET_HOSTNAME}`. The port map (which service, which port, how each signs in) lives in [configuration.md's Network Ports](configuration.md#network-ports).
 
-One Google sign-in covers every oauth2-proxy-gated port (all but Hermes, which signs in itself) **and the clean per-service tailnet names** — the
+One Google sign-in covers every oauth2-proxy-gated port (all but Hermes, which signs in itself) **and the clean per-service tailnet names** - the
 oauth2-proxy cookie is domain-scoped and the SSO gate's `rd=` carries `{host}` (portless), so a
 single wildcard `--whitelist-domain=.<domain>` covers every port and sidecar name at once; the Google
 OAuth client needs no new redirect URIs. Old subpath URLs (`/chat`, `/dash`, `/comfy`,
@@ -274,14 +274,14 @@ named volumes. Secrets come from one store (a SOPS file in a private repo, or In
 into gitignored `out\secrets.env` by `ordo secrets materialize`; see
 [runbooks/secrets.md](runbooks/secrets.md).
 
-This Tailscale front door is the **default of three swappable access layers** — the edge
+This Tailscale front door is the **default of three swappable access layers** - the edge
 (`services/edge`) and clean-URL names (`services/tailnet-names`) are plugins, so the same rendered stack
 can instead sit behind a self-hosted public domain or a cloud VM (both keeping the same Google SSO
 gate). Only the Tailscale model is wired today; the others' required pieces are documented in
 [`deployment-models.md`](deployment-models.md).
 
 **Render discipline** (the drift cure, in daily operation):
-- Change config by editing the source `ordo.yaml`, then **re-render** — never hand-edit `out/.env`.
+- Change config by editing the source `ordo.yaml`, then **re-render** - never hand-edit `out/.env`.
 - `ordo render` (like every command) reads the real source, `out/ordo.yaml`, when `--source` is not given.
 - Deploy source and image changes with `ordo apply` (see "Deploying" above); it builds, renders and
   recreates exactly the changed services, ops-controller first.

@@ -10,7 +10,7 @@ entrypoint that templates the config placeholders at startup.
 | id | mode | backend | notes |
 |----|------|---------|-------|
 | `local-chat` | chat | `inference-engine-gpu` (GPU) | Canonical auto-routing alias; fails over to the CPU pin on GPU eviction. |
-| *\<gpu model\>* | chat | `inference-engine-gpu` (GPU) | Explicit pin of the GPU deployment — no failover. Name derived from `LLAMACPP_MODEL` (basename, lowercased; e.g. `qwen3.8-27b-q6_k`). |
+| *\<gpu model\>* | chat | `inference-engine-gpu` (GPU) | Explicit pin of the GPU deployment - no failover. Name derived from `LLAMACPP_MODEL` (basename, lowercased; e.g. `qwen3.8-27b-q6_k`). |
 | *\<cpu model\>*`-cpu` | chat | `inference-engine-cpu` | Load-on-demand CPU fallback (unloads its model after 10 idle minutes; opt-in `cpu-fallback` profile). Name derived from `LLAMACPP_CPU_MODEL`. |
 | `local-embed` | embedding | `inference-engine-embed` | EmbeddingGemma 2, 768-dim, ctx 8192. |
 
@@ -21,13 +21,13 @@ and measured tokens/sec) rather than hardcoded. `local-embed` only carries an in
 (embedding has no output tokens). Leave `cost:` unset and every model prices at $0/token, same
 as before this existed.
 
-The two pin-alias names are **derived at startup from the deployed GGUF filenames** — a
+The two pin-alias names are **derived at startup from the deployed GGUF filenames** - a
 model swap renames them automatically, so nothing version-named is hardcoded in the config.
 Only `local-chat` and `local-embed` are stable ids; anything that must survive a model swap
 should use those.
 
 Every entry carries a fully populated `model_info` block (mode, context window, output cap,
-capability flags, description, backing GGUF) — that block IS the gateway's model
+capability flags, description, backing GGUF) - that block IS the gateway's model
 documentation for clients. Deployment-variable values are placeholder-templated by the
 entrypoint from the same `.env` the backend llama-server containers read, so the advertised
 metadata tracks the running deployment instead of drifting:
@@ -51,8 +51,8 @@ metadata tracks the running deployment instead of drifting:
 remaining `supports_*` flags (tools, reasoning) describe the llama-server invocation
 (`--jinja`, `--reasoning-format`) rather than a model family, and are static in the config.
 
-The Ordo stack references it as a **project buildable image** (`ordo/model-gateway`) — pinned by
-its build context, not pulled from a registry — so `ordo preflight` reports a missing one as
+The Ordo stack references it as a **project buildable image** (`ordo/model-gateway`) - pinned by
+its build context, not pulled from a registry - so `ordo preflight` reports a missing one as
 "build first", never "Docker will pull". This is why the Ordo stack does NOT reference the unconfigured
 upstream `ghcr.io/berriai/litellm:main` directly: that image has no `local-chat` alias.
 
@@ -144,20 +144,20 @@ runs first - a request passes Google once for the front door, then again for Lit
 handshake; these are two separate OAuth round-trips against the same client.
 
 ## Files
-- `Dockerfile` — pins `ghcr.io/berriai/litellm:v1.100.1@sha256:a3715fa7ad8387941ab697259bd2881d68931657247a41984f90fae6d11c62bf` (bump deliberately to a specific vX.Y.Z + digest), installs the config + helpers.
-- `litellm_config.yaml` — the model list + per-model `model_info` documentation (no secrets;
+- `Dockerfile` - pins `ghcr.io/berriai/litellm:v1.100.1@sha256:a3715fa7ad8387941ab697259bd2881d68931657247a41984f90fae6d11c62bf` (bump deliberately to a specific vX.Y.Z + digest), installs the config + helpers.
+- `litellm_config.yaml` - the model list + per-model `model_info` documentation (no secrets;
   all `__*__` placeholders are entrypoint-substituted at runtime; the master key is read
   straight from the environment via `os.environ/LITELLM_MASTER_KEY`).
-- `entrypoint.sh` — refuses a missing or weak `LITELLM_MASTER_KEY` (shape `sk-<32+ chars>`),
+- `entrypoint.sh` - refuses a missing or weak `LITELLM_MASTER_KEY` (shape `sk-<32+ chars>`),
   renders the template with the deployment metadata from `.env`, then merges the rendered
   MCP server fragment (`/config/mcp_servers.yaml`) into the config, then appends any
   render-selected callbacks (`LITELLM_EXTRA_CALLBACKS`).
-- `merge_mcp_config.py` — folds the render-emitted `mcp_servers:` fragment into the rendered
+- `merge_mcp_config.py` - folds the render-emitted `mcp_servers:` fragment into the rendered
   config; exits 2 when the fragment is missing or malformed (never boots an empty tool set).
 - `add_callbacks.py`: appends the plugin-dependent logging callbacks named in
   `LITELLM_EXTRA_CALLBACKS` (today `langfuse_otel`) to `litellm_settings.callbacks`; a callback
   whose credentials are unset is skipped with a warning.
-- `throughput_callback.py` — posts per-completion tok/s + TTFT samples to the dashboard.
+- `throughput_callback.py` - posts per-completion tok/s + TTFT samples to the dashboard.
 - `bootstrap_keys.py`: idempotent LiteLLM virtual-key provisioning from the rendered
   `out/model-gateway/keys.json` (runs as the `model-gateway-keys` one-shot).
 

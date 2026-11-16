@@ -1,0 +1,44 @@
+name: PR rules
+
+# The contribution rules that can be checked by a machine (CONTRIBUTING.md): a pull request targets
+# the default branch, carries no AI-assistant attribution, and has no em dash in its commit
+# messages, its title and body, or the tracked Markdown files.
+# No `branches:` filter on purpose: the first rule exists to catch a pull request that targets some
+# other branch, and the CI workflow never runs for those. `edited` re-checks a changed title, body
+# or target branch. No secrets are used, so the pull request's own copy of the script runs.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  rules:
+    name: PR rules
+    runs-on: ubuntu-24.04
+    steps:
+      # The head commit, not GitHub's merge commit: the check walks the pull request's own commits.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Ensure the base commit's objects
+        env:
+          PR_RULES_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ! git cat-file -e "${PR_RULES_BASE}^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "${PR_RULES_BASE}"
+          fi
+
+      # The title, body and branch names stay in the environment and are read by the script,
+      # never by the shell. The base sha is 40 hex digits from GitHub's own payload.
+      - name: Contribution rules
+        env:
+          PR_RULES_TITLE: ${{ github.event.pull_request.title }}
+          PR_RULES_BODY: ${{ github.event.pull_request.body }}
+          PR_RULES_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_RULES_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_RULES_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/ci/pr_rules.py --base "${PR_RULES_BASE}"
