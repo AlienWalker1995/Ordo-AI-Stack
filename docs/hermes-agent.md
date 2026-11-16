@@ -6,7 +6,7 @@ Hermes is the stack's assistant-agent layer and the default agent. The stack mod
 
 ## Running
 
-Bring up the whole stack from the repo root (there is no committed root `docker-compose.yml` — the stack is rendered, not hand-run):
+Bring up the whole stack from the repo root (there is no committed root `docker-compose.yml` - the stack is rendered, not hand-run):
 
 ```bash
 python -m ordo.cli render --out out   # renders ordo.yaml -> out/{.env,docker-compose.yml,secrets.env.example,…}
@@ -15,7 +15,7 @@ ordo up --all                          # refuses while a GPU lease holds the car
 
 That's it. Hermes starts automatically, waits for model-gateway / model-gateway-keys / dashboard to be healthy, then registers messaging platforms (if configured) and serves the web UI.
 
-Web UI: `https://${CADDY_TAILNET_HOSTNAME}:8447/` (Hermes's own Google OIDC sign-in, its own dedicated Caddy port, served at the origin root — see [docs/runbooks/auth.md](runbooks/auth.md)). The old `https://${CADDY_TAILNET_HOSTNAME}/hermes*` URL still works — Caddy's `:443` front door 302s it to `:8447/`.
+Web UI: `https://${CADDY_TAILNET_HOSTNAME}:8447/` (Hermes's own Google OIDC sign-in, its own dedicated Caddy port, served at the origin root - see [docs/runbooks/auth.md](runbooks/auth.md)). The old `https://${CADDY_TAILNET_HOSTNAME}/hermes*` URL still works - Caddy's `:443` front door 302s it to `:8447/`.
 Logs: `docker compose -p ordo logs -f agent` (each gateway also logs to `/opt/data/logs/gateways/<profile>/`)
 Restart (also picks up changed env or secrets), from the repo root: `ordo recreate agent`
 Stop only Hermes: `docker compose -p ordo stop agent`
@@ -28,7 +28,7 @@ All persistent state (the "brain") lives in the **`hermes-home` named volume**, 
 `/opt/data` (upstream's `HERMES_HOME`), and again at `/home/hermes/.hermes` and
 `/workspace/data/hermes`, the absolute paths the brain's own skills and jobs use; all three are one store. It moved off the `data/hermes/` host bind 2026-08-05
 (#143) after a Windows-side write flipped the 9p-synthesized permissions and silently
-killed cron for 22h — the volume removes that failure mode.
+killed cron for 22h - the volume removes that failure mode.
 
 | Path (inside the volume) | Contents |
 |---|---|
@@ -47,19 +47,19 @@ from a clean slate: `docker compose -p ordo down`, `docker volume rm ordo_hermes
 
 ## Discord setup
 
-Same flow as before — the env vars move into the container via the rendered `out/docker-compose.yml`, not into a host-side `.env` Hermes reads.
+Same flow as before - the env vars move into the container via the rendered `out/docker-compose.yml`, not into a host-side `.env` Hermes reads.
 
 ### One-time Discord Developer Portal setup
 
 1. Open <https://discord.com/developers/applications>, create an application.
 2. **Bot → Token:** click *Reset Token*, copy. This becomes `DISCORD_BOT_TOKEN`.
-3. **Bot → Privileged Gateway Intents:** enable **Message Content Intent** (required — without this the bot receives empty message text) and **Server Members Intent**.
+3. **Bot → Privileged Gateway Intents:** enable **Message Content Intent** (required - without this the bot receives empty message text) and **Server Members Intent**.
 4. **OAuth2 → URL Generator:** scopes `bot` + `applications.commands`; permissions `274878286912` (View Channels, Send Messages, Read Message History, Embed Links, Attach Files, Send Messages in Threads, Add Reactions). Copy the URL; use it to invite the bot to your server.
 5. Discord → Settings → Advanced → enable **Developer Mode**. Right-click your own username → *Copy User ID*. This becomes `DISCORD_ALLOWED_USERS`.
 
 ### Config entries
 
-There is no root `.env` — Hermes' non-secret Discord vars are set under `site:` in `ordo.yaml` (template `ordo.example.yaml`), which flows verbatim into the rendered `out/.env`:
+There is no root `.env` - Hermes' non-secret Discord vars are set under `site:` in `ordo.yaml` (template `ordo.example.yaml`), which flows verbatim into the rendered `out/.env`:
 
 ```yaml
 site:
@@ -82,7 +82,7 @@ ordo recreate agent                   # recreate with new env
 docker compose -p ordo logs --tail=50 agent | grep -i discord
 ```
 
-Expected: `[Discord] Connected as <botname>#<discriminator>`. If the bot appears in Discord as offline, check the Message Content Intent — that's the #1 cause.
+Expected: `[Discord] Connected as <botname>#<discriminator>`. If the bot appears in Discord as offline, check the Message Content Intent - that's the #1 cause.
 
 ## Configuration endpoints (seeded automatically)
 
@@ -111,7 +111,7 @@ The image seeds an opinionated `SOUL.md` on first run that pushes the agent towa
 
 First-run seeding is gated by `/opt/data/.ordo-push-through-seeded` (named after a retired plugin). After that sentinel exists, the boot hook never re-seeds, so your `SOUL.md` edits stick.
 
-To replace your existing `SOUL.md` with the shipped opinionated default (one-liner — also reuses the seed inside the image):
+To replace your existing `SOUL.md` with the shipped opinionated default (one-liner - also reuses the seed inside the image):
 
 ```bash
 docker compose -p ordo exec agent sh -c "cp /opt/ordo-seed/SOUL.md /opt/data/SOUL.md"

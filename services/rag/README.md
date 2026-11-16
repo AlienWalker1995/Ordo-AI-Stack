@@ -12,7 +12,7 @@ ordo build rag-ingestion
 ```
 
 This directory is the single source of truth for the service (`ingest.py`, `requirements.txt`,
-`Dockerfile`) — the manifest references the image by name, so it can't drift from the build context.
+`Dockerfile`) - the manifest references the image by name, so it can't drift from the build context.
 
 ## Hidden-path exclusion
 

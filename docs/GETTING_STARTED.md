@@ -17,7 +17,7 @@ No GPU required for chat (llama.cpp runs on CPU, slower but works).
 
 1. Render the stack (`python -m ordo render` from the repo root; hardware, including NVIDIA/AMD/Intel/CPU, is auto-detected), then `ordo up --all` (brings up every rendered profile, ComfyUI included)
 2. Pull LTX-2 models via the dashboard (~60 GB, first run takes a while)
-3. Open `https://${CADDY_TAILNET_HOSTNAME}:8446/` — ComfyUI
+3. Open `https://${CADDY_TAILNET_HOSTNAME}:8446/` - ComfyUI
 
 ### Full stack
 
@@ -35,24 +35,24 @@ Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` se
    ```bash
    ordo up qdrant inference-engine-embed rag-ingestion
    ```
-2. **Drop documents** under `data/rag-input/` (paths come from your `DATA_PATH` / `BASE_PATH`; default is `<repo>/data/rag-input/`). Supported types include `.txt`, `.md`, `.pdf`, and common code extensions — see `services/rag/ingest.py` for `SUPPORTED_EXTENSIONS`.
+2. **Drop documents** under `data/rag-input/` (paths come from your `DATA_PATH` / `BASE_PATH`; default is `<repo>/data/rag-input/`). Supported types include `.txt`, `.md`, `.pdf`, and common code extensions - see `services/rag/ingest.py` for `SUPPORTED_EXTENSIONS`.
 3. **Open WebUI** → enable RAG for chat (vector DB is already pointed at Qdrant in compose).
 4. **Check status:** the dashboard Overview page (`GET /api/overview`, `knowledge.documents`); the collection name defaults to `documents` (`RAG_COLLECTION`).
 
-Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` — set as `site:` keys in `ordo.yaml` (tracked template: [`ordo.example.yaml`](../ordo.example.yaml)) and re-render. The dashboard **RAG** section shows Qdrant collection point count when the stack can reach Qdrant. See `services/rag/README.md` for the full picture.
+Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` - set as `site:` keys in `ordo.yaml` (tracked template: [`ordo.example.yaml`](../ordo.example.yaml)) and re-render. The dashboard **RAG** section shows Qdrant collection point count when the stack can reach Qdrant. See `services/rag/README.md` for the full picture.
 
-**Optional — [Agentic Design Patterns](https://github.com/Mathews-Tom/Agentic-Design-Patterns) (MIT book text):** clone or copy the `.md` tree into `data/rag-input/` (for example `git clone --depth 1 https://github.com/Mathews-Tom/Agentic-Design-Patterns.git data/rag-input/agentic-design-patterns`), then run the steps above so `rag-ingestion` can index it.
+**Optional - [Agentic Design Patterns](https://github.com/Mathews-Tom/Agentic-Design-Patterns) (MIT book text):** clone or copy the `.md` tree into `data/rag-input/` (for example `git clone --depth 1 https://github.com/Mathews-Tom/Agentic-Design-Patterns.git data/rag-input/agentic-design-patterns`), then run the steps above so `rag-ingestion` can index it.
 
 ### Host tools (Cursor, CLI on the host machine)
 
-`model-gateway` has no host port publish (core services publish nothing — see `ordo/render/compose.py`). Host and tailnet tools reach it through the Caddy front door at `/llm/`, which bypasses SSO for programmatic clients and instead requires the LiteLLM bearer key:
+`model-gateway` has no host port publish (core services publish nothing - see `ordo/render/compose.py`). Host and tailnet tools reach it through the Caddy front door at `/llm/`, which bypasses SSO for programmatic clients and instead requires the LiteLLM bearer key:
 
 - Point Cursor or any OpenAI-compatible client at `https://${CADDY_TAILNET_HOSTNAME}/llm/v1` with `Authorization: Bearer ${LITELLM_MASTER_KEY}`.
-- This works from the host and from any tailnet device — there is no `127.0.0.1:11435` shortcut. There is no `ordo.yaml` switch that publishes the port on the host: `overrides:` accepts only the llama.cpp tuning keys (anything else is a render error), and container options live in the service manifest (`services/model-gateway/plugin.yaml`), changed through a reviewed pull request, which is not the shipped default.
+- This works from the host and from any tailnet device - there is no `127.0.0.1:11435` shortcut. There is no `ordo.yaml` switch that publishes the port on the host: `overrides:` accepts only the llama.cpp tuning keys (anything else is a render error), and container options live in the service manifest (`services/model-gateway/plugin.yaml`), changed through a reviewed pull request, which is not the shipped default.
 
 ## Tailscale + SSO front door
 
-Single homelab operator with a small Google-account allowlist for friends / family / co-workers — that's the deployment model. Caddy is the only service that publishes host ports; every other service is reached through it, one dedicated port per UI (port-per-service model, since 2026-07-24 — each prebuilt SPA is served at the root it was compiled for, instead of being mounted under a subpath):
+Single homelab operator with a small Google-account allowlist for friends / family / co-workers - that's the deployment model. Caddy is the only service that publishes host ports; every other service is reached through it, one dedicated port per UI (port-per-service model, since 2026-07-24 - each prebuilt SPA is served at the root it was compiled for, instead of being mounted under a subpath):
 
 The port map is in [configuration.md's Network Ports](configuration.md#network-ports).
 
@@ -62,19 +62,19 @@ The edge (Caddy + oauth2-proxy) stays off until remote access is enabled. `ordo 
 2. Create the Google OAuth client per [docs/runbooks/auth.md](runbooks/auth.md). No new redirect URI is needed for the port model; the OAuth callback stays on `:443`.
 3. From the repo root: `ordo remote enable` (hostname, bind address, OAuth client, allowlisted emails; accept the cert offer). For the bind address, the tailnet IPv4 from `tailscale ip -4` binds Caddy to that interface only; `0.0.0.0` is also a supported posture (binds all interfaces, still tailnet-dark since nothing else is published).
 4. `ordo up --all`.
-5. Browse to `https://${CADDY_TAILNET_HOSTNAME}/` from any tailnet device for the landing page, or go straight to a service's port (e.g. `https://${CADDY_TAILNET_HOSTNAME}:8443/` for Open WebUI). Caddy terminates TLS with the Tailscale-issued cert, oauth2-proxy enforces Google sign-in against the allowlist (`site: SSO_ALLOWED_EMAILS` in `out/ordo.yaml`), and one sign-in covers every port except Hermes (`:8447`), which has its own Google sign-in ([runbooks/auth.md](runbooks/auth.md)) — the SSO cookie is domain-scoped and the post-login redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` covers every port and clean sidecar name at once. Old subpath bookmarks (`/chat`, `/dash`, `/comfy`, `/hermes`, `/grafana`) still work — `:443` 302s them to the matching port.
+5. Browse to `https://${CADDY_TAILNET_HOSTNAME}/` from any tailnet device for the landing page, or go straight to a service's port (e.g. `https://${CADDY_TAILNET_HOSTNAME}:8443/` for Open WebUI). Caddy terminates TLS with the Tailscale-issued cert, oauth2-proxy enforces Google sign-in against the allowlist (`site: SSO_ALLOWED_EMAILS` in `out/ordo.yaml`), and one sign-in covers every port except Hermes (`:8447`), which has its own Google sign-in ([runbooks/auth.md](runbooks/auth.md)) - the SSO cookie is domain-scoped and the post-login redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` covers every port and clean sidecar name at once. Old subpath bookmarks (`/chat`, `/dash`, `/comfy`, `/hermes`, `/grafana`) still work - `:443` 302s them to the matching port.
 
 Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS for the Google OAuth flow and the SSO cookie. Open WebUI's own auth (`WEBUI_AUTH`) is off by default because the proxy already gates it; flip to `True` only if you want per-user workspaces inside Open WebUI on top of the shared SSO gate.
 
-> The Tailscale front door above is **one of three swappable access layers** — the same rendered
+> The Tailscale front door above is **one of three swappable access layers** - the same rendered
 > stack can also sit behind a self-hosted public domain or a cloud VM, all keeping the same Google SSO
 > gate. See [Access & deployment models](deployment-models.md) for what each requires and how they
 > differ (only the Tailscale model is wired by default).
 
 ## Next steps
 
-- [Access & deployment models](deployment-models.md) — the three swappable edge layers (Tailscale / domain / cloud)
-- [Configuration](configuration.md) — environment variables and service setup
-- [Data](data.md) — data schemas, lifecycle, and persistence rules
-- [Hermes Agent](hermes-agent.md) — agent setup, Discord wiring, upgrade notes
+- [Access & deployment models](deployment-models.md) - the three swappable edge layers (Tailscale / domain / cloud)
+- [Configuration](configuration.md) - environment variables and service setup
+- [Data](data.md) - data schemas, lifecycle, and persistence rules
+- [Hermes Agent](hermes-agent.md) - agent setup, Discord wiring, upgrade notes
 - [MCP tools](../services/model-gateway/README.md): LiteLLM's `/mcp` endpoint aggregating the registered MCP servers (web search, ComfyUI, code and memory tools)

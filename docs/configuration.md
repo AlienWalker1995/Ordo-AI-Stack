@@ -196,7 +196,7 @@ ordo up stt tts
 | `STT_COMPUTE_TYPE` | `int8` | Quantization type (`int8` is Pascal-compatible; use `float16` on Turing+) |
 | Hermes `tts.openai.voice` | `af_heart` | One of Kokoro's bundled voices (`GET http://tts:8880/v1/audio/voices` lists them) |
 
-**Internal endpoints (backend network only — no host ports):**
+**Internal endpoints (backend network only - no host ports):**
 
 | Service | URL | API |
 |---|---|---|
@@ -227,8 +227,8 @@ recreates). **TTS** (Kokoro) ships its weights in the image; nothing is download
 
 The `inference-engine-gpu` service does **not** run a TurboQuant fork. `services/llamacpp-patched/Dockerfile` clones mainline [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp), pinned to the stable release v0.5.0 (commit `7fe450e19305b828c199d602c23a8337aaa1f03b`, build `b11146`), and applies exactly two patches on top:
 
-1. **Checkpoint search fix for hybrid/recurrent models** (`tools/server/server-context.cpp`) — addresses upstream issues #22384, #20225, #24055.
-2. **`recurrent_shrink`/`expand` API for prompt-cache operations** — a minimal diff for upstream PR #24785.
+1. **Checkpoint search fix for hybrid/recurrent models** (`tools/server/server-context.cpp`) - addresses upstream issues #22384, #20225, #24055.
+2. **`recurrent_shrink`/`expand` API for prompt-cache operations** - a minimal diff for upstream PR #24785.
 
 Both exist to support SWA/hybrid-cache models; the build fails loudly if either patch fails to apply, so bump the pinned commit only after re-verifying both still apply cleanly. The resulting image is the first-party `ordo/llamacpp-patched`: `ordo build inference-engine-gpu` builds it and records its tag, and render pins `out/docker-compose.yml` to that tag.
 
@@ -399,12 +399,12 @@ A catalog model's `backend_image` replaces the image, never the device wiring. N
 
 **ComfyUI `CLI_ARGS`:** Set `COMFYUI_CLI_ARGS` under `site:` in `ordo.yaml` (it flows verbatim into the rendered `.env`) and re-render. Without it, the rendered default is `--cpu --enable-manager`.
 
-**ComfyUI custom-node deps:** The `comfyui` container's startup wrapper installs the `requirements.txt` of every **declared** pack before launching ComfyUI — the repo-owned packs under `services/comfyui/nodes/` and the upstream packs listed in `scripts/comfyui/custom_nodes.json`. Idempotent (pip skips already-satisfied specifiers). A pack that is on the volume but declared in neither gets no dependencies; declare it (add it to `custom_nodes.json` or drop it under `services/comfyui/nodes/`) to get them. Failures on individual files (e.g. malformed pin) are logged as `[deps] WARN failed` and don't block startup. Packs the stack depends on are additionally pinned by commit in `scripts/comfyui/custom_nodes.json`; a drifted pack is moved back to its pinned commit on boot ([ComfyUI application version](#comfyui-application-version)). A dropped-in pack keeps its local changes until you list it there; a pack without `.git` is replaced wholesale on the next boot after listing, so move any downloaded weights out of its directory before listing it.
+**ComfyUI custom-node deps:** The `comfyui` container's startup wrapper installs the `requirements.txt` of every **declared** pack before launching ComfyUI - the repo-owned packs under `services/comfyui/nodes/` and the upstream packs listed in `scripts/comfyui/custom_nodes.json`. Idempotent (pip skips already-satisfied specifiers). A pack that is on the volume but declared in neither gets no dependencies; declare it (add it to `custom_nodes.json` or drop it under `services/comfyui/nodes/`) to get them. Failures on individual files (e.g. malformed pin) are logged as `[deps] WARN failed` and don't block startup. Packs the stack depends on are additionally pinned by commit in `scripts/comfyui/custom_nodes.json`; a drifted pack is moved back to its pinned commit on boot ([ComfyUI application version](#comfyui-application-version)). A dropped-in pack keeps its local changes until you list it there; a pack without `.git` is replaced wholesale on the next boot after listing, so move any downloaded weights out of its directory before listing it.
 
 ## Data Persistence Rules
 
 Persistence is split by kind (the Stage-1 rule, 2026-08-07): **state lives on named
-volumes** (ext4 inside the Docker VM — Windows bind mounts ride the 9p bridge, which
+volumes** (ext4 inside the Docker VM - Windows bind mounts ride the 9p bridge, which
 wedges under heavy or metadata-dense I/O), while **operator-facing drop zones and
 small config** stay host bind-mounted so they are reachable from Windows.
 
@@ -429,7 +429,7 @@ Named volumes (state; back up via a helper container, see [data.md](data.md)):
 | `litellm-db-data` | LiteLLM Postgres (virtual keys, teams, spend; models and MCP servers stay in the rendered config) |
 | `models-gguf` | llama.cpp GGUF weights (what the backends actually read) |
 | `comfyui-models` | ComfyUI checkpoints, LoRAs, VAEs, encoders |
-| `comfyui-app` | ComfyUI application tree + custom nodes (version-pinned — see below) |
+| `comfyui-app` | ComfyUI application tree + custom nodes (version-pinned - see below) |
 | `comfyui-output` | ComfyUI render outputs (the asset scan walks them; reachable from Windows over `\\wsl.localhost`, see [data.md](data.md#comfyui-outputs)) |
 | `langfuse-db-data` | Langfuse Postgres (projects, users, API keys, datasets, scores) |
 | `langfuse-clickhouse-data` / `langfuse-clickhouse-logs` | Langfuse traces + observations (the high-volume half) |
@@ -443,7 +443,7 @@ Named volumes (state; back up via a helper container, see [data.md](data.md)):
 The pinned `COMFYUI_IMAGE` digest pins the *runtime* (torch, CUDA, the boot entrypoint). The
 ComfyUI application itself lives on the `comfyui-app` volume, so the image says nothing about
 which ComfyUI is running. That version is declared separately, as **`COMFYUI_APP_REF` in
-`services/comfyui/plugin.yaml`** — a full upstream commit SHA, never a tag or branch.
+`services/comfyui/plugin.yaml`** - a full upstream commit SHA, never a tag or branch.
 
 `scripts/comfyui/boot.sh` runs as the container command and reconciles the checkout to that ref
 on every start. If the volume has drifted it fetches and checks out the declared ref; if it
@@ -453,7 +453,7 @@ own `requirements.txt`, so the app and its runtime deps cannot drift apart.
 
 The same treatment extends to the **custom node packs** the stack's graphs import: each is
 declared with a full commit SHA in `scripts/comfyui/custom_nodes.json` (bind-mounted read-only at
-`/comfyui-scripts/custom_nodes.json`) and reconciled by the same boot script — a missing pack is
+`/comfyui-scripts/custom_nodes.json`) and reconciled by the same boot script - a missing pack is
 cloned, a drifted one is fetched and detached to its pinned commit, and a pack that cannot reach
 its ref stops the boot, like an undeclared app. Listing a pack is what makes it reproducible:
 when a listed pack has drifted from its pinned commit, boot moves it back to that commit and
@@ -482,7 +482,7 @@ ordo up --all
 docker compose -p ordo exec comfyui git -C /root/ComfyUI rev-parse HEAD
 ```
 
-Rolling back is the same edit in reverse — the reconciler downgrades the checkout and re-pins the
+Rolling back is the same edit in reverse - the reconciler downgrades the checkout and re-pins the
 runtime deps to the older ref's `requirements.txt`.
 
 Current pin: **v0.45.2** (`6e8488ef`). v0.45.0 is the first release carrying MiniMax-H3-Image
@@ -500,7 +500,7 @@ carrying the MiniMax Music3 nodes that `services/song-gen` declares, so never ro
 
 With the edge on, Caddy is the **only** service with published host ports (with it off, Open WebUI and the dashboard publish on `127.0.0.1` only), every other service (dashboard, open-webui, model-gateway, litellm-db, comfyui, langfuse-web, the `mcp-*` servers, qdrant, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes the SSO-gated host ports below on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, codebase-memory nginx rewrites).
 
-One Google sign-in covers every port except Hermes's `:8447` (its own sign-in) **and the clean per-service tailnet names** — the oauth2-proxy session cookie is domain-scoped, the one OAuth callback stays on `:443`, and the SSO gate's `rd=` redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` in the edge plugin covers every port and every sidecar name. A first sign-in through a bare `:844x` port lands on the `:443` hub and the domain-scoped cookie then covers everything (one extra click); the clean tailnet names (`chat`/`dash`/… `.<tailnet>.ts.net`) return you straight to the service. No new Google OAuth redirect URIs are needed. See [deployment-models.md](deployment-models.md) for the clean-URL sidecar layer.
+One Google sign-in covers every port except Hermes's `:8447` (its own sign-in) **and the clean per-service tailnet names** - the oauth2-proxy session cookie is domain-scoped, the one OAuth callback stays on `:443`, and the SSO gate's `rd=` redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` in the edge plugin covers every port and every sidecar name. A first sign-in through a bare `:844x` port lands on the `:443` hub and the domain-scoped cookie then covers everything (one extra click); the clean tailnet names (`chat`/`dash`/… `.<tailnet>.ts.net`) return you straight to the service. No new Google OAuth redirect URIs are needed. See [deployment-models.md](deployment-models.md) for the clean-URL sidecar layer.
 
 | Port | Service | Notes |
 |---|---|---|
@@ -513,7 +513,7 @@ One Google sign-in covers every port except Hermes's `:8447` (its own sign-in) *
 | `8450` | Langfuse | Served at root; the only route into `langfuse-web` (agent traces, datasets, evals). Hermes ingests directly over `ordo-net`, not through this port |
 | (none) | Everything else | Reachable service-to-service by container DNS name (e.g. `http://ops-controller:9000`), never from the host or LAN directly |
 
-Old subpath URLs (`/chat`, `/dash`, `/comfy`, `/hermes`, `/grafana`) still work — Caddy 302s them from `:443` to the matching port — so existing bookmarks don't break.
+Old subpath URLs (`/chat`, `/dash`, `/comfy`, `/hermes`, `/grafana`) still work - Caddy 302s them from `:443` to the matching port - so existing bookmarks don't break.
 
 ## Audit Log Schema
 

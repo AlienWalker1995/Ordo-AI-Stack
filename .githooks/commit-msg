@@ -1,0 +1,29 @@
+#!/bin/sh
+# Refuse a commit message that breaks a contribution rule (scripts/ci/pr_rules.py; rules in
+# CONTRIBUTING.md): an AI-assistant attribution line, or an em dash. CI runs the same check on
+# every pull request, so this only catches it before the commit exists.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+
+python=""
+for candidate in python3 python; do
+    if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)" >/dev/null 2>&1; then
+        python=$candidate
+        break
+    fi
+done
+if [ -z "$python" ]; then
+    echo "commit-msg: no Python 3.9+ found, so the PR-rules check cannot run. Commit refused." >&2
+    exit 1
+fi
+
+message_file="$1"
+# Git for Windows runs this hook in a POSIX shell, but its Python wants a Windows path.
+if command -v cygpath >/dev/null 2>&1; then
+    message_file=$(cygpath -w "$message_file")
+fi
+
+exec "$python" "$root/scripts/ci/pr_rules.py" --message-file "$message_file"

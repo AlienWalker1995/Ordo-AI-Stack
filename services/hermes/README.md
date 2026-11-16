@@ -16,7 +16,7 @@ modified. It builds from this co-located context `services/hermes/`; project bui
 ordo build agent
 ```
 
-Referenced (not duplicated) — the Hermes build context + the operator's `data/` are the single
+Referenced (not duplicated) - the Hermes build context + the operator's `data/` are the single
 source of truth. Swapping the agent (see `../../docs/agents.md`) points the `agent` service at a
 different image; the core stays agent-agnostic.
 

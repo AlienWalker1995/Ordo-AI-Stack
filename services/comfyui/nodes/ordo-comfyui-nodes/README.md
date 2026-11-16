@@ -13,20 +13,20 @@ Animated captions, transcription, and AI image generation for ComfyUI.
 ## Nodes
 
 **Caption nodes** (Ordo/ category)
-- **Ordo Caption Style** — pick fonts, colors, animation presets
-- **Ordo Transcribe Audio** — audio-to-word-level timestamps via faster-whisper
-- **Ordo TTS (Edge)** — text-to-speech using Edge TTS (free, no GPU needed)
-- **Ordo Render Captions** — burn styled captions onto video frames
-- **Ordo Timing Editor** — manually adjust word timings
-- **Ordo Caption Studio** — all-in-one transcribe + style + render
+- **Ordo Caption Style** - pick fonts, colors, animation presets
+- **Ordo Transcribe Audio** - audio-to-word-level timestamps via faster-whisper
+- **Ordo TTS (Edge)** - text-to-speech using Edge TTS (free, no GPU needed)
+- **Ordo Render Captions** - burn styled captions onto video frames
+- **Ordo Timing Editor** - manually adjust word timings
+- **Ordo Caption Studio** - all-in-one transcribe + style + render
 
 **Utility**
-- **Ordo Load Text From File** — load .txt / .srt files as strings
+- **Ordo Load Text From File** - load .txt / .srt files as strings
 
 **AI Image Generation** (Ordo/AI category)
-- **Ordo Proxy Config** — set URL + API key for a LiteLLM proxy
-- **Ordo Nano Banana 2** — text-to-image via Gemini Flash through LiteLLM
-- **Ordo Nano Banana 2 Edit** — image editing (up to 6 reference images)
+- **Ordo Proxy Config** - set URL + API key for a LiteLLM proxy
+- **Ordo Nano Banana 2** - text-to-image via Gemini Flash through LiteLLM
+- **Ordo Nano Banana 2 Edit** - image editing (up to 6 reference images)
 
 ** Video Gen
 - ** Ordo Veo** - Video generation with Veo 3.1 (fast/quality) - first/last and image ref.
@@ -56,7 +56,7 @@ Or if you use the ComfyUI portable build:
 
 ## AI Image Generation setup
 
-The Nano Banana 2 nodes talk to a **LiteLLM proxy** — they don't call
+The Nano Banana 2 nodes talk to a **LiteLLM proxy** - they don't call
 any API directly because that would be bad. The proxy is run separately. See the
 `litellm-proxy/` README for setup instructions.
 
