@@ -20,6 +20,8 @@ What is checked:
 
 Exit code 1 and one line per finding, naming the place and the rule.
 """
+from __future__ import annotations
+
 import argparse
 import os
 import re
