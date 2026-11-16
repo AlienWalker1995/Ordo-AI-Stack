@@ -76,8 +76,8 @@ tailnet; there is no public DNS record and no port open to the internet.
 - A Google OAuth 2.0 Web client with **exactly one** redirect URI -
   `https://host.tailnet.ts.net/oauth2/callback` on `:443`. One domain-scoped oauth2-proxy cookie plus
   one wildcard `--whitelist-domain=.${CADDY_TAILNET_DOMAIN}` covers every port *and* every sidecar
-  name, so no per-port or per-name redirect URIs are needed. (The gate builds `rd=` from `{host}`
-  - portless - precisely so the sidecar clean names sign in correctly; see the
+  name, so no per-port or per-name redirect URIs are needed. (The gate builds `rd=` from `{host}`,
+  portless, precisely so the sidecar clean names sign in correctly; see the
   `(sso_forward_auth)` note in the [Caddyfile](../auth/caddy/Caddyfile).)
 - Env identity in `ordo.yaml`'s `site:` block: `CADDY_TAILNET_HOSTNAME`, `CADDY_TAILNET_DOMAIN`,
   `CADDY_BIND` (see the commented keys in [`ordo.example.yaml`](../ordo.example.yaml)); secrets
