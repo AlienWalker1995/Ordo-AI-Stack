@@ -142,6 +142,25 @@ def test_a_windows_spelling_of_the_code_root_matches_the_mirror_spelling():
     assert f"{VAULT_SOURCE}/notes:/c/dev/vault/notes:ro" in services["agent"]["volumes"]
 
 
+def test_a_differently_cased_code_root_still_contains_the_vault():
+    # C:\dev and C:\Dev are one directory on a case-insensitive host; the two keys may name either spelling.
+    services = _compose({KEY: "notes", "CODE_ROOT": r"C:\dev", "MEMORY_VAULT_PATH": r"C:\Dev\MemoryVault"})
+    assert f"{VAULT_SOURCE}/notes:/c/dev/MemoryVault/notes:ro" in services["agent"]["volumes"]
+    warnings = _render({KEY: "notes", "CODE_ROOT": r"C:\dev", "MEMORY_VAULT_PATH": r"C:\Dev\MemoryVault"}).warnings
+    assert not any(KEY in w for w in warnings)
+
+
+def test_case_insensitive_matching_keeps_the_vault_spelling_in_the_mount():
+    mounts, warnings = vault_readonly.agent_mounts(
+        ["notes"], r"C:\Dev\MemoryVault", [r"C:\dev:/c/dev"], {})
+    assert mounts == [f"{VAULT_SOURCE}/notes:/c/dev/MemoryVault/notes:ro"] and not warnings
+
+
+def test_a_differently_cased_vault_that_is_the_bind_source_mounts_at_the_bind_target():
+    mounts, warnings = vault_readonly.agent_mounts(["notes"], r"C:\DEV", ["C:/dev:/c/dev"], {})
+    assert mounts == [f"{VAULT_SOURCE}/notes:/c/dev/notes:ro"] and not warnings
+
+
 def test_a_vault_that_is_the_bind_source_mounts_at_the_bind_target():
     services = _compose({KEY: "notes", "MEMORY_VAULT_PATH": "/srv/dev"})
     assert f"{VAULT_SOURCE}/notes:/c/dev/notes:ro" in services["agent"]["volumes"]

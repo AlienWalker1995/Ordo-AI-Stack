@@ -9,9 +9,15 @@ MCP tools attempt. Unset or empty adds nothing.
 Two services mount the vault, and each gets its own targets:
   - the MCP server mounts the folder at `/vault/<dir>`.
   - the agent does not mount the vault directly. It sees it through every read-write bind of the agent
-    whose host source contains the vault (the code-root mirror, `${DATA_PATH}:/workspace/data`, ...), at
+    whose host source contains the vault (compared case-insensitively: host filesystems usually are; the
+    code-root mirror, `${DATA_PATH}:/workspace/data`, ...), at
     `<bind target>/<vault path below the bind source>/<dir>`: one nested read-only bind per such bind.
     When no agent bind contains the vault the agent cannot see it: nothing is mounted, with a warning.
+
+Two ways reach the same files past the overlay, and neither is refused here. The agent still holds the
+Docker socket, so a container it starts could mount the folder read-write. And on a case-insensitive host
+mount, a path spelled with different casing reaches the same files and skips the overlay (ADR-0001, rule
+4, names this limit of any read-only overlay under the mirror). Both are stated in `docs/configuration.md`.
 
 The render cannot stat host paths (ops-controller renders it too), so a folder that does not exist is
 refused by the host preflight (`ordo/host/preflight.py`), before Docker can create an empty one.
@@ -104,7 +110,18 @@ def _normalized(host_path: str) -> PurePosixPath:
 
 
 def _relative_to(path: PurePosixPath, root: PurePosixPath) -> PurePosixPath | None:
+    """`path` below `root`, or None. Exact first, then case-insensitive: host filesystems may be
+    case-insensitive, so a differently cased spelling of the same directory contains the vault too
+    (ADR-0001, rule 4, names that spelling as the limit of any read-only overlay under the mirror).
+    The relative part keeps `path`'s own spelling, so the nested bind lands on the operator's files."""
     try:
         return path.relative_to(root)
     except ValueError:
-        return None
+        pass
+    lowered_root = str(root).lower()
+    lowered_path = str(path).lower()
+    if lowered_path == lowered_root:
+        return PurePosixPath(".")
+    if lowered_path.startswith(lowered_root + "/"):
+        return PurePosixPath(str(path)[len(str(root)):].lstrip("/"))
+    return None
