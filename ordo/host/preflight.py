@@ -29,10 +29,10 @@ import re
 import shutil
 import socket
 import subprocess
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 
-from ..render import buildspec, models_volume, served_models
+from ..render import buildspec, models_volume, served_models, vault_readonly
 from ..render.agents import AgentRegistry
 from ..render.catalog import Catalog
 from ..render.config import Source
@@ -295,9 +295,36 @@ def _compose_major(version: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def host_path_is_dir(path: str) -> bool:
+    """Whether a site path names a directory on this host. A Windows host may write its paths in the
+    Docker/Git Bash spelling (`/c/dev`), which Python there cannot open."""
+    if os.name == "nt":
+        path = re.sub(r"^/([A-Za-z])(?=/|$)", r"\1:", path)
+    return os.path.isdir(path)
+
+
+def vault_readonly_check(services: dict, env: dict[str, str], is_dir: Callable[[str], bool]) -> Check | None:
+    """The vault's read-only folders must exist before they are bind-mounted: Docker would otherwise
+    create a missing one as an empty root-owned folder inside the operator's vault. None when no
+    service that mounts them starts, or none are configured."""
+    folders = vault_readonly.parse_readonly_dirs(env.get(vault_readonly.READONLY_DIRS_KEY))
+    mounting = {f"mcp-{vault_readonly.MCP_PLUGIN_ID}", "agent"} & set(services)
+    if not folders or not mounting:
+        return None
+    vault_path = str(env.get(vault_readonly.VAULT_PATH_KEY) or "").rstrip("/")
+    missing = [folder for folder in folders if not is_dir(f"{vault_path}/{folder}")]
+    if missing:
+        return Check("vault read-only folders exist", False,
+                     f"{vault_readonly.READONLY_DIRS_KEY} lists folders missing under "
+                     f"{vault_readonly.VAULT_PATH_KEY}: {', '.join(missing)} (create them, or fix the spelling, "
+                     "then re-run)")
+    return Check("vault read-only folders exist", True, f"{len(folders)} folder(s) found")
+
+
 def host_checks(services: dict, env: dict[str, str], facts: HostFacts, *, secret_keys: Iterable[str],
                 optional_secrets: Iterable[str], secrets_path: str | None,
-                model_files: Sequence[ModelFile]) -> list[Check]:
+                model_files: Sequence[ModelFile],
+                is_dir: Callable[[str], bool] = host_path_is_dir) -> list[Check]:
     """One Check per host requirement of the services about to start. Each failure is one line
     that says what to do."""
     checks = [Check("docker daemon reachable", facts.docker_error is None,
@@ -340,6 +367,10 @@ def host_checks(services: dict, env: dict[str, str], facts: HostFacts, *, secret
     checks.append(Check("host ports free", not busy,
                         "all free" if not busy else
                         f"already in use by another process: {', '.join(busy)} (stop it, then re-run)"))
+
+    vault_check = vault_readonly_check(services, env, is_dir)
+    if vault_check is not None:
+        checks.append(vault_check)
 
     if secrets_path is not None:  # None: the caller checks secrets itself (`ordo preflight --secrets`)
         checks += secret_checks(secret_refs(services, secret_keys), optional_secrets, secrets_path)
