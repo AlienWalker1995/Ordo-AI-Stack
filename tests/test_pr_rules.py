@@ -1,4 +1,5 @@
 """The contribution-rule checker (scripts/ci/pr_rules.py). Real git repositories, no mocks."""
+import ast
 import importlib.util
 import subprocess
 from pathlib import Path
@@ -38,6 +39,45 @@ def repo(tmp_path):
 
 def test_this_repository_has_no_em_dash_in_tracked_markdown():
     assert pr_rules.markdown_findings() == []
+
+
+def _evaluated_pep604_union(source: str) -> bool:
+    """Whether a PEP 604 `X | Y` union in an annotation runs while the file is imported."""
+    tree = ast.parse(source)
+    for node in tree.body:
+        if (isinstance(node, ast.ImportFrom) and node.module == "__future__"
+                and any(alias.name == "annotations" for alias in node.names)):
+            return False    # annotations become strings; nothing evaluates at import time
+
+    def has_union(expression: ast.AST) -> bool:
+        return any(isinstance(part, ast.BinOp) and isinstance(part.op, ast.BitOr)
+                   for part in ast.walk(expression))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            annotated = [argument.annotation for argument in
+                         [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]]
+            if node.args.vararg is not None:
+                annotated.append(node.args.vararg.annotation)
+            if node.args.kwarg is not None:
+                annotated.append(node.args.kwarg.annotation)
+            annotated.append(node.returns)
+            if any(expression is not None and has_union(expression) for expression in annotated):
+                return True
+        elif isinstance(node, ast.AnnAssign) and node.annotation is not None:
+            if has_union(node.annotation):
+                return True
+    return False
+
+
+def test_pr_rules_imports_under_python_3_9_the_hook_promises():
+    # .githooks/commit-msg accepts the first Python 3.9+ it finds, but on 3.9 a PEP 604 union
+    # in a signature is evaluated when the def statement executes, so without the future import
+    # the checker died at import and refused every commit with a bare TypeError (verified on
+    # python:3.9-slim: TypeError at `list[str] | None`). AGENTS.md requires the import at the
+    # top of every Python file.
+    source = (ROOT / "scripts" / "ci" / "pr_rules.py").read_text(encoding="utf-8")
+    assert not _evaluated_pep604_union(source)
 
 
 # ----------------------------------------------------------------------- text
