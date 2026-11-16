@@ -1,4 +1,4 @@
-# gpu-gate — GPU admission gate
+# gpu-gate - GPU admission gate
 
 A generic reverse proxy that acquires GPU **residency** from `ops-controller` *before* it lets a
 job-submission request reach the service behind it.
@@ -15,8 +15,8 @@ Most GPU consumers can ask for the card themselves: a one-shot job wraps itself 
 `assets/lease-exec.py` (ltx-trainer), and a resident is granted the card by the broker
 (llama.cpp). Neither works for a long-running server with a submission API and dynamic demand:
 
-* it cannot take residency at start — it would hold the card while idle;
-* it cannot be trusted to take residency per job — the work is submitted by whoever is holding
+* it cannot take residency at start - it would hold the card while idle;
+* it cannot be trusted to take residency per job - the work is submitted by whoever is holding
   the mouse, and ComfyUI's node-graph web UI has never heard of the scheduler.
 
 On 2026-08-08 that gap let a hand-queued render share the 5090 with the resident llama.cpp for
@@ -32,8 +32,8 @@ This is not theoretical. Measured on the live stack, 2026-08-10:
 
 | | leaseless render (LLM resident) | same card, residency granted first |
 |---|---|---|
-| MiniMax-H3 sampling | 452–1577 s/it, 4/20 steps in 44 min | — |
-| flux-schnell 512² | — | 6.29 it/s, prompt executed in 17.9 s |
+| MiniMax-H3 sampling | 452–1577 s/it, 4/20 steps in 44 min | - |
+| flux-schnell 512² | - | 6.29 it/s, prompt executed in 17.9 s |
 
 The leaseless render had already committed to an offloaded plan (`0.00 MB loaded, 19984 MB
 offloaded`); evicting the LLM *afterwards* did not rescue it. Only acquiring first works.
@@ -50,7 +50,7 @@ guardian.
 
 The gate holds a single lease under a stable job id while the upstream has outstanding work. The
 upstream then drains its **own** queue from that grant. Queuing every prompt with the arbiter
-would make each one a peer of unrelated GPU work and interleave them onto the card — the opposite
+would make each one a peer of unrelated GPU work and interleave them onto the card - the opposite
 of what residency is for. This is the same split the scheduler applies to llama.cpp: residency is
 queued, individual inference calls are not.
 
@@ -83,7 +83,7 @@ Every one of these is deliberate, and each has a test in `tests/test_gpu_gate.py
 | situation | behaviour |
 |---|---|
 | arbiter unreachable / refused / timed out | submission **refused** with `503` in the upstream's own error envelope, so the web UI shows it in its normal error dialog. Never proceeds unleased. |
-| submitter gives up (acquire timeout) | the queued request is **withdrawn**. Leaving it would see it admitted later, evicting the resident for a render that never happened — observed live 2026-08-10 as ~10 orphaned entries that stranded llama.cpp until drained by hand. |
+| submitter gives up (acquire timeout) | the queued request is **withdrawn**. Leaving it would see it admitted later, evicting the resident for a render that never happened - observed live 2026-08-10 as ~10 orphaned entries that stranded llama.cpp until drained by hand. |
 | gate crashes mid-render | heartbeats stop; the scheduler's TTL sweep force-completes the lease and restores the resident. No leak. |
 | gate restarts | stable job id. With the upstream idle, a release at startup clears a lease its previous incarnation stranded, without waiting out the TTL; with the upstream still rendering, it re-files the same id and holds residency instead of restoring the resident LLM beside the render. |
 | arbiter restarts | it adopts the leases it saved to disk (ops-controller's `SCHEDULER_STATE_PATH`), so heartbeats keep succeeding. If it lost the lease anyway, a heartbeat 404s → re-acquire, rather than letting the resident be restored into VRAM the render is still using. |

@@ -17,15 +17,15 @@
 
 **Ordo** is a local-first, single-operator AI homelab built around two ideas:
 
-**1 · Services are cheap to add.** Every service, MCP tool, and agent is a declarative **manifest**, not hand-written plumbing. Drop a `plugin.yaml` (or `agent.yaml` / `catalog.json`) in, and `ordo render` composes it into the running stack — network wiring, front-door route, dashboard card, health check, and dependencies included. Adding a capability is an edit to one source file, not a compose-surgery session.
+**1 · Services are cheap to add.** Every service, MCP tool, and agent is a declarative **manifest**, not hand-written plumbing. Drop a `plugin.yaml` (or `agent.yaml` / `catalog.json`) in, and `ordo render` composes it into the running stack - network wiring, front-door route, dashboard card, health check, and dependencies included. Adding a capability is an edit to one source file, not a compose-surgery session.
 
-**2 · Services intelligently share one GPU.** A homelab has one expensive card and many things that want it — a resident chat model, image/video diffusion, 3D, voice. Ordo runs a real **scheduler** (`ordo serve`) that arbitrates GPU *residency*: the chat model stays resident and co-runs when a job fits, or is cleanly evicted and **restored** when a big render needs the whole card. Every GPU service *declares* how it competes (`gpu_arbitration:` — resident, burst, or exempt), and for work that can't ask politely — a render hand-queued in a web UI — an admission **gate** forces the request through the scheduler before it can touch the card. Two tenants never silently saturate the GPU (the failure that hard-crashed the box before the gate existed).
+**2 · Services intelligently share one GPU.** A homelab has one expensive card and many things that want it - a resident chat model, image/video diffusion, 3D, voice. Ordo runs a real **scheduler** (`ordo serve`) that arbitrates GPU *residency*: the chat model stays resident and co-runs when a job fits, or is cleanly evicted and **restored** when a big render needs the whole card. Every GPU service *declares* how it competes (`gpu_arbitration:` - resident, burst, or exempt), and for work that can't ask politely - a render hand-queued in a web UI - an admission **gate** forces the request through the scheduler before it can touch the card. Two tenants never silently saturate the GPU (the failure that hard-crashed the box before the gate existed).
 
-Everything else follows from those two. The stack runs local models on a pluggable GPU inference engine (llama.cpp or NInfer) behind an **OpenAI-compatible** LiteLLM gateway, **Open WebUI** for chat, **ComfyUI** for image/video diffusion, and that same gateway's **MCP endpoint** (`/mcp`) for shared tools — all fronted by one **dashboard** and reached through a single **SSO front door** (Caddy + oauth2-proxy). Every choice is made once — in an **interactive terminal wizard** — and captured in one declarative source (`ordo.yaml`) that renders into the running config. Derived files are regenerated, never hand-edited, so configuration drift is structurally impossible.
+Everything else follows from those two. The stack runs local models on a pluggable GPU inference engine (llama.cpp or NInfer) behind an **OpenAI-compatible** LiteLLM gateway, **Open WebUI** for chat, **ComfyUI** for image/video diffusion, and that same gateway's **MCP endpoint** (`/mcp`) for shared tools - all fronted by one **dashboard** and reached through a single **SSO front door** (Caddy + oauth2-proxy). Every choice is made once - in an **interactive terminal wizard** - and captured in one declarative source (`ordo.yaml`) that renders into the running config. Derived files are regenerated, never hand-edited, so configuration drift is structurally impossible.
 
 ## Install
 
-One command takes a fresh machine from nothing to a configured stack — it installs the `ordo` CLI and drops you straight into the interactive setup wizard, **in the same terminal**. Open your normal terminal and run the line for your platform:
+One command takes a fresh machine from nothing to a configured stack - it installs the `ordo` CLI and drops you straight into the interactive setup wizard, **in the same terminal**. Open your normal terminal and run the line for your platform:
 
 **macOS / Linux** (bash · zsh · or Git Bash on Windows):
 
@@ -44,7 +44,7 @@ wget -qO- https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/i
 irm https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.ps1 | iex
 ```
 
-> The Windows line must run in **PowerShell**, not `cmd`. (`curl … | sh` only works inside a POSIX shell — Git Bash or WSL — so on native Windows use the PowerShell one-liner.)
+> The Windows line must run in **PowerShell**, not `cmd`. (`curl … | sh` only works inside a POSIX shell - Git Bash or WSL - so on native Windows use the PowerShell one-liner.)
 
 Either path checks prerequisites (git, Docker + `docker compose` v2, Python 3.11+; warns if there's no NVIDIA GPU), clones the repo (`~/ordo`, or `%USERPROFILE%\ordo` on Windows; override with the `ORDO_DIR` env var), installs the CLI into a virtualenv, and launches the wizard.
 
@@ -78,7 +78,7 @@ Caddy then becomes the one front door (HTTPS on your tailnet, Google sign-in) an
 
 **Deployment model:** a single operator running the stack on their own hardware. Out of the box the chat UI and dashboard listen on `127.0.0.1` only; with remote access on (`ordo remote enable`) the stack is reached through one authenticated front door and only the edge proxy publishes host ports: every UI sits behind Google sign-in, and one sign-in (a domain-scoped cookie) covers the stack, gated by an email allowlist you control; the Hermes dashboard is the one UI that runs its own Google sign-in. Internal services (model gateway, the MCP servers behind it, vector store) publish no host ports and are reachable only on the project network, or through the front door's authenticated API routes. The concrete port layout lives in [configuration.md](docs/configuration.md#network-ports) and the [auth runbook](docs/runbooks/auth.md).
 
-**Who it is for:** anyone who wants to run local AI models on their own machine and reach them securely from their own devices — with configuration discipline built in rather than bolted on.
+**Who it is for:** anyone who wants to run local AI models on their own machine and reach them securely from their own devices - with configuration discipline built in rather than bolted on.
 
 ## How it works
 
@@ -91,7 +91,7 @@ flowchart LR
         M["manifests<br/>(plugin.yaml · agent.yaml · catalog)"]
     end
     R{{"ordo render"}}
-    subgraph out["Rendered runtime (out/, regenerated — never hand-edited)"]
+    subgraph out["Rendered runtime (out/, regenerated - never hand-edited)"]
         C[".env · docker-compose.yml<br/>agent context · MCP server list · service catalog"]
     end
     D[("ordo up")]
@@ -101,10 +101,10 @@ flowchart LR
     C --> D
 ```
 
-- **One source of truth** — `ordo.yaml` declares hardware, model, plugins, and overrides.
+- **One source of truth** - `ordo.yaml` declares hardware, model, plugins, and overrides.
 - **`ordo render`** turns that source (+ detected hardware + model catalog + plugin/agent/service manifests) into the complete runtime config under `out/` (gitignored). Services run from the rendered output; to change anything, edit the source and re-render. Edits to derived files never survive, so model choice, context sizes, and agent config can never fall out of sync.
-- **Core #1 — a service is a manifest.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met — it brings its own compose block, front-door route, dashboard card, health check, and GPU declaration. Adding one is a file, not a code change. See [`docs/agents.md`](docs/agents.md).
-- **Core #2 — compute-sharing is a scheduler with teeth** (`ordo serve`, the `ops-controller` service): FIFO admission, co-run-when-it-fits, **evict-and-restore** the resident model for a big job, LRU idle-evict — a deterministic decision engine, not a reactive watchdog. Each GPU service *declares* its arbitration (`gpu_arbitration:` — mode `resident`/`burst`/`exempt` × enforcement `broker`/`client`/`gate`/`none`). Queue-driven services that can't self-arbitrate sit behind an admission **gate** that acquires a lease before forwarding a submission, so nothing bypasses the scheduler and co-saturates the card.
+- **Core #1 - a service is a manifest.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met - it brings its own compose block, front-door route, dashboard card, health check, and GPU declaration. Adding one is a file, not a code change. See [`docs/agents.md`](docs/agents.md).
+- **Core #2 - compute-sharing is a scheduler with teeth** (`ordo serve`, the `ops-controller` service): FIFO admission, co-run-when-it-fits, **evict-and-restore** the resident model for a big job, LRU idle-evict - a deterministic decision engine, not a reactive watchdog. Each GPU service *declares* its arbitration (`gpu_arbitration:` - mode `resident`/`burst`/`exempt` × enforcement `broker`/`client`/`gate`/`none`). Queue-driven services that can't self-arbitrate sit behind an admission **gate** that acquires a lease before forwarding a submission, so nothing bypasses the scheduler and co-saturates the card.
 
 Full engine reference, the plugin/agent registries, and the render-discipline runbook are in [`docs/operator-guide.md`](docs/operator-guide.md).
 
@@ -112,18 +112,18 @@ Full engine reference, the plugin/agent registries, and the render-discipline ru
 
 Every UI is published only through the front door, behind Google sign-in; APIs are exposed on authenticated front-door routes (`/llm/*`, `/mcp`). What the stack gives you:
 
-- **Chat** — Open WebUI backed by an **OpenAI-compatible model gateway** (LiteLLM in front of the GPU inference engine, llama.cpp or NInfer), so any OpenAI-style client works against your local models.
-- **Image & video** — ComfyUI workflows with scheduler-gated GPU access; large models download on demand.
-- **Agents** — a pluggable agent framework (`agent.yaml` manifests) with an included default assistant (Hermes): chat through the model gateway, tools through that gateway's `/mcp` endpoint, GPU through the scheduler.
-- **Shared tools** — MCP servers run as their own services on an internal network and are aggregated behind one `/mcp` URL on the model gateway, so host clients (Claude Code, editors) and in-stack services use the same endpoint and key.
+- **Chat** - Open WebUI backed by an **OpenAI-compatible model gateway** (LiteLLM in front of the GPU inference engine, llama.cpp or NInfer), so any OpenAI-style client works against your local models.
+- **Image & video** - ComfyUI workflows with scheduler-gated GPU access; large models download on demand.
+- **Agents** - a pluggable agent framework (`agent.yaml` manifests) with an included default assistant (Hermes): chat through the model gateway, tools through that gateway's `/mcp` endpoint, GPU through the scheduler.
+- **Shared tools** - MCP servers run as their own services on an internal network and are aggregated behind one `/mcp` URL on the model gateway, so host clients (Claude Code, editors) and in-stack services use the same endpoint and key.
 - **Unified dashboard**: five pages (Overview, Services, Models, Performance, Logs) covering stack health, per-container actions and logs, one safe GPU model switch, and an embedded Grafana performance view; plus a Ctrl/Cmd K command palette.
-- **Ops controller** — the render/scheduler control plane (internal, token-auth).
+- **Ops controller** - the render/scheduler control plane (internal, token-auth).
 - **Agent tracing**: optional self-hosted [Langfuse](services/langfuse/README.md): every agent turn, LLM call and tool call as a searchable trace, plus datasets and evals, with unattended first-boot setup. Opt-in; the agent fails open when it is off or down.
-- **Optional, hardware-gated plugins** — voice (STT + TTS), RAG (Qdrant retrieval), and monitoring (Grafana + Prometheus + GPU exporter, Alertmanager alerting to Discord, and every container's logs in Loki through Alloy, kept 7 days) enable when your hardware supports them.
+- **Optional, hardware-gated plugins** - voice (STT + TTS), RAG (Qdrant retrieval), and monitoring (Grafana + Prometheus + GPU exporter, Alertmanager alerting to Discord, and every container's logs in Loki through Alloy, kept 7 days) enable when your hardware supports them.
 
 ## Security
 
-- **Front door:** Caddy + oauth2-proxy gates every browser-reachable UI at the network edge. One sign-in covers the whole stack — no per-service re-auth. The email allowlist is operator-controlled (and never committed). See [docs/runbooks/auth.md](docs/runbooks/auth.md).
+- **Front door:** Caddy + oauth2-proxy gates every browser-reachable UI at the network edge. One sign-in covers the whole stack - no per-service re-auth. The email allowlist is operator-controlled (and never committed). See [docs/runbooks/auth.md](docs/runbooks/auth.md).
 - **No host ports on services:** with the edge on, only the edge proxy publishes host ports; everything else lives on the project network. With the edge off (the fresh-install default), Open WebUI (`127.0.0.1:8443`) and the dashboard (`127.0.0.1:8444`) publish on loopback only.
 - **Secret management:** SOPS + age. One encrypted store in a private repo (`site: SECRETS_SOURCE`); `ordo secrets materialize` decrypts it **on the host only** into the gitignored `out/secrets.env`, and `ordo secrets set|rotate` change it. Plaintext never enters this repo or a log. Never synthesize placeholder secret values to clear an error: `ordo secrets list` names what is missing. Full notes: [SECURITY.md](SECURITY.md) · [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
 
@@ -131,10 +131,10 @@ Every UI is published only through the front door, behind Google sign-in; APIs a
 
 ```mermaid
 flowchart TB
-    U["Your device"] --> E["Edge proxy (Caddy, TLS)<br/>+ oauth2-proxy — SSO, one cookie, email allowlist"]
+    U["Your device"] --> E["Edge proxy (Caddy, TLS)<br/>+ oauth2-proxy - SSO, one cookie, email allowlist"]
     E --> UIs["SSO-gated UIs (one port per app)<br/>chat · dashboard · automation · image/video · agent · code intelligence"]
     E --> API["Authenticated API routes<br/>/llm/* (OpenAI-compatible) · /mcp (MCP tools)"]
-    subgraph internal["Project network — no host ports"]
+    subgraph internal["Project network - no host ports"]
         MG["Model gateway (LiteLLM)<br/>chat → llama.cpp / NInfer · /mcp tool aggregation"]
         DB[("litellm-db<br/>virtual keys · spend")]
         OPS["Ops controller<br/>render + GPU scheduler"]
@@ -168,7 +168,7 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): TruffleHog secret s
 
 ## Access & deployment models
 
-The stack's UIs are served through a **swappable edge layer** — the same rendered compose stack
+The stack's UIs are served through a **swappable edge layer** - the same rendered compose stack
 behind any of three front doors: a private **Tailscale tailnet** (the default), a
 **self-hosted public domain**, or a **cloud VM**. All three keep the same SSO gate; the public
 ones add exposure and hardening requirements. See [docs/deployment-models.md](docs/deployment-models.md).
@@ -179,4 +179,4 @@ ones add exposure and hardening requirements. See [docs/deployment-models.md](do
 
 ## License
 
-[MIT License](LICENSE) — Copyright (c) 2026 Ordo contributors.
+[MIT License](LICENSE) - Copyright (c) 2026 Ordo contributors.

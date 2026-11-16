@@ -1,4 +1,4 @@
-# SSO Front Door — Operator Runbook
+# SSO Front Door - Operator Runbook
 
 ## Setup checklist (one-time)
 
@@ -7,7 +7,7 @@
    - Authorized redirect: `https://ordo.<tailnet>.ts.net/oauth2/callback`
    - This single `:443` redirect URI covers the whole stack: the
      port-per-service model (`:443` front door plus `:8443`–`:8450`)
-     shares one domain-scoped oauth2-proxy cookie — no per-port URIs.
+     shares one domain-scoped oauth2-proxy cookie - no per-port URIs.
 2. Turn it on (prompts for the tailnet hostname, the Caddy bind address,
    the client ID + secret and the allowlisted emails; `--yes` takes them
    from flags, and the secret from `OAUTH2_PROXY_CLIENT_SECRET`):
@@ -129,7 +129,7 @@ call with these file names.
 Run the renewal from the repo root, then `ordo recreate caddy` (or the dashboard's Restart button
 for caddy).
 
-## Recovery — Google OIDC outage
+## Recovery - Google OIDC outage
 
 When Google sign-in is unreachable, all browser paths fail. Two levers:
 
@@ -144,11 +144,11 @@ When Google sign-in is unreachable, all browser paths fail. Two levers:
 2. **Direct container access.** `docker exec` runs any verb inside a
    service container while public access is broken.
 
-## Recovery — oauth2-proxy crash
+## Recovery - oauth2-proxy crash
 
 `ordo recreate oauth2-proxy` from the repo root (Caddy's `forward_auth` retries
 automatically). If it's unhealthy on boot, check
-`docker logs ordo-oauth2-proxy-1` — the most common cause is an
+`docker logs ordo-oauth2-proxy-1` - the most common cause is an
 `OAUTH2_PROXY_COOKIE_SECRET` that isn't exactly 16/24/32 bytes.
 
 ## Troubleshooting

@@ -16,9 +16,9 @@ not exist, and falls back to the floating `latest` UI; a newer UI broke the embe
 commit. Bump `LLAMA_UI_RELEASE`/`LLAMA_UI_SHA256` together with the pinned commit.
 
 ## What's patched
-- **PATCH 1** — hybrid/recurrent checkpoint-search fix (upstream ggml-org#22384, #20225, #24055).
-- **PATCH 2** — `recurrent_shrink/expand` prompt-cache API (upstream PR #24785, minimal diff in
-  `pr24785-minimal.diff`). The build **fails loudly** if either patch stops applying — that's
+- **PATCH 1** - hybrid/recurrent checkpoint-search fix (upstream ggml-org#22384, #20225, #24055).
+- **PATCH 2** - `recurrent_shrink/expand` prompt-cache API (upstream PR #24785, minimal diff in
+  `pr24785-minimal.diff`). The build **fails loudly** if either patch stops applying - that's
   the signal to re-verify before bumping the pinned commit.
 
 Both were re-checked at v0.5.0 and kept: upstream only added a `pos_max > pos_next` guard to the
@@ -38,10 +38,10 @@ stack. The image is local-only (no registry), so `ordo preflight` reports a miss
 "build from services/llamacpp-patched", not "Docker will pull".
 
 ## Files
-- `Dockerfile` — two-stage CUDA build (12.8 devel → runtime), pinned commit + both patches.
-- `pr24785-minimal.diff` — PATCH 2 source.
+- `Dockerfile` - two-stage CUDA build (12.8 devel → runtime), pinned commit + both patches.
+- `pr24785-minimal.diff` - PATCH 2 source.
 
 (An old `launch.txt` flag snapshot was removed 2026-08-05: it predated the render substrate
-and contradicted the live config on every distinguishing flag — `-c 196608` vs the deployed
+and contradicted the live config on every distinguishing flag - `-c 196608` vs the deployed
 131072, an MTP `--spec-type` the flag builder strips as inert, a model no longer in the
 catalog. The launch surface is owned by `catalog/models.yaml` + `scripts/llamacpp/run-llama-server.sh`; tuning rationale belongs in the catalog entry comments.)

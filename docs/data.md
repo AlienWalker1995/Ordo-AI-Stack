@@ -30,7 +30,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | `data/dashboard/` | Throughput samples, benchmarks, job tracking | JSON |
 | `hermes-home` named volume | Hermes agent brain (sessions, config, skills, cron) | JSON / SQLite / YAML |
 | `comfyui-output` named volume | Generated media (renders); `comfyui` writes it at `/root/ComfyUI/output`, the agent reads and moves files at `/workspace/data/comfyui-output`, the dashboard lists it at `/comfyui-output` (RO). Not a host directory: see [ComfyUI outputs](#comfyui-outputs) | mixed |
-| `comfyui-app` named volume | ComfyUI app tree + custom nodes — app version pinned by `COMFYUI_APP_REF`, declared node packs pinned by `scripts/comfyui/custom_nodes.json`, both reconciled on boot ([configuration.md](configuration.md#comfyui-application-version)) | mixed |
+| `comfyui-app` named volume | ComfyUI app tree + custom nodes - app version pinned by `COMFYUI_APP_REF`, declared node packs pinned by `scripts/comfyui/custom_nodes.json`, both reconciled on boot ([configuration.md](configuration.md#comfyui-application-version)) | mixed |
 | `couchdb-data` named volume | CouchDB (Obsidian LiveSync) | CouchDB native |
 | `open-webui-data` named volume | Open WebUI accounts + uploads | SQLite / files |
 
@@ -154,7 +154,7 @@ Triggered by `ordo render` + the first `ordo up --all`.
 
 - Creates `data/` and `models/` subdirectories.
 - Emits the MCP artifacts into `out/` (`out/mcp/servers.json`, `out/model-gateway/mcp_servers.yaml`); nothing is written under `data/mcp/`.
-- Hardware detection (`hardware: auto` / `ordo detect`) and GPU pinning happen at render time, not via a separate script — `ordo render` inspects the host and writes the resolved config directly into `out/` (`.env`, `docker-compose.yml`); there is no `overrides/compute.yml` step to run.
+- Hardware detection (`hardware: auto` / `ordo detect`) and GPU pinning happen at render time, not via a separate script - `ordo render` inspects the host and writes the resolved config directly into `out/` (`.env`, `docker-compose.yml`); there is no `overrides/compute.yml` step to run.
 
 All directories created this way persist across restarts and rebuilds.
 
