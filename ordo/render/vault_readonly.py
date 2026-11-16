@@ -15,9 +15,15 @@ The agent's Docker socket also lets it start a container with its own read-write
 Two services mount the vault, and each gets its own targets:
   - the MCP server mounts the folder at `/vault/<dir>`.
   - the agent does not mount the vault directly. It sees it through every read-write bind of the agent
-    whose host source contains the vault (the code-root mirror, `${DATA_PATH}:/workspace/data`, ...), at
+    whose host source contains the vault (compared case-insensitively: host filesystems usually are; the
+    code-root mirror, `${DATA_PATH}:/workspace/data`, ...), at
     `<bind target>/<vault path below the bind source>/<dir>`: one nested read-only bind per such bind.
     When no agent bind contains the vault the agent cannot see it: nothing is mounted, with a warning.
+
+Two ways reach the same files past the overlay, and neither is refused here. The agent still holds the
+Docker socket, so a container it starts could mount the folder read-write. And on a case-insensitive host
+mount, a path spelled with different casing reaches the same files and skips the overlay (ADR-0001, rule
+4, names this limit of any read-only overlay under the mirror). Both are stated in `docs/configuration.md`.
 
 The render cannot stat host paths (ops-controller renders it too), so a folder that does not exist is
 refused by the host preflight (`ordo/host/preflight.py`), before Docker can create an empty one.
