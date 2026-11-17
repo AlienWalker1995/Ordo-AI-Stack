@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from . import backup_policy, bind_configs, compose, gpu, secret_files, substrate
+from . import backup_policy, bind_configs, compose, gpu, secret_files, substrate, vault_readonly
 from .agents import AgentRegistry
 from .catalog import DEFAULT_VRAM_RESERVE_GB, LOAD_MODES, Catalog, Model
 from .config import Source
@@ -1042,6 +1042,10 @@ def render(source: Source, catalog: Catalog,
     for k, v in (source.site or {}).items():
         env.setdefault(str(k), str(v))
 
+    # The vault's read-only folders (site: MEMORY_VAULT_READONLY_DIRS), mounted over the read-write
+    # vault binds of the MCP server and the agent. Unset: nothing is added.
+    warnings = warnings + _mount_vault_readonly_dirs(env, hermes, mcp_servers)
+
     # The CPU fallback serves this same window: refuse one it cannot, and say what it costs in RAM.
     cpu_fallback, cpu_fallback_notes = _cpu_fallback_window(catalog, env, ctx, [p.id for p in services])
     warnings = warnings + cpu_fallback_notes
@@ -1119,6 +1123,25 @@ def render(source: Source, catalog: Catalog,
             *((f"plugin {p.id}", p.backup) for p in enabled),
         ]),
     )
+
+
+def _mount_vault_readonly_dirs(env: dict[str, str], hermes: dict[str, Any],
+                               mcp_servers: list[dict[str, Any]]) -> list[str]:
+    """Add the read-only folder binds to the agent's volumes and the memory-vault MCP server's (in
+    place); return the warnings for a mount that could not apply. See vault_readonly."""
+    folders = vault_readonly.parse_readonly_dirs(env.get(vault_readonly.READONLY_DIRS_KEY))
+    if not folders:
+        return []
+    vault_path = str(env.get(vault_readonly.VAULT_PATH_KEY) or "").strip()
+    if not vault_path:
+        raise ValueError(f"site: {vault_readonly.READONLY_DIRS_KEY} needs {vault_readonly.VAULT_PATH_KEY}, "
+                         "the host path of the vault the folders are relative to")
+    for server in mcp_servers:
+        if server["plugin_id"] == vault_readonly.MCP_PLUGIN_ID:
+            server["volumes"].extend(vault_readonly.mcp_mounts(folders))
+    mounts, warnings = vault_readonly.agent_mounts(folders, vault_path, hermes["agent_volumes"], env)
+    hermes["agent_volumes"].extend(mounts)
+    return warnings + vault_readonly.case_bypass_warning(vault_path)
 
 
 def _is_project_image(image: str, project: str = "ordo") -> bool:
