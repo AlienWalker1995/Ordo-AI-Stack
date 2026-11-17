@@ -280,6 +280,10 @@ def test_image_names_skip_values_of_options_that_take_one():
     assert images(["run", "-ite", "TOKEN=abc", "alpine:3"]) == ["alpine:3"]
     assert images(["run", "-ite", "TOKEN=<redacted>", "alpine:3"]) == ["alpine:3"]
     assert images(["run", "-it", "img"]) == ["img"]
+    assert images(["run", "-itv", "/a:/b", "img"]) == ["img"]
+    assert images(["run", "-itp", "8080:80", "img"]) == ["img"]
+    assert images(["run", "-itu", "root", "--cpus", "2", "img"]) == ["img"]
+    assert images(["run", "-itw", "/srv", "img"]) == ["img"]
     assert images(["run", "--volumes-from", "other", "--expose", "8080", "--link", "a:b", "img"]) == ["img"]
     assert images(["run", "--stop-signal", "SIGUSR1", "--cpuset-cpus", "0-1", "img"]) == ["img"]
     assert images(["run", "--memory-swap", "1g", "--health-cmd", "ping", "--ip", "10.0.0.5", "img"]) == ["img"]
@@ -394,6 +398,12 @@ def test_the_script_reads_all_kept_generations(tmp_path):
     assert data["total_calls"] == 4
     assert data["verbs"] == {"compose up": 1, "logs": 1, "images": 1, "ps": 1}
     assert (data["first_call"], data["last_call"]) == ("2026-01-01T00:00:00Z", "2026-01-05T00:00:00Z")
+
+
+def test_the_wrapper_and_summary_keep_the_same_generation_count():
+    # Both sides must agree on how many rotations survive, or the summary reads paths the
+    # wrapper never creates.
+    assert f"MAX_GENERATIONS = {summary.ROTATED_GENERATIONS}\n" in WRAPPER.read_text(encoding="utf-8")
 
 
 def test_the_image_installs_the_wrapper_and_the_summary():

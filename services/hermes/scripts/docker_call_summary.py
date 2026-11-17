@@ -51,9 +51,13 @@ EXEC_VALUE_OPTIONS = {"-e", "--env", "-u", "--user", "-w", "--workdir", "--env-f
 COMPOSE_RUN_VALUE_OPTIONS = RUN_VALUE_OPTIONS | COMPOSE_VALUE_OPTIONS | {"--scale", "--exit-code-from"}
 # `compose exec` adds --index to the plain exec flags.
 COMPOSE_EXEC_VALUE_OPTIONS = EXEC_VALUE_OPTIONS | {"--index"}
-# pflag bundles short flags: a bundle whose last letter is `e` (like `-ite`) takes the next
-# argument as its environment value, the same rule the wrapper's redaction applies.
-ENV_BUNDLE_RE = re.compile(r"^-[A-Za-z]*e$")
+# pflag bundles short flags. When the bundle's last letter is one whose short flag takes a value
+# (-a attach, -c console, -e env, -h hostname, -l label, -m memory, -n network, -p publish,
+# -u user, -v volume, -w workdir), the next argument is that value, exactly as the wrapper's
+# redaction assumes for the `e` case. `-t` is deliberately out: it is a boolean for `run`/`exec`
+# (tty) but value-taking for `stop`/`restart`, so a uniform rule must not consume after it.
+SHORT_FLAG_VALUE_LETTERS = "acehlmnpuvw"
+BUNDLE_VALUE_INTRODUCER_RE = re.compile(rf"^-[A-Za-z]*[{SHORT_FLAG_VALUE_LETTERS}]$")
 # Per verb, the options that take a value, for the verbs whose target containers are listed.
 TARGET_VALUE_OPTIONS = {
     "logs": {"-n", "--tail", "--since", "--until"},
@@ -100,8 +104,8 @@ def positional_arguments(arguments: list[str], value_options: set[str]) -> list[
         if token in value_options:
             index += 2
         elif token.startswith("-"):
-            # A bundled short-flag introducer (`-ite`) consumes its environment value as the next token.
-            index += 2 if ENV_BUNDLE_RE.match(token) else 1
+            # A short-flag bundle ending in a value-taking letter (-ite, -itv, ...) consumes its value.
+            index += 2 if BUNDLE_VALUE_INTRODUCER_RE.match(token) else 1
         else:
             positionals.append(token)
             index += 1
