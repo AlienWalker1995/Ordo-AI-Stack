@@ -41,6 +41,9 @@ def redact_joined_option(argument: str) -> str:
             return prefix + redact_key_value(argument[len(prefix):])
     if argument.startswith("--password="):
         return "--password=" + REDACTED
+    # The attached short form `-eKEY=VALUE`.
+    if argument.startswith("-e") and not argument.startswith("--") and "=" in argument:
+        return "-e" + redact_key_value(argument[2:])
     return argument
 
 
@@ -87,8 +90,12 @@ def rotate_if_large(log_path: str) -> None:
 
 
 def append_line(log_path: str, line: str) -> None:
-    descriptor = os.open(log_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
+    descriptor = os.open(log_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o666)
     try:
+        # Root and the agent user both call docker: whoever creates the file leaves it writable
+        # for the other, whatever the umask. Only the owner can change the mode.
+        if os.fstat(descriptor).st_uid == os.getuid():
+            os.fchmod(descriptor, 0o666)
         os.write(descriptor, line.encode("utf-8"))
     finally:
         os.close(descriptor)

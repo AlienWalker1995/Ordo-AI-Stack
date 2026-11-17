@@ -65,7 +65,6 @@ def test_logs_the_call_and_runs_the_cli_with_the_exact_arguments_and_exit_code(t
     assert record["cwd"] == os.getcwd()
     assert record["uid"] == os.getuid()
     assert record["ts"].endswith("Z") and len(record["ts"]) == len("2026-01-01T00:00:00Z")
-    assert oct(log.stat().st_mode & 0o777) == "0o644"
 
 
 @needs_posix
@@ -83,6 +82,17 @@ def test_redacts_environment_values_in_both_forms(tmp_path):
                        "-e", "NOVALUE", "img")
     assert argv == ["run", "-e", "TOKEN=<redacted>", "--env", "KEY=<redacted>", "--env=OTHER=<redacted>",
                     "-e", "NOVALUE", "img"]
+
+
+@needs_posix
+def test_redacts_the_attached_short_environment_form(tmp_path):
+    assert logged_argv(tmp_path, "run", "-eTOKEN=secret", "image") == ["run", "-eTOKEN=<redacted>", "image"]
+
+
+@needs_posix
+def test_the_log_file_is_writable_by_every_user_of_the_container(tmp_path):
+    logged_argv(tmp_path, "ps")
+    assert (tmp_path / "calls.jsonl").stat().st_mode & 0o777 == 0o666
 
 
 @needs_posix
