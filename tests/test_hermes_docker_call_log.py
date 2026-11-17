@@ -195,6 +195,27 @@ def test_rotates_a_log_over_the_size_limit_and_replaces_the_older_generation(tmp
 
 
 @needs_posix
+def test_rotation_keeps_several_generations_and_drops_only_the_oldest(tmp_path):
+    # One overwriting generation lost the early days of a chatty week before the summary ran.
+    log = tmp_path / "calls.jsonl"
+    for number in range(1, 7):
+        (tmp_path / f"calls.jsonl.{number}").write_text(f"gen{number}\n", encoding="utf-8")
+    with log.open("wb") as handle:
+        handle.truncate(20 * 1024 * 1024 + 1)
+    run(wrapper_with_stub_cli(tmp_path), "ps", log=log)
+    # The live log became .1, each kept generation shifted one over, and the oldest slot was filled.
+    assert (tmp_path / "calls.jsonl.1").stat().st_size == 20 * 1024 * 1024 + 1
+    assert (tmp_path / "calls.jsonl.2").read_text(encoding="utf-8") == "gen1\n"
+    assert (tmp_path / "calls.jsonl.7").read_text(encoding="utf-8") == "gen6\n"
+    assert [record["argv"] for record in logged(log)] == [["ps"]]
+    # A second rotation shifts again and drops only the now-oldest generation.
+    with log.open("wb") as handle:
+        handle.truncate(20 * 1024 * 1024 + 1)
+    run(wrapper_with_stub_cli(tmp_path), "ps", log=log)
+    assert (tmp_path / "calls.jsonl.7").read_text(encoding="utf-8") == "gen5\n"
+
+
+@needs_posix
 def test_a_log_at_the_limit_is_not_rotated(tmp_path):
     log = tmp_path / "calls.jsonl"
     with log.open("wb") as handle:
@@ -250,6 +271,31 @@ def test_image_names_for_run_create_pull_and_build():
     assert images(["ps"]) == []
 
 
+def test_image_names_skip_values_of_options_that_take_one():
+    def images(argv):
+        verb, rest = summary.split_verb(argv)
+        return summary.image_names(verb, rest)
+
+    assert images(["run", "--ulimit", "nofile=1024", "alpine:3"]) == ["alpine:3"]
+    assert images(["run", "-ite", "TOKEN=abc", "alpine:3"]) == ["alpine:3"]
+    assert images(["run", "-ite", "TOKEN=<redacted>", "alpine:3"]) == ["alpine:3"]
+    assert images(["run", "-it", "img"]) == ["img"]
+    assert images(["run", "--volumes-from", "other", "--expose", "8080", "--link", "a:b", "img"]) == ["img"]
+    assert images(["run", "--stop-signal", "SIGUSR1", "--cpuset-cpus", "0-1", "img"]) == ["img"]
+    assert images(["run", "--memory-swap", "1g", "--health-cmd", "ping", "--ip", "10.0.0.5", "img"]) == ["img"]
+
+
+def test_compose_run_reports_the_service_name():
+    def images(argv):
+        verb, rest = summary.split_verb(argv)
+        assert verb == "compose run"
+        return summary.image_names(verb, rest)
+
+    assert images(["compose", "run", "web", "python3", "-V"]) == ["web"]
+    assert images(["compose", "-f", "prod.yml", "run", "--profile", "debug", "worker"]) == ["worker"]
+    assert images(["compose", "run", "--scale", "worker=3", "db"]) == ["db"]
+
+
 def test_exec_target_is_the_container_and_the_first_word_of_the_command():
     def target(argv):
         verb, rest = summary.split_verb(argv)
@@ -299,6 +345,21 @@ def test_summarize_counts_everything():
     assert result["container_targets"] == {"logs": {"web": 1}}
 
 
+def test_summarize_reports_the_image_behind_missing_value_options_and_env_bundles():
+    # The two misreports the measurement shipped with: an unlisted value option and a bundled
+    # `-e` introducer both leaked their value into the image column.
+    records = [
+        {"ts": "2026-01-01T00:00:00Z", "argv": ["run", "--ulimit", "nofile=1024", "alpine:3"]},
+        {"ts": "2026-01-01T00:00:01Z", "argv": ["run", "-ite", "TOKEN=<redacted>", "alpine:3"]},
+        {"ts": "2026-01-01T00:00:02Z", "argv": ["compose", "run", "web", "python3", "-V"]},
+        {"ts": "2026-01-01T00:00:03Z", "argv": ["compose", "exec", "--index", "1", "db", "sh", "-c", "ls"]},
+    ]
+    result = summary.summarize(records, unreadable_lines=0)
+    assert result["verbs"] == {"run": 2, "compose run": 1, "compose exec": 1}
+    assert result["images"] == {"alpine:3": 2, "web": 1}
+    assert result["exec_targets"] == {"db sh": 1}
+
+
 def test_the_script_reads_both_generations_and_prints_text_or_json(tmp_path):
     log = tmp_path / "calls.jsonl"
     log.write_text('{"ts": "2026-01-02T00:00:00Z", "argv": ["ps"]}\nbroken\n', encoding="utf-8")
@@ -315,6 +376,24 @@ def test_a_missing_log_is_an_empty_summary(tmp_path):
     out = subprocess.run([sys.executable, str(SUMMARY), str(tmp_path / "absent"), "--json"],
                          capture_output=True, text=True, check=True).stdout
     assert json.loads(out)["total_calls"] == 0
+
+
+def test_the_script_reads_all_kept_generations(tmp_path):
+    # A chatty week must survive rotation: the oldest kept generation (.7) still feeds the summary.
+    records = {
+        "calls.jsonl.7": ("2026-01-01T00:00:00Z", ["compose", "up", "-d"]),
+        "calls.jsonl.2": ("2026-01-03T00:00:00Z", ["logs", "web"]),
+        "calls.jsonl.1": ("2026-01-04T00:00:00Z", ["images"]),
+        "calls.jsonl": ("2026-01-05T00:00:00Z", ["ps"]),
+    }
+    for name, (ts, argv) in records.items():
+        (tmp_path / name).write_text(json.dumps({"ts": ts, "argv": argv}) + "\n", encoding="utf-8")
+    out = subprocess.run([sys.executable, str(SUMMARY), str(tmp_path / "calls.jsonl"), "--json"],
+                         capture_output=True, text=True, check=True).stdout
+    data = json.loads(out)
+    assert data["total_calls"] == 4
+    assert data["verbs"] == {"compose up": 1, "logs": 1, "images": 1, "ps": 1}
+    assert (data["first_call"], data["last_call"]) == ("2026-01-01T00:00:00Z", "2026-01-05T00:00:00Z")
 
 
 def test_the_image_installs_the_wrapper_and_the_summary():

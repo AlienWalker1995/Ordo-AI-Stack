@@ -18,6 +18,9 @@ from datetime import datetime, timezone
 REAL_DOCKER = "/usr/bin/docker"
 DEFAULT_LOG_PATH = "/opt/data/logs/docker-calls.jsonl"
 MAX_LOG_BYTES = 20 * 1024 * 1024
+# Rotation keeps the most recent N rotations behind the live log: a chatty week must survive until
+# the summary runs (card 2 measures at least seven days), so one overwriting generation was too few.
+MAX_GENERATIONS = 7
 MAX_ARGUMENT_CHARS = 500
 REDACTED = "<redacted>"
 
@@ -96,12 +99,21 @@ def build_record(arguments: list[str]) -> dict:
 
 
 def rotate_if_large(log_path: str) -> None:
+    """Roll the oversized log to `.1`, shifting the kept generations up and dropping only `.N`."""
     try:
         size = os.stat(log_path).st_size
     except FileNotFoundError:
         return
-    if size > MAX_LOG_BYTES:
-        os.replace(log_path, log_path + ".1")
+    if size <= MAX_LOG_BYTES:
+        return
+    oldest = f"{log_path}.{MAX_GENERATIONS}"
+    if os.path.exists(oldest):
+        os.remove(oldest)
+    for number in range(MAX_GENERATIONS - 1, 0, -1):
+        source = f"{log_path}.{number}"
+        if os.path.exists(source):
+            os.replace(source, f"{log_path}.{number + 1}")
+    os.replace(log_path, f"{log_path}.1")
 
 
 def append_line(log_path: str, line: str) -> None:
