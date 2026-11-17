@@ -286,7 +286,7 @@ def test_image_names_skip_values_of_options_that_take_one():
     assert images(["run", "-itw", "/srv", "img"]) == ["img"]
     assert images(["run", "--volumes-from", "other", "--expose", "8080", "--link", "a:b", "img"]) == ["img"]
     assert images(["run", "--stop-signal", "SIGUSR1", "--cpuset-cpus", "0-1", "img"]) == ["img"]
-    assert images(["run", "--memory-swap", "1g", "--health-cmd", "ping", "--ip", "10.0.0.5", "img"]) == ["img"]
+    assert images(["run", "--memory-swap", "1g", "--health-cmd", "ping", "--ip", "192.0.2.1", "img"]) == ["img"]
 
 
 def test_compose_run_reports_the_service_name():
