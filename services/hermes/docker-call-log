@@ -1,0 +1,156 @@
+#!/usr/bin/python3
+"""Log every `docker` call the agent makes, then run the real CLI unchanged.
+
+Installed as /usr/local/bin/docker, ahead of /usr/bin on PATH. It is temporary measurement: the
+log answers what the agent really does with Docker, so its socket can be removed. One JSON line per
+call; secrets are redacted before they reach the log. Logging can never block or alter docker: every
+failure is swallowed and the real CLI always runs with the original, unredacted arguments.
+Read the log with /opt/ordo/docker_call_summary.py.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from datetime import datetime, timezone
+
+REAL_DOCKER = "/usr/bin/docker"
+DEFAULT_LOG_PATH = "/opt/data/logs/docker-calls.jsonl"
+MAX_LOG_BYTES = 20 * 1024 * 1024
+# Rotation keeps the most recent N rotations behind the live log: a chatty week must survive until
+# the summary runs (card 2 measures at least seven days), so one overwriting generation was too few.
+MAX_GENERATIONS = 7
+MAX_ARGUMENT_CHARS = 500
+REDACTED = "<redacted>"
+
+# Options whose value is KEY=VALUE: the key is kept, the value is not.
+KEY_VALUE_OPTIONS = ("-e", "--env", "--build-arg")
+# `-p` is a password only for `docker login`; for `run` it publishes a port.
+PASSWORD_OPTIONS_AFTER_LOGIN = ("-p", "--password")
+# Short flags bundle pflag-style: a bundle whose last letter is `e` (like `-ite`) takes the next
+# argument as its env value, and `e` may glue that value onto the token (`-iteKEY=VALUE`).
+# A glued `-p` value (`-psecret`) is a password after `login` only; elsewhere it is a port spec.
+ENV_BUNDLE_INTRODUCER_RE = re.compile(r"^-[A-Za-z]*e$")
+ENV_ATTACHED_VALUE_RE = re.compile(r"^(-[A-Za-z]*e)(.+)$")
+ATTACHED_PASSWORD_RE = re.compile(r"^-p.+$")
+
+
+def redact_key_value(text: str) -> str:
+    key, separator, _value = text.partition("=")
+    if not separator:
+        return text
+    return f"{key}={REDACTED}"
+
+
+def redact_joined_option(argument: str) -> str:
+    """The `--option=value` forms, which carry their value in the same token."""
+    for option in ("--env", "--build-arg"):
+        prefix = option + "="
+        if argument.startswith(prefix):
+            return prefix + redact_key_value(argument[len(prefix):])
+    if argument.startswith("--password="):
+        return "--password=" + REDACTED
+    # Glued short-form values: `-eKEY=VALUE`, including a bundled prefix such as `-iteKEY=VALUE`.
+    match = ENV_ATTACHED_VALUE_RE.match(argument)
+    if match and "=" in match.group(2):
+        return match.group(1) + redact_key_value(match.group(2))
+    return argument
+
+
+def redact_arguments(arguments: list[str]) -> list[str]:
+    """A copy of the arguments with environment, build-arg and login password values hidden."""
+    redacted = []
+    seen_login = False
+    previous = ""
+    previous_takes_env_value = False
+    for argument in arguments:
+        if previous in KEY_VALUE_OPTIONS or previous_takes_env_value:
+            # The previous option (`-e`, `--env`, `--build-arg`, or a bundle ending in `e`)
+            # consumed this argument as its KEY=VALUE: keep the key, hide the value.
+            redacted.append(redact_key_value(argument))
+        elif previous in PASSWORD_OPTIONS_AFTER_LOGIN and (seen_login or previous == "--password"):
+            redacted.append(REDACTED)
+        elif seen_login and ATTACHED_PASSWORD_RE.match(argument):
+            # `-p` glued to its value: the whole token carries the password.
+            redacted.append(REDACTED)
+        else:
+            redacted.append(redact_joined_option(argument))
+        if argument == "login":
+            seen_login = True
+        previous_takes_env_value = bool(ENV_BUNDLE_INTRODUCER_RE.match(argument))
+        previous = argument
+    return redacted
+
+
+def truncate(argument: str) -> str:
+    if len(argument) <= MAX_ARGUMENT_CHARS:
+        return argument
+    return argument[:MAX_ARGUMENT_CHARS] + "..."
+
+
+def build_record(arguments: list[str]) -> dict:
+    return {
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "argv": [truncate(argument) for argument in redact_arguments(arguments)],
+        "cwd": os.getcwd(),
+        "uid": os.getuid(),
+    }
+
+
+def rotate_if_large(log_path: str) -> None:
+    """Roll the oversized log to `.1`, shifting the kept generations up and dropping only `.N`."""
+    try:
+        size = os.stat(log_path).st_size
+    except FileNotFoundError:
+        return
+    if size <= MAX_LOG_BYTES:
+        return
+    oldest = f"{log_path}.{MAX_GENERATIONS}"
+    if os.path.exists(oldest):
+        os.remove(oldest)
+    for number in range(MAX_GENERATIONS - 1, 0, -1):
+        source = f"{log_path}.{number}"
+        if os.path.exists(source):
+            os.replace(source, f"{log_path}.{number + 1}")
+    os.replace(log_path, f"{log_path}.1")
+
+
+def append_line(log_path: str, line: str) -> None:
+    # Skip a symlink planted at the log path: opening it would follow the link, and the fchmod
+    # below would then chmod the link's target. Safe direction: the real CLI still runs, and
+    # rotation renames the link away (os.replace moves the link itself), so later calls write anew.
+    if os.path.islink(log_path):
+        return
+    # O_NOFOLLOW closes the check-then-open race: a link swapped in between the check and the
+    # open makes this raise ELOOP, which log_call's caller swallows like any other logging failure.
+    descriptor = os.open(log_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o666)
+    try:
+        # Root and the agent user both call docker: whoever creates the file leaves it writable
+        # for the other, whatever the umask. Only the owner can change the mode.
+        if os.fstat(descriptor).st_uid == os.getuid():
+            os.fchmod(descriptor, 0o666)
+        os.write(descriptor, line.encode("utf-8"))
+    finally:
+        os.close(descriptor)
+
+
+def log_call(arguments: list[str]) -> None:
+    log_path = os.environ.get("ORDO_DOCKER_CALL_LOG", DEFAULT_LOG_PATH)
+    line = json.dumps(build_record(arguments)) + "\n"
+    os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+    rotate_if_large(log_path)
+    append_line(log_path, line)
+
+
+def main() -> None:
+    arguments = sys.argv[1:]
+    try:
+        log_call(arguments)
+    except Exception:
+        pass  # measurement must never get in the way of docker
+    os.execv(REAL_DOCKER, ["docker", *arguments])
+
+
+if __name__ == "__main__":
+    main()
