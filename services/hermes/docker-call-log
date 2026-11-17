@@ -1,0 +1,115 @@
+#!/usr/bin/python3
+"""Log every `docker` call the agent makes, then run the real CLI unchanged.
+
+Installed as /usr/local/bin/docker, ahead of /usr/bin on PATH. It is temporary measurement: the
+log answers what the agent really does with Docker, so its socket can be removed. One JSON line per
+call; secrets are redacted before they reach the log. Logging can never block or alter docker: every
+failure is swallowed and the real CLI always runs with the original, unredacted arguments.
+Read the log with /opt/ordo/docker_call_summary.py.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+REAL_DOCKER = "/usr/bin/docker"
+DEFAULT_LOG_PATH = "/opt/data/logs/docker-calls.jsonl"
+MAX_LOG_BYTES = 20 * 1024 * 1024
+MAX_ARGUMENT_CHARS = 500
+REDACTED = "<redacted>"
+
+# Options whose value is KEY=VALUE: the key is kept, the value is not.
+KEY_VALUE_OPTIONS = ("-e", "--env", "--build-arg")
+# `-p` is a password only for `docker login`; for `run` it publishes a port.
+PASSWORD_OPTIONS_AFTER_LOGIN = ("-p", "--password")
+
+
+def redact_key_value(text: str) -> str:
+    key, separator, _value = text.partition("=")
+    if not separator:
+        return text
+    return f"{key}={REDACTED}"
+
+
+def redact_joined_option(argument: str) -> str:
+    """The `--option=value` forms, which carry their value in the same token."""
+    for option in ("--env", "--build-arg"):
+        prefix = option + "="
+        if argument.startswith(prefix):
+            return prefix + redact_key_value(argument[len(prefix):])
+    if argument.startswith("--password="):
+        return "--password=" + REDACTED
+    return argument
+
+
+def redact_arguments(arguments: list[str]) -> list[str]:
+    """A copy of the arguments with environment, build-arg and login password values hidden."""
+    redacted = []
+    seen_login = False
+    previous = ""
+    for argument in arguments:
+        if previous in KEY_VALUE_OPTIONS:
+            redacted.append(redact_key_value(argument))
+        elif previous in PASSWORD_OPTIONS_AFTER_LOGIN and (seen_login or previous == "--password"):
+            redacted.append(REDACTED)
+        else:
+            redacted.append(redact_joined_option(argument))
+        if argument == "login":
+            seen_login = True
+        previous = argument
+    return redacted
+
+
+def truncate(argument: str) -> str:
+    if len(argument) <= MAX_ARGUMENT_CHARS:
+        return argument
+    return argument[:MAX_ARGUMENT_CHARS] + "..."
+
+
+def build_record(arguments: list[str]) -> dict:
+    return {
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "argv": [truncate(argument) for argument in redact_arguments(arguments)],
+        "cwd": os.getcwd(),
+        "uid": os.getuid(),
+    }
+
+
+def rotate_if_large(log_path: str) -> None:
+    try:
+        size = os.stat(log_path).st_size
+    except FileNotFoundError:
+        return
+    if size > MAX_LOG_BYTES:
+        os.replace(log_path, log_path + ".1")
+
+
+def append_line(log_path: str, line: str) -> None:
+    descriptor = os.open(log_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
+    try:
+        os.write(descriptor, line.encode("utf-8"))
+    finally:
+        os.close(descriptor)
+
+
+def log_call(arguments: list[str]) -> None:
+    log_path = os.environ.get("ORDO_DOCKER_CALL_LOG", DEFAULT_LOG_PATH)
+    line = json.dumps(build_record(arguments)) + "\n"
+    os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+    rotate_if_large(log_path)
+    append_line(log_path, line)
+
+
+def main() -> None:
+    arguments = sys.argv[1:]
+    try:
+        log_call(arguments)
+    except Exception:
+        pass  # measurement must never get in the way of docker
+    os.execv(REAL_DOCKER, ["docker", *arguments])
+
+
+if __name__ == "__main__":
+    main()

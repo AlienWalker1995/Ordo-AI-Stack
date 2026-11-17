@@ -67,6 +67,28 @@ tail -f data/ops-controller/audit.log | jq
 Rotation: at 10 MB the file rolls to `audit.1.log`; five generations are kept
 (`ordo/control/audit.py`).
 
+## What the agent does with the docker CLI
+
+The agent image installs a `docker` wrapper at `/usr/local/bin/docker` (ahead of `/usr/bin` on `PATH`).
+It appends one JSON line per call to `/opt/data/logs/docker-calls.jsonl` (`ORDO_DOCKER_CALL_LOG`
+overrides the path) and then runs the real CLI unchanged. It exists to measure what the agent really
+needs before its Docker socket is removed. Values of `-e`/`--env`, `--build-arg` and login passwords
+are redacted, an argument over 500 characters is cut, and the log rolls to `.1` at 20 MB.
+
+```bash
+docker exec --user hermes <agent container> python3 /opt/ordo/docker_call_summary.py
+docker exec --user hermes <agent container> python3 /opt/ordo/docker_call_summary.py --json
+```
+
+The summary lists total calls and the date range, calls per verb (`compose up`, `exec`, `run`, ...),
+images used by `run`, `create`, `pull` and `build`, `exec` targets (container plus the first word of
+the command) and the target containers of `logs`, `inspect`, `restart`, `stop`, `start`, `rm`, `kill`
+and `cp`.
+
+Limit: only calls through the `docker` CLI are logged. A process that talks to the socket directly (for
+example `curl --unix-socket`, or a Docker SDK) is not logged, and neither is a call that names
+`/usr/bin/docker` by its full path.
+
 ## Adding a new control-plane verb
 
 1. Write a failing test in `tests/substrate/` for the new route.

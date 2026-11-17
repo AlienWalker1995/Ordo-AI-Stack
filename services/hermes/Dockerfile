@@ -124,6 +124,12 @@ COPY codex /usr/local/bin/codex
 # ChatGPT subscription, and no shell snapshots (they record the environment, tokens included).
 COPY codex-managed-config.toml /etc/codex/managed_config.toml
 
+# Temporary measurement for removing the agent's Docker socket: /usr/local/bin/docker (ahead of
+# /usr/bin on PATH) appends one redacted JSON line per docker CLI call to a log, then runs the real
+# CLI unchanged; /opt/ordo/docker_call_summary.py reads the log (docs/runbooks/bounded-hermes.md).
+COPY docker-call-log /usr/local/bin/docker
+COPY scripts/docker_call_summary.py /opt/ordo/docker_call_summary.py
+
 # The seed SOUL.md (execute, don't propose), copied into a home that has none on first boot.
 COPY seed/SOUL.md /opt/ordo-seed/SOUL.md
 
@@ -146,5 +152,5 @@ COPY secret-env.sh /opt/ordo/secret-env.sh
 COPY ordo-init.sh /etc/cont-init.d/50-ordo
 RUN chmod -R a+rX,go-w /opt/ordo /opt/ordo-skills /opt/ordo-seed /opt/hermes/plugins/ops-router \
     /opt/hermes/plugins/image_gen/comfyui /opt/claude-code /opt/codex \
-    && chmod 0755 /etc/cont-init.d/50-ordo /usr/local/bin/claude /usr/local/bin/codex \
+    && chmod 0755 /etc/cont-init.d/50-ordo /usr/local/bin/claude /usr/local/bin/codex /usr/local/bin/docker \
     && chmod 0644 /etc/claude-code/managed-settings.json /etc/codex/managed_config.toml
