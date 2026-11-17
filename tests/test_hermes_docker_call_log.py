@@ -79,9 +79,9 @@ def test_every_call_appends_one_line(tmp_path):
 @needs_posix
 def test_redacts_environment_values_in_both_forms(tmp_path):
     argv = logged_argv(tmp_path, "run", "-e", "TOKEN=abc", "--env", "KEY=def", "--env=OTHER=ghi",
-                       "-e", "NOVALUE", "img")
+                       "-e", "NOVALUE", "-e=FOO=bar", "img")
     assert argv == ["run", "-e", "TOKEN=<redacted>", "--env", "KEY=<redacted>", "--env=OTHER=<redacted>",
-                    "-e", "NOVALUE", "img"]
+                    "-e", "NOVALUE", "-e=<redacted>", "img"]
 
 
 @needs_posix
@@ -90,9 +90,35 @@ def test_redacts_the_attached_short_environment_form(tmp_path):
 
 
 @needs_posix
+def test_redacts_bundled_short_flags_and_the_attached_bundled_environment_form(tmp_path):
+    # pflag bundles short flags: `-ite` is `-i -t -e`, so the next argument is the env value, and
+    # `e` may glue its own value onto the same token. The control `-itx` does not end in `e`.
+    assert logged_argv(tmp_path, "run", "-ite", "TOKEN=abc123", "img") == ["run", "-ite", "TOKEN=<redacted>", "img"]
+    assert logged_argv(tmp_path, "run", "-iteSECRET=abc123", "img") == ["run", "-iteSECRET=<redacted>", "img"]
+    assert logged_argv(tmp_path, "run", "-itx", "TOKEN=abc123", "img") == ["run", "-itx", "TOKEN=abc123", "img"]
+    # A bundle ending in `e` always consumes the next argument as its value, with or without `=`.
+    assert logged_argv(tmp_path, "run", "-ite", "NOVALUE", "img") == ["run", "-ite", "NOVALUE", "img"]
+
+
+@needs_posix
 def test_the_log_file_is_writable_by_every_user_of_the_container(tmp_path):
     logged_argv(tmp_path, "ps")
     assert (tmp_path / "calls.jsonl").stat().st_mode & 0o777 == 0o666
+
+
+@needs_posix
+def test_a_planted_symlink_at_the_log_path_is_skipped(tmp_path):
+    target = tmp_path / "elsewhere.jsonl"
+    target.write_text("untouched\n", encoding="utf-8")
+    os.chmod(target, 0o644)
+    link = tmp_path / "calls.jsonl"
+    os.symlink(target, link)
+    result = run(wrapper_with_stub_cli(tmp_path), "ps", log=link)
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == ["arg=ps"]
+    assert os.path.islink(link)
+    assert target.read_text(encoding="utf-8") == "untouched\n"
+    assert target.stat().st_mode & 0o777 == 0o644
 
 
 @needs_posix
@@ -108,6 +134,30 @@ def test_redacts_the_login_password_but_not_a_run_port(tmp_path):
     assert logged_argv(tmp_path, "login", "--password", "hunter2") == ["login", "--password", "<redacted>"]
     assert logged_argv(tmp_path, "login", "--password=hunter2") == ["login", "--password=<redacted>"]
     assert logged_argv(tmp_path, "run", "-p", "8080:80", "img") == ["run", "-p", "8080:80", "img"]
+
+
+@needs_posix
+def test_redacts_the_attached_short_form_password_after_login_only(tmp_path):
+    # A glued `-p` value carries the whole password; elsewhere (`run`) the glued `-p` is a port spec.
+    assert logged_argv(tmp_path, "login", "-u", "me", "-phunter2", "registry") == [
+        "login", "-u", "me", "<redacted>", "registry"]
+    assert logged_argv(tmp_path, "login", "-p=pw12", "registry") == ["login", "<redacted>", "registry"]
+    assert logged_argv(tmp_path, "run", "-p8080:80", "img") == ["run", "-p8080:80", "img"]
+
+
+@needs_posix
+def test_rotation_removes_a_planted_symlink_and_recovers_logging(tmp_path):
+    # An oversized symlinked log is rotated by renaming the link itself, so the next call writes anew.
+    target = tmp_path / "huge.jsonl"
+    with target.open("wb") as handle:
+        handle.truncate(20 * 1024 * 1024 + 1)
+    link = tmp_path / "calls.jsonl"
+    os.symlink(target, link)
+    run(wrapper_with_stub_cli(tmp_path), "ps", log=link)
+    assert not os.path.islink(link)
+    assert os.path.islink(tmp_path / "calls.jsonl.1")
+    assert os.path.getsize(target) == 20 * 1024 * 1024 + 1  # the target itself stayed put
+    assert [record["argv"] for record in logged(link)] == [["ps"]]
 
 
 @needs_posix

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -24,6 +25,12 @@ REDACTED = "<redacted>"
 KEY_VALUE_OPTIONS = ("-e", "--env", "--build-arg")
 # `-p` is a password only for `docker login`; for `run` it publishes a port.
 PASSWORD_OPTIONS_AFTER_LOGIN = ("-p", "--password")
+# Short flags bundle pflag-style: a bundle whose last letter is `e` (like `-ite`) takes the next
+# argument as its env value, and `e` may glue that value onto the token (`-iteKEY=VALUE`).
+# A glued `-p` value (`-psecret`) is a password after `login` only; elsewhere it is a port spec.
+ENV_BUNDLE_INTRODUCER_RE = re.compile(r"^-[A-Za-z]*e$")
+ENV_ATTACHED_VALUE_RE = re.compile(r"^(-[A-Za-z]*e)(.+)$")
+ATTACHED_PASSWORD_RE = re.compile(r"^-p.+$")
 
 
 def redact_key_value(text: str) -> str:
@@ -41,9 +48,10 @@ def redact_joined_option(argument: str) -> str:
             return prefix + redact_key_value(argument[len(prefix):])
     if argument.startswith("--password="):
         return "--password=" + REDACTED
-    # The attached short form `-eKEY=VALUE`.
-    if argument.startswith("-e") and not argument.startswith("--") and "=" in argument:
-        return "-e" + redact_key_value(argument[2:])
+    # Glued short-form values: `-eKEY=VALUE`, including a bundled prefix such as `-iteKEY=VALUE`.
+    match = ENV_ATTACHED_VALUE_RE.match(argument)
+    if match and "=" in match.group(2):
+        return match.group(1) + redact_key_value(match.group(2))
     return argument
 
 
@@ -52,15 +60,22 @@ def redact_arguments(arguments: list[str]) -> list[str]:
     redacted = []
     seen_login = False
     previous = ""
+    previous_takes_env_value = False
     for argument in arguments:
-        if previous in KEY_VALUE_OPTIONS:
+        if previous in KEY_VALUE_OPTIONS or previous_takes_env_value:
+            # The previous option (`-e`, `--env`, `--build-arg`, or a bundle ending in `e`)
+            # consumed this argument as its KEY=VALUE: keep the key, hide the value.
             redacted.append(redact_key_value(argument))
         elif previous in PASSWORD_OPTIONS_AFTER_LOGIN and (seen_login or previous == "--password"):
+            redacted.append(REDACTED)
+        elif seen_login and ATTACHED_PASSWORD_RE.match(argument):
+            # `-p` glued to its value: the whole token carries the password.
             redacted.append(REDACTED)
         else:
             redacted.append(redact_joined_option(argument))
         if argument == "login":
             seen_login = True
+        previous_takes_env_value = bool(ENV_BUNDLE_INTRODUCER_RE.match(argument))
         previous = argument
     return redacted
 
@@ -90,7 +105,14 @@ def rotate_if_large(log_path: str) -> None:
 
 
 def append_line(log_path: str, line: str) -> None:
-    descriptor = os.open(log_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o666)
+    # Skip a symlink planted at the log path: opening it would follow the link, and the fchmod
+    # below would then chmod the link's target. Safe direction: the real CLI still runs, and
+    # rotation renames the link away (os.replace moves the link itself), so later calls write anew.
+    if os.path.islink(log_path):
+        return
+    # O_NOFOLLOW closes the check-then-open race: a link swapped in between the check and the
+    # open makes this raise ELOOP, which log_call's caller swallows like any other logging failure.
+    descriptor = os.open(log_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o666)
     try:
         # Root and the agent user both call docker: whoever creates the file leaves it writable
         # for the other, whatever the umask. Only the owner can change the mode.
