@@ -346,7 +346,7 @@ class McpSpec:
     auth_type: str = ""              # "" | bearer_token | api_key (LiteLLM auth_type presented upstream)
     auth_secret: str = ""            # env var NAME (secrets.env) whose value LiteLLM presents
     allowed_tools: tuple[str, ...] = ()
-    tools: tuple[str, ...] = ()      # informational + parity-test expectation
+    tools: tuple[str, ...] = ()      # informational: listed in out/mcp/servers.json, enforced nowhere
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Secrets the server reads from a file (see PluginService.secret_files).
     secret_files: tuple[SecretFileRef, ...] = ()

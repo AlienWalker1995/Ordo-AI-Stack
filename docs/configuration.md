@@ -46,7 +46,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 |---|---|---|
 | `EMBED_MODEL` | `embeddinggemma-2-Q8_0.gguf` | Embedding model used by `rag-ingestion` and Open WebUI |
 | `RAG_COLLECTION` | `documents` | Qdrant collection (must match Open WebUI / ingestion) |
-| `RAG_CHUNK_SIZE` | `400` | Chunk size in tokens |
+| `RAG_CHUNK_SIZE` | `400` | Chunk size in words (the ingester splits on whitespace) |
 | `RAG_EMBED_BATCH_SIZE` | `16` | Chunks per embedding request |
 | `RAG_MAX_CHUNKS_PER_FILE` | `200` | Files that chunk into more are skipped as data dumps (and removed from the index) |
 | `RAG_EMBED_THREADS` | `8` | CPU threads, and compose `cpus` limit, of `inference-engine-embed` |
@@ -56,7 +56,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 | `RAG_RECONCILE_INTERVAL_SEC` | `600` | Seconds between passes that delete indexed sources whose file is gone or no longer ingested (minimum 60) |
 | `RAG_RECONCILE_MAX_DELETE_FRACTION` | `0.5` | A reconcile pass that would delete more than this share of the indexed sources is refused |
 | `RAG_RECONCILE_ALLOW_MASS_DELETE` | `0` | Set to `1` for one run to let a reconcile pass exceed that share, when the files really are gone |
-| `RAG_CHUNK_OVERLAP` | `50` | Chunk overlap in tokens |
+| `RAG_CHUNK_OVERLAP` | `50` | Chunk overlap in words |
 | `QDRANT_PORT` | `6333` | Internal port Qdrant listens on (`ordo-net` only, no host publish) |
 
 ### Langfuse tracing (`--profile langfuse`, opt-in)
