@@ -45,19 +45,46 @@ RUN_VALUE_OPTIONS = {
     "--device_cgroup_rules", "--cgroup-parent", "--cgroupns", "--userns", "--uts", "--isolation",
     "--sdnotify", "--secret", "--input-mode",
 }
+# `pull` takes -d/--digest (pins the exact image) and --platform; anything else it accepts is a flag.
+PULL_VALUE_OPTIONS = {"-d", "--digest", "--platform"}
 EXEC_VALUE_OPTIONS = {"-e", "--env", "-u", "--user", "-w", "--workdir", "--env-file", "--detach-keys"}
 # `compose run` takes the project options and run-style overrides around the service name; the
 # first positional is the service, which names the workload the same way an image name does.
 COMPOSE_RUN_VALUE_OPTIONS = RUN_VALUE_OPTIONS | COMPOSE_VALUE_OPTIONS | {"--scale", "--exit-code-from"}
 # `compose exec` adds --index to the plain exec flags.
 COMPOSE_EXEC_VALUE_OPTIONS = EXEC_VALUE_OPTIONS | {"--index"}
-# pflag bundles short flags. When the bundle's last letter is one whose short flag takes a value
-# (-a attach, -c console, -e env, -h hostname, -l label, -m memory, -n network, -p publish,
-# -u user, -v volume, -w workdir), the next argument is that value, exactly as the wrapper's
-# redaction assumes for the `e` case. `-t` is deliberately out: it is a boolean for `run`/`exec`
-# (tty) but value-taking for `stop`/`restart`, so a uniform rule must not consume after it.
-SHORT_FLAG_VALUE_LETTERS = "acehlmnpuvw"
-BUNDLE_VALUE_INTRODUCER_RE = re.compile(rf"^-[A-Za-z]*[{SHORT_FLAG_VALUE_LETTERS}]$")
+# pflag bundles short flags. The next argument is a value only when the bundle's last letter takes a
+# value for that verb. run and create take values for attach, console, env, hostname, label, memory,
+# network, publish, user, volume and workdir; exec for env, user and workdir; logs for -n lines;
+# stop/restart/kill for signal and time. For the remaining target verbs (rm, start, cp, inspect) every
+# one of those letters is a boolean flag, so a bundle there never consumes the container name. `-t`
+# stays out of the run set: it is a boolean for run/exec (tty) but value-taking for stop/restart.
+BUNDLE_VALUE_LETTERS = {
+    "run": "acehlmnpuvw",
+    "create": "acehlmnpuvw",
+    "container run": "acehlmnpuvw",
+    "container create": "acehlmnpuvw",
+    "compose run": "acehlmnpuvw",
+    "exec": "euw",
+    "compose exec": "euw",
+    "logs": "n",
+    "restart": "st",
+    "stop": "st",
+    "kill": "s",
+}
+_BUNDLE_PATTERNS: dict[str, re.Pattern] = {}
+
+
+def _bundle_pattern(letters: str | None) -> re.Pattern | None:
+    """The matcher for bundles whose last letter is a value introducer for that verb, or None."""
+    if not letters:
+        return None
+    try:
+        return _BUNDLE_PATTERNS[letters]
+    except KeyError:
+        pattern = re.compile(rf"^-[A-Za-z]*[{letters}]$")
+        _BUNDLE_PATTERNS[letters] = pattern
+        return pattern
 # Per verb, the options that take a value, for the verbs whose target containers are listed.
 TARGET_VALUE_OPTIONS = {
     "logs": {"-n", "--tail", "--since", "--until"},
@@ -95,17 +122,19 @@ def split_verb(arguments: list[str]) -> tuple[str, list[str]]:
     return " ".join(words), arguments[index:]
 
 
-def positional_arguments(arguments: list[str], value_options: set[str]) -> list[str]:
+def positional_arguments(arguments: list[str], value_options: set[str],
+                         bundle_letters: str | None = None) -> list[str]:
     """The arguments that are neither options nor option values."""
     positionals = []
+    bundle_re = _bundle_pattern(bundle_letters)
     index = 0
     while index < len(arguments):
         token = arguments[index]
         if token in value_options:
             index += 2
         elif token.startswith("-"):
-            # A short-flag bundle ending in a value-taking letter (-ite, -itv, ...) consumes its value.
-            index += 2 if BUNDLE_VALUE_INTRODUCER_RE.match(token) else 1
+            # A short-flag bundle consumes its value only when the last letter is one for this verb.
+            index += 2 if bundle_re and bundle_re.match(token) else 1
         else:
             positionals.append(token)
             index += 1
@@ -131,11 +160,11 @@ def build_tags(arguments: list[str]) -> list[str]:
 
 def image_names(verb: str, rest: list[str]) -> list[str]:
     if verb in ("run", "create", "container run", "container create"):
-        return positional_arguments(rest, RUN_VALUE_OPTIONS)[:1]
+        return positional_arguments(rest, RUN_VALUE_OPTIONS, BUNDLE_VALUE_LETTERS.get(verb))[:1]
     if verb == "compose run":
-        return positional_arguments(rest, COMPOSE_RUN_VALUE_OPTIONS)[:1]
+        return positional_arguments(rest, COMPOSE_RUN_VALUE_OPTIONS, BUNDLE_VALUE_LETTERS.get(verb))[:1]
     if verb in ("pull", "image pull"):
-        return positional_arguments(rest, set())[:1]
+        return positional_arguments(rest, PULL_VALUE_OPTIONS)[:1]
     if verb in ("build", "image build", "buildx build"):
         return build_tags(rest)
     return []
@@ -143,7 +172,7 @@ def image_names(verb: str, rest: list[str]) -> list[str]:
 
 def exec_target(rest: list[str], value_options: set[str] = EXEC_VALUE_OPTIONS) -> str | None:
     """The container and the first word of the command, for example `agent python3`."""
-    positionals = positional_arguments(rest, value_options)
+    positionals = positional_arguments(rest, value_options, BUNDLE_VALUE_LETTERS.get("exec"))
     if not positionals:
         return None
     command_words = positionals[1].split() if len(positionals) > 1 else []
@@ -153,7 +182,7 @@ def exec_target(rest: list[str], value_options: set[str] = EXEC_VALUE_OPTIONS) -
 
 
 def target_containers(verb: str, rest: list[str]) -> list[str]:
-    names = positional_arguments(rest, TARGET_VALUE_OPTIONS[verb])
+    names = positional_arguments(rest, TARGET_VALUE_OPTIONS[verb], BUNDLE_VALUE_LETTERS.get(verb))
     if verb == "cp":
         # Only `container:path` arguments name a container; the other side is a local path.
         return [name.split(":")[0] for name in names if ":" in name]

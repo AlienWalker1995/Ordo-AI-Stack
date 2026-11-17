@@ -267,6 +267,8 @@ def test_image_names_for_run_create_pull_and_build():
     assert images(["run", "--rm", "-e", "A=1", "-p", "80:80", "--name", "n", "alpine:3", "sh"]) == ["alpine:3"]
     assert images(["create", "-v", "/a:/b", "busybox"]) == ["busybox"]
     assert images(["pull", "ubuntu:24.04"]) == ["ubuntu:24.04"]
+    assert images(["pull", "-d", "sha256:" + "ab" * 32, "alpine:3"]) == ["alpine:3"]
+    assert images(["pull", "--digest", "sha256:" + "cd" * 32, "alpine:3"]) == ["alpine:3"]
     assert images(["build", "-t", "one:1", "--tag=two:2", "."]) == ["one:1", "two:2"]
     assert images(["ps"]) == []
 
@@ -322,6 +324,25 @@ def test_target_containers():
     assert targets(["restart", "-t", "5", "web"]) == ["web"]
     assert targets(["rm", "-f", "old"]) == ["old"]
     assert targets(["cp", "web:/etc/hosts", "./hosts"]) == ["web"]
+
+
+def test_short_flag_bundles_only_consume_values_where_the_letter_takes_one():
+    def targets(argv):
+        verb, rest = summary.split_verb(argv)
+        return summary.target_containers(verb, rest)
+
+    # For rm, start and cp those letters are boolean flags; the container must survive bundling.
+    assert targets(["rm", "-fv", "c1"]) == ["c1"]
+    assert targets(["rm", "-v", "c1"]) == ["c1"]
+    assert targets(["rm", "-fl", "c1"]) == ["c1"]
+    assert targets(["start", "-a", "c1"]) == ["c1"]
+    assert targets(["cp", "-a", "c:/x", "./x"]) == ["c"]
+    # Where the letter does take a value, the bundle still consumes it.
+    assert targets(["logs", "-fn", "100", "web"]) == ["web"]
+    assert targets(["restart", "-t", "5", "web"]) == ["web"]
+    verb, rest = summary.split_verb(["exec", "-iu", "root", "agent", "sh"])
+    assert summary.exec_target(rest) == "agent sh"
+    assert summary.image_names(*summary.split_verb(["run", "-itv", "/a:/b", "img"])) == ["img"]
 
 
 def test_bad_lines_are_counted_and_skipped():
