@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from contract_projects import remove_stale_projects
+
 os.environ.setdefault(
     "AUDIT_LOG_PATH",
     str(Path(tempfile.gettempdir()) / "ordo-test-audit.jsonl"),
@@ -110,6 +112,15 @@ def dashboard_operator_headers(monkeypatch) -> dict[str, str]:
 
     monkeypatch.setattr(dashboard_settings, "OPS_CONTROLLER_TOKEN", DASHBOARD_TEST_OPS_TOKEN)
     return {"Authorization": f"Bearer {DASHBOARD_TEST_OPS_TOKEN}"}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_stale_contract_projects():
+    """Remove what a killed run of the backend contract suite left on the docker engine, at the
+    start of every session (tests/contract_projects.py). Three such projects sat on a host for three
+    days and showed in the dashboard's launcher (2026-11-19), because only the docker half of that
+    one suite removed them and nobody ran it."""
+    remove_stale_projects()
 
 
 @pytest.hookimpl(hookwrapper=True)
