@@ -34,7 +34,7 @@ services:
     # serve config makes it public.
     # Multi-arch INDEX digest (amd64 + arm64), never a per-platform child: a child digest runs
     # emulated or not at all on the other arch. Verify: docker buildx imagetools inspect <ref>
-    image: tailscale/tailscale:v1.104.2@sha256:b11583ad2e93e4671128538c88cf11f460444a5d7e449311dd1933a400ab849d
+    image: tailscale/tailscale:v1.104.7@sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [couchdb]
     env:
