@@ -29,7 +29,7 @@ litellm_key:
 services:
   - name: oauth2-proxy
     # alpine variant ships wget for the healthcheck (the distroless :latest has no shell).
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5-alpine@sha256:8e4bec4f9fe4de10de63070209204075e4407503170aa19893d6e8d99f083d1b
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.6-alpine@sha256:398b6e2ee5b8c9d61ae8f099236568b9eae9cdc28f5645542bb1e03d57d477ed
     # oauth2-proxy maps every flag to OAUTH2_PROXY_<FLAG>. The client secret and the cookie secret are
     # read from files (--client-secret-file / --cookie-secret-file, v7.15.4 legacy_options.go and
     # cookie.go); oauth2-proxy uses the file bytes untrimmed, and materialize writes no trailing
@@ -74,7 +74,7 @@ services:
       timeout: 5s
       retries: 3
   - name: caddy
-    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     # no secrets: the /mcp and /llm routes delegate auth to LiteLLM
     # No --watch. The Caddyfile is a bind of the TRACKED checkout file, and a change reaches this
     # container only through `ordo apply`: its content digest is a label (config_mounts below,
