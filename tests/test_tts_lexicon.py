@@ -154,7 +154,7 @@ def test_missing_directory_is_an_empty_lexicon_with_an_error(tmp_path):
     ({"voice": "ff_siwis"}, False),
     ({"voice": "af_heart", "lang_code": "f"}, False),
     ({"voice": "ff_siwis", "lang_code": "a"}, True),
-    ({}, False),
+    ({}, True),                                      # the engine's default voice is af_heart
 ])
 def test_only_the_english_pipeline_gets_overrides(payload, english):
     assert proxy.is_english_request(payload) is english
@@ -289,3 +289,28 @@ async def test_engine_down_is_a_502_not_a_hang(tmp_path):
                 assert (await r.json())["error"]["type"] == "upstream_error"
     finally:
         await runner.cleanup()
+
+
+async def test_engine_dying_mid_stream_drops_the_caller_instead_of_hanging_or_faking_a_full_answer(tmp_path):
+    async def dies_mid_stream(request: web.Request) -> web.StreamResponse:
+        response = web.StreamResponse(headers={"Content-Type": "audio/pcm", "Content-Length": "1000"})
+        await response.prepare(request)
+        await response.write(b"partial")
+        request.transport.close()           # the engine is killed with most of the body unsent
+        return response
+
+    engine_app = web.Application()
+    engine_app.router.add_post("/v1/audio/speech", dies_mid_stream)
+    engine_runner, engine_url = await _serve(engine_app)
+    service = proxy.LexiconService(upstream=engine_url, directory=tmp_path, vocab=VOCAB, reload_seconds=3600)
+    proxy_runner, proxy_url = await _serve(proxy.make_app(service))
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            with pytest.raises(aiohttp.ClientError):
+                async with session.post(f"{proxy_url}/v1/audio/speech", json={"voice": "af_heart", "input": "Hi."}) as r:
+                    assert r.status == 200
+                    await r.read()
+    finally:
+        await proxy_runner.cleanup()
+        await engine_runner.cleanup()

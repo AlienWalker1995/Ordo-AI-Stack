@@ -225,10 +225,11 @@ ordo up stt tts tts-lexicon
 with English letter-to-sound rules, and a word with an accent is never in its dictionary, so
 "Côtes du Rhône" comes out "cots doo rone". `tts-lexicon` is a pass-through in front of `tts` that
 replaces every lexicon term in a speech request's text with the engine's inline phoneme override
-(`[text](/phonemes/)`). A caller opts in by using `http://tts-lexicon:8880/v1` as its TTS base URL
+(the term in square brackets, then its phonemes between slashes in parentheses). A caller opts in by using `http://tts-lexicon:8880/v1` as its TTS base URL
 (Hermes: `hermes config set tts.openai.base_url http://tts-lexicon:8880/v1`, per profile); requests
 for non-English voices pass through unchanged, because the override syntax exists only in the
-English pipeline.
+English pipeline. A request that names no voice counts as English (the engine's default voice is
+`af_heart`); if you change the engine's default to a non-English voice, have callers name theirs.
 
 The lexicon is every `*.json` file in `${DATA_PATH}/voice/lexicon/`, re-read when its content
 changes (no restart):

@@ -36,6 +36,8 @@ FAILURE BEHAVIOUR (all deliberate)
     * A request for a non-English voice passes through unchanged: the override syntax exists only
       in the engine's English pipeline.
     * Engine unreachable -> 502 with a JSON error. The proxy never invents audio.
+    * Engine dies mid-response -> the caller's connection is dropped, as it would be without the
+      proxy. Truncated audio is never presented as a complete answer.
 
 CONFIG (env)
     LEXICON_UPSTREAM         base URL of the engine (required)
@@ -279,11 +281,15 @@ def apply_lexicon(text: str, lexicon: Lexicon) -> tuple[str, list[str]]:
 def is_english_request(payload: dict[str, Any]) -> bool:
     """True when the engine will run its English pipeline for this speech request: an explicit
     English `lang_code`, or (without one) a voice whose name starts with the English prefixes
-    (`af_`, `am_`, `bf_`, `bm_`). The engine picks the pipeline the same way."""
+    (`af_`, `am_`, `bf_`, `bm_`). A request that names neither is English too: the engine's
+    default voice is `af_heart`. An operator who sets the engine's default voice to a non-English
+    one must have callers name their voice."""
     lang_code = str(payload.get("lang_code") or "").strip().lower()
     if lang_code:
         return lang_code[:1] in ENGLISH_LANG_CODES
     voice = str(payload.get("voice") or "").strip().lower()
+    if not voice:
+        return True
     return voice[:1] in ENGLISH_LANG_CODES
 
 
@@ -372,6 +378,7 @@ async def proxy(request: web.Request) -> web.StreamResponse:
     if request.method == "POST" and request.path == SPEECH_PATH:
         body = service.rewrite_speech_body(body)
     url = service.upstream + request.rel_url.raw_path_qs
+    response: web.StreamResponse | None = None
     try:
         async with service.session.request(
             request.method, url, headers=_forward_headers(request.headers), data=body or None,
@@ -386,6 +393,14 @@ async def proxy(request: web.Request) -> web.StreamResponse:
             await response.write_eof()
             return response
     except aiohttp.ClientError as exc:
+        if response is not None and response.prepared:
+            # The engine died after the status line went out. A second response cannot be sent on
+            # this connection, and ending the body cleanly would tell the caller the truncated
+            # audio is complete. Drop the connection, which is what the caller sees without a proxy.
+            LOG.warning("engine dropped %s %s mid-response: %s", request.method, request.path, exc)
+            if request.transport is not None:
+                request.transport.close()
+            return response
         LOG.warning("engine unreachable for %s %s: %s", request.method, request.path, exc)
         return web.json_response(
             {"error": {"message": f"text-to-speech engine unreachable: {exc}", "type": "upstream_error"}},
