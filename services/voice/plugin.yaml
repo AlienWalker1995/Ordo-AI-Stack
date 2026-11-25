@@ -1,6 +1,6 @@
 id: voice
 name: Voice (STT + TTS)
-description: Speech-to-text (faster-whisper) + text-to-speech (Kokoro), OpenAI-compatible.
+description: Speech-to-text (faster-whisper) + text-to-speech (Kokoro) with a pronunciation lexicon, OpenAI-compatible.
 requires:
   nvidia: true
   vram_gb: 4
@@ -9,7 +9,8 @@ provides: [voice]
 compose_profile: voice
 env:
   VOICE_ENABLED: "1"
-# TWO compose services. CRITICAL: neither image has Blackwell kernels — they CRASH on the
+# THREE compose services: two GPU engines and the CPU-only lexicon proxy in front of the TTS one.
+# CRITICAL: neither engine image has Blackwell kernels — they CRASH on the
 # RTX 5090 and MUST run on the Pascal 1070. Under Docker Desktop/WSL2 device_ids/
 # NVIDIA_VISIBLE_DEVICES are no-ops for isolation; ONLY CUDA_VISIBLE_DEVICES=GPU-<uuid> pins.
 # `gpu_pin: secondary` makes render resolve the non-primary GPU's uuid and emit it. If there is
@@ -87,3 +88,30 @@ services:
       timeout: 10s
       retries: 5
       start_period: 90s
+  - name: tts-lexicon
+    # The pronunciation lexicon in front of `tts` (lexicon_proxy.py in this folder): the same API
+    # on the same port, with every lexicon term in a speech request's text replaced by the engine's
+    # inline phoneme override. Callers that should get the lexicon point at
+    # http://tts-lexicon:8880/v1 instead of http://tts:8880/v1. CPU only: it never touches a GPU,
+    # so it carries no gpu_pin and no arbitration.
+    # First-party image, built from THIS folder by `ordo build tts-lexicon` (commit-tagged, see
+    # ordo/host/images.py). Untagged here on purpose: the render pins the recorded tag.
+    image: ordo/tts-lexicon
+    env:
+      LEXICON_UPSTREAM: http://tts:8880
+      LEXICON_LISTEN_PORT: "8880"
+      LEXICON_DIR: /lexicon
+    # The lexicon is operator data: one or more JSON files (docs/configuration.md, "Pronunciation
+    # lexicon", has the format). Read-only, and re-read when its content changes, so adding a term needs no restart
+    # and the directory is deliberately NOT a config_mount.
+    volumes:
+      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/voice/lexicon:/lexicon:ro
+    depends_on: [tts]
+    resources: {cpus: "1", memory: "256m"}
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8880/_lexicon/health',timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s

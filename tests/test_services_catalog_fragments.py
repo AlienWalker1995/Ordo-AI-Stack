@@ -87,6 +87,7 @@ def test_derived_ops_service_map_is_exactly_the_pre_refactor_wiring():
         "qdrant": "qdrant",
         "stt": "stt",
         "tts": "tts",
+        "tts-lexicon": "tts-lexicon",
         "rag-ingestion": "rag-ingestion",
         "html-video": "html-video",
     }

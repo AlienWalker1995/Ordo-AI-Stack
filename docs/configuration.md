@@ -187,7 +187,7 @@ resulting `voice-stt` / `voice-tts` pins, read from that render.
 **Enable** (from the repo root):
 
 ```bash
-ordo up stt tts
+ordo up stt tts tts-lexicon
 ```
 
 | Variable | Default | Purpose |
@@ -202,6 +202,7 @@ ordo up stt tts
 |---|---|---|
 | STT | `http://stt:8000/v1` | OpenAI-compatible `/v1/audio/transcriptions` |
 | TTS | `http://tts:8880/v1` | OpenAI-compatible `/v1/audio/speech` (Kokoro-82M, including raw `pcm` for streaming) |
+| TTS with the pronunciation lexicon | `http://tts-lexicon:8880/v1` | The same API, relayed to `tts`; lexicon terms in the speech text are replaced by phoneme overrides |
 
 **Hermes wiring (Discord voice memos):**
 
@@ -219,6 +220,39 @@ ordo up stt tts
 - **Desktop clients relay through the gateway.** `voice.client_direct: false` on every profile, so
   Hermes Desktop sends audio to the gateway (`/api/audio/*`), which calls these internal services. A
   desktop never needs to reach `stt`/`tts` itself.
+
+**Pronunciation lexicon (`tts-lexicon`).** Kokoro's English front end reads a word it does not know
+with English letter-to-sound rules, and a word with an accent is never in its dictionary, so
+"Côtes du Rhône" comes out "cots doo rone". `tts-lexicon` is a pass-through in front of `tts` that
+replaces every lexicon term in a speech request's text with the engine's inline phoneme override
+(`[text](/phonemes/)`). A caller opts in by using `http://tts-lexicon:8880/v1` as its TTS base URL
+(Hermes: `hermes config set tts.openai.base_url http://tts-lexicon:8880/v1`, per profile); requests
+for non-English voices pass through unchanged, because the override syntax exists only in the
+English pipeline.
+
+The lexicon is every `*.json` file in `${DATA_PATH}/voice/lexicon/`, re-read when its content
+changes (no restart):
+
+```json
+{"entries": [
+  {"term": "Côtes du Rhône", "lang": "fr", "phonemes": "kˈoːt dy ʁˈoːn", "aliases": ["CDR"]}
+]}
+```
+
+- `term` and `aliases` match whole words, ignoring case, accents and hyphen against space; the
+  longest term wins. A term is spoken with the phonemes wherever it appears, so leave out words
+  that are also ordinary English.
+- `phonemes` is in the engine's alphabet (`services/voice/kokoro_vocab.json`), not standard IPA:
+  stress marks go before the vowel, `ɡ` is U+0261, a nasal vowel is the vowel followed by a
+  combining tilde. An entry with a symbol outside that alphabet is rejected, because the engine
+  would drop the symbol without an error.
+- `lang` records the term's language for whoever maintains the file.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /_lexicon/status` | Files, term count, rejected entries with the reason, and the most-used terms |
+| `POST /_lexicon/preview` `{"text": "..."}` | The text the engine would be sent, without speaking it |
+| `POST /_lexicon/draft` `{"terms": [{"term": "Sancerre", "lang": "fr"}]}` | Draft entries from the engine's own front end for `fr`, `it`, `es`, `pt` or `en`. A draft is a starting point for a listening check; German has no front end and is written by hand |
 
 **STT** weights download once to `${DATA_PATH}/voice/hf-cache` (persists across
 recreates). **TTS** (Kokoro) ships its weights in the image; nothing is downloaded.

@@ -25,6 +25,19 @@
       "background": true,
       "ops_service": "tts",
       "hint": "kokoro-fastapi (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"
+    },
+    {
+      "id": "tts-lexicon",
+      "name": "TTS pronunciation lexicon",
+      "order": 115,
+      "port": 8880,
+      "check": "http://tts-lexicon:8880/_lexicon/health",
+      "has_gpu": false,
+      "plugin": "voice",
+      "category": "voice",
+      "background": true,
+      "ops_service": "tts-lexicon",
+      "hint": "Pass-through in front of tts that applies the pronunciation lexicon (data/voice/lexicon/*.json). CPU only. Opt-in: --profile voice"
     }
   ]
 }
