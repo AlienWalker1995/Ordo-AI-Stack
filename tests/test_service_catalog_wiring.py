@@ -129,14 +129,14 @@ def test_catalog_ids_are_unique():
 def test_non_user_facing_services_carry_background_flag():
     """`background: True` marks NON-user-facing services — the ones the frontend moves out
     of the main grid (which is only browsable UIs) into the secondary 'Background jobs'
-    section (no 'Open' link). That is the backend infra (inference-engine-gpu, qdrant, stt, tts)
+    section (no 'Open' link). That is the backend infra (inference-engine-gpu, qdrant, stt, tts, tts-lexicon)
     plus the two portless headless workers (rag-ingestion, livesync-bridge) and the html-video
     renderer (an HTTP API with no UI). The user-facing UIs —
     webui/comfyui/n8n/hermes/langfuse — and model-gateway (its Open link is the
     LiteLLM admin UI) must NOT carry it, so an openable service can't be quietly demoted."""
     bg = {s["id"] for s in SERVICES if s.get("background")}
     assert bg == {"rag-ingestion", "inference-engine-gpu", "inference-engine-cpu", "qdrant", "stt", "tts",
-                  "couchdb", "livesync-bridge", "html-video"}
+                  "tts-lexicon", "couchdb", "livesync-bridge", "html-video"}
     user_facing = {"webui", "comfyui", "n8n", "hermes", "langfuse", "model-gateway"}
     for s in SERVICES:
         if s["id"] in user_facing:
