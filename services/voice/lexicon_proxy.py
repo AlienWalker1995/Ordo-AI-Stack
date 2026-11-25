@@ -394,10 +394,14 @@ async def proxy(request: web.Request) -> web.StreamResponse:
             return response
     except aiohttp.ClientError as exc:
         if response is not None and response.prepared:
-            # The engine died after the status line went out. A second response cannot be sent on
-            # this connection, and ending the body cleanly would tell the caller the truncated
-            # audio is complete. Drop the connection, which is what the caller sees without a proxy.
-            LOG.warning("engine dropped %s %s mid-response: %s", request.method, request.path, exc)
+            # The stream broke after the status line went out - either the engine died or the caller
+            # aborted, and both land here. A second response cannot be sent on this connection, and
+            # ending the body cleanly would tell the caller the truncated audio is complete. Drop the
+            # connection, which is what the caller sees without a proxy.
+            LOG.warning(
+                "stream broke mid-response for %s %s (engine death or caller abort); dropping the caller: %s",
+                request.method, request.path, exc,
+            )
             if request.transport is not None:
                 request.transport.close()
             return response
